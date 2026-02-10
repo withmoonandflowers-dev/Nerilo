@@ -55,9 +55,9 @@ test.describe('單人房間功能', () => {
     // B 應該進入聊天頁面
     await expect(pageB).toHaveURL(/\/chat\/.+/, { timeout: 15_000 });
 
-    // 等待雙方連線建立
-    await expect(pageA.getByText('已連線')).toBeVisible({ timeout: 30_000 });
-    await expect(pageB.getByText('已連線')).toBeVisible({ timeout: 30_000 });
+    // 等待雙方連線建立（真實環境下 WebRTC 可能需較長時間）
+    await expect(pageA.getByText('已連線')).toBeVisible({ timeout: 60_000 });
+    await expect(pageB.getByText('已連線')).toBeVisible({ timeout: 60_000 });
 
     // 測試訊息傳輸
     const message = 'Test message from A';
