@@ -1,0 +1,111 @@
+@startuml P2P 傳輸協議架構
+
+title P2P 傳輸協議設計
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+package "統一 Envelope 格式" {
+  class Envelope {
+    +v: number
+    +ns: string
+    +type: string
+    +id: string
+    +ts: number
+    +from: string
+    +to?: string
+    +replyTo?: string
+    +payload: any
+    +meta?: object
+  }
+}
+
+package "官方保留 Namespace" {
+  class SystemNamespace {
+    +ERROR
+    +PING
+    +PONG
+    +ACK
+  }
+  
+  class ChatNamespace {
+    +MSG_SEND
+    +MSG_EDIT
+    +MSG_DELETE
+    +TYPING
+  }
+  
+  class FileNamespace {
+    +FILE_META
+    +FILE_CHUNK
+    +FILE_END
+    +FILE_CANCEL
+  }
+  
+  class MediaNamespace {
+    +MEDIA_READY
+    +MEDIA_TOGGLE
+    +MEDIA_END
+  }
+  
+  class SyncNamespace {
+    +INDEX
+    +REQ
+    +RES
+    +DONE
+  }
+}
+
+package "功能自訂 Namespace" {
+  class FeatureNamespace {
+    +feature.crm
+    +feature.custom
+    +...
+  }
+}
+
+package "協議驗證流程" {
+  component [P2PProtocolRegistry] as Registry {
+    +register(schema, handler)
+    +validate(envelope)
+    +getHandler(namespace)
+  }
+  
+  component [P2PChannelBus] as ChannelBus {
+    +send(envelope)
+    +subscribe(namespace, handler)
+  }
+}
+
+Envelope --> SystemNamespace
+Envelope --> ChatNamespace
+Envelope --> FileNamespace
+Envelope --> MediaNamespace
+Envelope --> SyncNamespace
+Envelope --> FeatureNamespace
+
+Registry --> Envelope
+ChannelBus --> Registry
+
+note right of Envelope
+  **所有非檔案二進位資料**
+  必須符合此格式
+end note
+
+note right of FeatureNamespace
+  **格式：feature.<name>**
+  必須註冊才能使用
+end note
+
+note right of Registry
+  **驗證機制**
+  1. 基本欄位檢查
+  2. Namespace 註冊檢查
+  3. Type 合法性檢查
+  4. Payload schema 驗證
+end note
+
+@enduml
+
+
+
