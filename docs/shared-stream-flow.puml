@@ -1,0 +1,33 @@
+@startuml 共享資料流（區塊鏈式）
+
+title 共享資料流 - Hash 鏈與 Gossip 同步
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+participant "Node A\n(SharedDataStream)" as A
+participant "Node B\n(SharedDataStream)" as B
+participant "Node C\n(SharedDataStream)" as C
+
+note over A, C
+  **LedgerEntry** = index, previousHash, payloadHash, timestamp, creatorId, payload, entryHash
+  每筆 entryHash 依賴前一筆 → 形成 hash 鏈（不可竄改）
+end note
+
+A -> A : append(payload)\n→ previousHash = last.entryHash\n→ 計算 payloadHash, entryHash\n→ 寫入本地 entries[]
+
+A -> B : Gossip(LedgerEntry)
+A -> C : Gossip(LedgerEntry)
+
+B -> B : handleReceivedEntry(entry)\n→ 驗證 entryHash\n→ 驗證 previousHash == 本地 last.entryHash\n→ 驗證 payloadHash\n→ append 到本地\n→ 通知監聽器
+
+C -> C : handleReceivedEntry(entry)\n→ 同上
+
+B -> A : (可選) 再轉發給其他鄰居
+B -> C : (可選) 再轉發給其他鄰居
+
+note over A, C
+  **最終一致**：各節點維護同一條有序鏈，透過 Gossip 同步新條目
+end note
+
+@enduml
