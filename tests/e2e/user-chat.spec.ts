@@ -45,9 +45,9 @@ test.describe('兩個使用者可以互相連線並發送訊息', () => {
     await expect(pageA).toHaveURL(/\/chat\/.+/, { timeout: 15_000 });
     await expect(pageB).toHaveURL(/\/chat\/.+/, { timeout: 15_000 });
 
-    // 等待雙方連線狀態為「已連線」（E2E 環境下 WebRTC 建立可能需較長時間）
-    await expect(pageA.getByText('已連線')).toBeVisible({ timeout: 45_000 });
-    await expect(pageB.getByText('已連線')).toBeVisible({ timeout: 45_000 });
+    // 等待雙方連線狀態為「已連線」（真實環境下 WebRTC/ICE 可能需 45–60s）
+    await expect(pageA.getByText('已連線')).toBeVisible({ timeout: 60_000 });
+    await expect(pageB.getByText('已連線')).toBeVisible({ timeout: 60_000 });
 
     // A 傳送訊息，B 應該看到
     const messageFromA = 'Hello from User A';
