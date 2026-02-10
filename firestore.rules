@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserRole() {
+      // 若尚未設定自訂角色（例如匿名使用者），預設視為 guest
+      return request.auth.token.role != null ? request.auth.token.role : 'guest';
+    }
+    
+    function isAdmin() {
+      return getUserRole() == 'admin';
+    }
+    
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    // Features collection - 功能註冊表
+    match /features/{featureId} {
+      // 所有人可讀取 enabled=true 的功能
+      allow read: if isAuthenticated();
+      
+      // 僅 admin 可寫入
+      allow write: if isAdmin();
+    }
+
+    // Users collection - 使用者 profile
+    // 開發階段簡化規則：只要有登入（包含匿名），即可讀寫自己的 users 文件
+    match /users/{uid} {
+      allow read, create, update: if isAuthenticated() && isOwner(uid);
+      allow delete: if false; // 不允許從前端刪除 user 文件
+    }
+
+    // P2P Rooms collection
+    // 安全規則：只允許已登入的用戶（非匿名）建立房間
+    match /p2pRooms/{roomId} {
+      // 讀取：允許已登入用戶讀取公開房間，或讀取自己參與的房間
+      allow read: if isAuthenticated() && (
+        // 公開房間
+        !resource.data.isPrivate ||
+        // 或參與者列表包含當前用戶
+        request.auth.uid in resource.data.participants ||
+        // 或是房主
+        request.auth.uid == resource.data.ownerUid
+      );
+      
+      // 建立：只允許已登入的用戶（非匿名）建立房間
+      // 且 ownerUid 必須是當前用戶
+      allow create: if isAuthenticated() && 
+        request.auth.token.firebase.sign_in_provider != "anonymous" &&
+        request.resource.data.ownerUid == request.auth.uid;
+      
+      // 更新：允許房主更新房間，或參與者加入/更新自己的身分
+      allow update: if isAuthenticated() && (
+        // 房主可以更新房間
+        (request.auth.uid == resource.data.ownerUid) ||
+        // 或參與者可以加入（更新 participants）
+        (request.auth.uid in request.resource.data.participants && 
+         request.auth.uid in resource.data.participants) ||
+        // 或參與者可以更新自己的 meshIdentity（小網狀架構）
+        (request.auth.uid in resource.data.participants &&
+         request.resource.data.meshIdentities != null &&
+         request.resource.data.meshIdentities[request.auth.uid] != null &&
+         request.resource.data.meshIdentities[request.auth.uid].userId != null &&
+         request.resource.data.meshIdentities[request.auth.uid].pubKey != null)
+      );
+      
+      // 刪除：只允許房主刪除自己的房間
+      allow delete: if isAuthenticated() && 
+        request.auth.uid == resource.data.ownerUid;
+
+      // Signals subcollection - signaling 訊息
+      match /signals/{signalId} {
+        allow read, create: if isAuthenticated();
+        // 不允許更新或刪除（append-only）
+        allow update, delete: if false;
+      }
+    }
+
+    // 明確禁止其他集合儲存敏感內容
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+
+

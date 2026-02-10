@@ -1,0 +1,146 @@
+@startuml Nerilo 系統架構圖
+
+!define RECTANGLE class
+
+title Nerilo - Firebase + WebRTC P2P 即時互動平台架構圖
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+package "前端 (React + TypeScript)" {
+  component [React App] as App
+  component [AuthContext] as Auth
+  component [FeatureContext] as Feature
+  component [Dashboard] as Dashboard
+  component [Login] as Login
+  
+  package "功能模組" {
+    component [Chat] as Chat
+    component [VideoCall] as VideoCall
+    component [FileTransfer] as FileTransfer
+  }
+  
+  package "共用 P2P 通訊層" {
+    component [P2PManager] as P2PMgr
+    component [P2PConnectionManager] as ConnMgr
+    component [P2PChannelBus] as ChannelBus
+    component [P2PProtocolRegistry] as ProtocolReg
+    component [P2PFileTransferService] as FileService
+    component [P2PMediaService] as MediaService
+  }
+  
+  package "服務層" {
+    component [IndexedDBService] as IDB
+    component [SyncService] as Sync
+  }
+}
+
+package "Firebase 後端" {
+  database "Firebase Auth" as AuthDB {
+    component [Custom Claims\n(RBAC)] as Claims
+  }
+  
+  database "Cloud Firestore" as Firestore {
+    component [features/\n{featureId}] as Features
+    component [users/\n{uid}] as Users
+    component [p2pRooms/\n{roomId}] as Rooms
+    component [signals/\n{signalId}] as Signals
+  }
+  
+  cloud "Cloud Functions" as Functions {
+    component [setRole] as SetRole
+    component [getIceServers] as GetICE
+  }
+  
+  cloud "Firebase Hosting" as Hosting
+}
+
+package "外部服務 (可選)" {
+  cloud "Twilio TURN" as Twilio
+}
+
+package "WebRTC P2P" {
+  component [RTCPeerConnection] as RTC
+  component [RTCDataChannel] as DataChannel
+  component [MediaStream] as MediaStream
+}
+
+' 前端內部關係
+App --> Auth
+App --> Feature
+App --> Dashboard
+App --> Login
+Dashboard --> Chat
+Dashboard --> VideoCall
+Dashboard --> FileTransfer
+
+Chat --> P2PMgr
+VideoCall --> P2PMgr
+FileTransfer --> P2PMgr
+
+P2PMgr --> ConnMgr
+P2PMgr --> ChannelBus
+P2PMgr --> ProtocolReg
+P2PMgr --> FileService
+P2PMgr --> MediaService
+
+ConnMgr --> RTC
+ChannelBus --> DataChannel
+MediaService --> MediaStream
+
+Chat --> IDB
+FileTransfer --> IDB
+Sync --> IDB
+Sync --> ChannelBus
+
+' Firebase 關係
+Auth --> AuthDB
+Feature --> Firestore
+ConnMgr --> Firestore
+ConnMgr --> Functions
+
+AuthDB --> Claims
+Firestore --> Features
+Firestore --> Users
+Firestore --> Rooms
+Rooms --> Signals
+
+Functions --> SetRole
+Functions --> GetICE
+GetICE --> Twilio
+
+' P2P 連線
+RTC ..> RTC : P2P Connection
+DataChannel ..> DataChannel : P2P Data Channel
+MediaStream ..> MediaStream : P2P Media Stream
+
+' 部署
+Hosting --> App
+
+note right of Firestore
+  **資料隱私原則**
+  - 不儲存聊天文字
+  - 不儲存檔案本體
+  - 不儲存影音內容
+  僅用於 signaling
+end note
+
+note right of IDB
+  **本機儲存**
+  - 聊天紀錄
+  - 檔案 metadata
+  - 系統事件
+  僅存於瀏覽器
+end note
+
+note right of RTC
+  **P2P 傳輸**
+  - 文字訊息
+  - 檔案內容
+  - 影音串流
+  端對端加密
+end note
+
+@enduml
+
+

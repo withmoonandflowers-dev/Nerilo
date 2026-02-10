@@ -1,0 +1,119 @@
+@startuml 資料流與隱私保護
+
+title 資料流與隱私保護架構
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+actor "使用者 A" as UserA
+actor "使用者 B" as UserB
+
+package "使用者 A 端" {
+  component [Browser A] as BrowserA {
+    component [IndexedDB] as IDBA
+    component [P2P Manager] as P2PA
+    component [SharedDataStream\n(共享資料流)] as StreamA
+  }
+}
+
+package "使用者 B 端" {
+  component [Browser B] as BrowserB {
+    component [IndexedDB] as IDBB
+    component [P2P Manager] as P2PB
+    component [SharedDataStream\n(共享資料流)] as StreamB
+  }
+}
+
+package "Firebase (僅 Signaling)" {
+  database "Firestore" as Firestore {
+    component [p2pRooms] as Rooms
+    component [signals] as Signals
+  }
+  
+  cloud "Cloud Functions" as Functions
+}
+
+cloud "WebRTC P2P" as P2P
+
+' 連線建立流程
+UserA --> BrowserA : 建立房間
+BrowserA --> Firestore : 建立 p2pRooms 文件
+BrowserA --> P2PA : 初始化 P2P
+
+UserB --> BrowserB : 加入房間
+BrowserB --> Firestore : 讀取 p2pRooms
+BrowserB --> P2PB : 初始化 P2P
+
+' Signaling 流程（僅透過 Firestore）
+P2PA --> Firestore : 發送 offer
+Firestore --> P2PB : 接收 offer
+P2PB --> Firestore : 發送 answer
+Firestore --> P2PA : 接收 answer
+P2PA --> Firestore : 發送 ICE candidates
+Firestore --> P2PB : 接收 ICE candidates
+
+' P2P 連線建立
+P2PA <--> P2P : WebRTC Connection
+P2PB <--> P2P : WebRTC Connection
+
+' 資料傳輸（僅 P2P，不經過 Firebase）
+UserA --> BrowserA : 發送訊息/檔案/影音
+BrowserA --> P2PA : 封裝為 Envelope
+P2PA --> P2P : P2P DataChannel/MediaStream
+P2P --> P2PB : 接收資料
+P2PB --> BrowserB : 解析 Envelope
+BrowserB --> IDBB : 儲存到本機
+BrowserB --> UserB : 顯示內容
+
+' 本機儲存
+BrowserA --> IDBA : 儲存聊天紀錄
+BrowserB --> IDBB : 儲存聊天紀錄
+
+' 共享資料流（區塊鏈式）：LedgerEntry 經 P2P/Gossip 同步，hash 鏈驗證
+P2PA --> StreamA : 收到 LedgerEntry\n→ 驗證、append
+StreamA --> P2PA : append 時廣播 LedgerEntry
+P2PB --> StreamB : 收到 LedgerEntry\n→ 驗證、append
+StreamB --> P2PB : append 時廣播 LedgerEntry
+
+' 禁止的資料流（以紅色標示）
+BrowserA -[#red]-> Firestore : ❌ 禁止：聊天文字
+BrowserA -[#red]-> Firestore : ❌ 禁止：檔案本體
+BrowserA -[#red]-> Firestore : ❌ 禁止：影音內容
+
+note right of Firestore
+  **Firestore 僅用於**
+  - Signaling (offer/answer/ICE)
+  - 功能註冊表
+  - 使用者 profile
+  - 房間 metadata
+end note
+
+note right of P2P
+  **P2P 傳輸**
+  - 聊天文字
+  - 檔案內容
+  - 影音串流
+  - 同步訊息
+  端對端加密
+end note
+
+note right of IDBA
+  **本機儲存**
+  - 聊天紀錄
+  - 檔案 metadata
+  - 系統事件
+  清除瀏覽器資料即永久遺失
+end note
+
+note bottom of StreamA
+  **SharedDataStream**
+  - 只增不減的 LedgerEntry 鏈
+  - previousHash → entryHash 形成 hash 鏈
+  - 經 Gossip 同步，最終一致
+  詳見 docs/shared-stream-flow.puml
+end note
+
+@enduml
+
+
+

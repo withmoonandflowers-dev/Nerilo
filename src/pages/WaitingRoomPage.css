@@ -1,0 +1,220 @@
+.waiting-room-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.waiting-room-container {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 500px;
+  width: 100%;
+  padding: 40px;
+  text-align: center;
+}
+
+.waiting-room-header {
+  margin-bottom: 30px;
+}
+
+.waiting-room-header h1 {
+  font-size: 2rem;
+  color: #333;
+  margin: 0 0 10px 0;
+}
+
+.room-id {
+  color: #666;
+  font-size: 0.9rem;
+  font-family: monospace;
+  margin: 0;
+}
+
+.waiting-room-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.waiting-status {
+  padding: 20px;
+}
+
+.status-icon {
+  font-size: 4rem;
+  margin-bottom: 16px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.8;
+  }
+}
+
+.waiting-status h2 {
+  font-size: 1.5rem;
+  color: #333;
+  margin: 0 0 10px 0;
+}
+
+.participant-count {
+  font-size: 1.1rem;
+  color: #666;
+  margin: 0;
+}
+
+.timer {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 20px;
+  border-radius: 12px;
+  margin: 20px 0;
+}
+
+.timer-label {
+  font-size: 0.9rem;
+  opacity: 0.9;
+  margin-bottom: 8px;
+}
+
+.timer-value {
+  font-size: 2.5rem;
+  font-weight: bold;
+  font-family: monospace;
+  letter-spacing: 2px;
+}
+
+.share-section {
+  padding: 20px;
+  background: #f5f5f5;
+  border-radius: 12px;
+}
+
+.share-section h3 {
+  font-size: 1.2rem;
+  color: #333;
+  margin: 0 0 16px 0;
+}
+
+.share-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.share-hint {
+  font-size: 0.9rem;
+  color: #666;
+  margin: 0;
+}
+
+.ready-message {
+  background: #d4edda;
+  color: #155724;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #c3e6cb;
+}
+
+.ready-message p {
+  margin: 0;
+  font-weight: 500;
+}
+
+.timeout-message {
+  padding: 40px 20px;
+}
+
+.timeout-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+}
+
+.timeout-message h2 {
+  font-size: 1.5rem;
+  color: #333;
+  margin: 0 0 10px 0;
+}
+
+.timeout-message p {
+  color: #666;
+  margin: 0 0 24px 0;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-cancel {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-secondary {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.btn-secondary:hover {
+  background: #e0e0e0;
+}
+
+.btn-cancel {
+  background: #f8f8f8;
+  color: #666;
+  border: 1px solid #ddd;
+}
+
+.btn-cancel:hover {
+  background: #e8e8e8;
+}
+
+.loading {
+  color: white;
+  font-size: 1.2rem;
+}
+
+@media (max-width: 600px) {
+  .waiting-room-container {
+    padding: 24px;
+  }
+
+  .waiting-room-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .timer-value {
+    font-size: 2rem;
+  }
+}
