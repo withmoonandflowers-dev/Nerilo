@@ -87,11 +87,11 @@ test.describe('房間管理', () => {
     await expect(pageB.locator('.role-badge')).toBeVisible({ timeout: 15_000 });
     await pageB.goto(roomUrl);
 
-    // 等待雙方連線（E2E 環境下 WebRTC 建立可能需較長時間）
+    // 等待雙方連線（真實環境下 WebRTC/ICE 可能需 45–60s）
     await expect(pageA).toHaveURL(/\/chat\/.+/, { timeout: 15_000 });
     await expect(pageB).toHaveURL(/\/chat\/.+/, { timeout: 15_000 });
-    await expect(pageA.getByText('已連線')).toBeVisible({ timeout: 45_000 });
-    await expect(pageB.getByText('已連線')).toBeVisible({ timeout: 45_000 });
+    await expect(pageA.getByText('已連線')).toBeVisible({ timeout: 60_000 });
+    await expect(pageB.getByText('已連線')).toBeVisible({ timeout: 60_000 });
 
     // A 發送第一條訊息
     const message1 = 'Message 1 from A';

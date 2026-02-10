@@ -71,7 +71,8 @@ test.describe('等待連線階段', () => {
 
     // A 建立房間
     await pageA.goto('/dashboard');
-    await expect(pageA.getByText('guest')).toBeVisible();
+    await expect(pageA.locator('.role-badge')).toBeVisible({ timeout: 15_000 });
+    await expect(pageA.locator('.role-badge')).toContainText('guest', { timeout: 5_000 });
     await pageA.getByRole('button', { name: '+ 建立新房間' }).click();
     await pageA.getByRole('button', { name: '建立房間' }).click();
 
@@ -93,7 +94,8 @@ test.describe('等待連線階段', () => {
   test('等待頁面應該顯示參與者數量', async ({ page }) => {
     await page.goto('/dashboard');
 
-    await expect(page.getByText('guest')).toBeVisible();
+    await expect(page.locator('.role-badge')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.role-badge')).toContainText('guest', { timeout: 5_000 });
 
     await page.getByRole('button', { name: '+ 建立新房間' }).click();
     await page.getByRole('button', { name: '建立房間' }).click();
@@ -117,8 +119,8 @@ test.describe('等待連線階段', () => {
     // 點擊取消按鈕
     await page.getByRole('button', { name: '取消房間' }).click();
 
-    // 應該返回 dashboard
-    await expect(page).toHaveURL('/dashboard');
+    // 應該返回 dashboard（真實環境下 Firestore 寫入與導向可能需較長時間）
+    await expect(page).toHaveURL('/dashboard', { timeout: 15_000 });
   });
 
   test('非房主可以離開等待頁面', async ({ browser }) => {
@@ -130,7 +132,8 @@ test.describe('等待連線階段', () => {
 
     // A 建立房間
     await pageA.goto('/dashboard');
-    await expect(pageA.getByText('guest')).toBeVisible();
+    await expect(pageA.locator('.role-badge')).toBeVisible({ timeout: 15_000 });
+    await expect(pageA.locator('.role-badge')).toContainText('guest', { timeout: 5_000 });
     await pageA.getByRole('button', { name: '+ 建立新房間' }).click();
     await pageA.getByRole('button', { name: '建立房間' }).click();
 
