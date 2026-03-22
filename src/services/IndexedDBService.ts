@@ -1,5 +1,5 @@
 import Dexie, { Table } from 'dexie';
-import type { ChatMessage, FileMetadata, LedgerEntry, LedgerEntryWithProvenance } from '../types';
+import type { ChatMessage, FileMetadata, LedgerEntry, LedgerEntryWithProvenance, LedgerSnapshot } from '../types';
 
 interface ChatRecord {
   id?: number;
@@ -65,11 +65,30 @@ interface ChainRecord {
   provenanceOperation?: 'merge' | 'split';
 }
 
+interface SnapshotRecord {
+  snapshotId: string;
+  roomId: string;
+  upToIndex: number;
+  tipHash: string;
+  stateHash: string;
+  createdAt: number;
+  creatorId: string;
+  chunksJson: string; // JSON.stringify(chunks)
+}
+
+interface FeatureStateRecord {
+  key: string;
+  roomId: string;
+  valueJson: string;
+}
+
 class NeriloDB extends Dexie {
   chats!: Table<ChatRecord>;
   files!: Table<FileRecord>;
   events!: Table<SystemEvent>;
   chainEntries!: Table<ChainRecord>;
+  snapshots!: Table<SnapshotRecord>;
+  featureState!: Table<FeatureStateRecord>;
 
   constructor() {
     super('NeriloDB');
@@ -105,6 +124,21 @@ class NeriloDB extends Dexie {
           .modify((rec: any) => {
             if (rec.isProvenance === undefined) rec.isProvenance = 0;
           });
+      });
+
+    // v4: add snapshots and featureState tables
+    this.version(4)
+      .stores({
+        chats: 'messageId, timestamp, roomId, from',
+        files: 'fileId, timestamp, roomId',
+        events: 'eventId, timestamp, roomId, type',
+        chainEntries:
+          'entryHash, entryIndex, roomId, timestamp, creatorId, [roomId+isProvenance], isProvenance, sourceRoomId',
+        snapshots: 'snapshotId, roomId, upToIndex, createdAt',
+        featureState: 'key, roomId',
+      })
+      .upgrade(() => {
+        // No data migration needed for new tables
       });
   }
 }
@@ -424,6 +458,91 @@ export class IndexedDBService {
       this.db.events.clear(),
       this.db.chainEntries.clear(),
     ]);
+  }
+
+  // ── Snapshots ─────────────────────────────────────────────────────────────
+
+  async saveSnapshot(snapshot: LedgerSnapshot): Promise<void> {
+    await this.db.snapshots.put({
+      snapshotId: snapshot.snapshotId,
+      roomId: snapshot.roomId,
+      upToIndex: snapshot.upToIndex,
+      tipHash: snapshot.tipHash,
+      stateHash: snapshot.stateHash,
+      createdAt: snapshot.createdAt,
+      creatorId: snapshot.creatorId,
+      chunksJson: JSON.stringify(snapshot.chunks),
+    });
+  }
+
+  async getLatestSnapshot(roomId: string): Promise<LedgerSnapshot | null> {
+    const records = await this.db.snapshots
+      .where('roomId')
+      .equals(roomId)
+      .reverse()
+      .sortBy('createdAt');
+
+    const latest = records[0];
+    if (!latest) return null;
+    return this.snapshotRecordToSnapshot(latest);
+  }
+
+  async getAllSnapshots(roomId: string): Promise<LedgerSnapshot[]> {
+    const records = await this.db.snapshots
+      .where('roomId')
+      .equals(roomId)
+      .sortBy('createdAt');
+
+    return records.map((r) => this.snapshotRecordToSnapshot(r));
+  }
+
+  async deleteOldSnapshots(roomId: string, keepCount = 3): Promise<void> {
+    const records = await this.db.snapshots
+      .where('roomId')
+      .equals(roomId)
+      .sortBy('createdAt');
+
+    if (records.length <= keepCount) return;
+
+    const toDelete = records.slice(0, records.length - keepCount);
+    const idsToDelete = toDelete.map((r) => r.snapshotId);
+    await this.db.snapshots.where('snapshotId').anyOf(idsToDelete).delete();
+  }
+
+  private snapshotRecordToSnapshot(r: SnapshotRecord): LedgerSnapshot {
+    return {
+      snapshotId: r.snapshotId,
+      roomId: r.roomId,
+      upToIndex: r.upToIndex,
+      tipHash: r.tipHash,
+      stateHash: r.stateHash,
+      createdAt: r.createdAt,
+      creatorId: r.creatorId,
+      chunks: JSON.parse(r.chunksJson) as string[],
+    };
+  }
+
+  // ── Feature State ─────────────────────────────────────────────────────────
+
+  async getFeatureState(roomId: string, key: string): Promise<unknown> {
+    const compositeKey = `${roomId}:${key}`;
+    const record = await this.db.featureState.where('key').equals(compositeKey).first();
+    if (!record) return undefined;
+    return JSON.parse(record.valueJson) as unknown;
+  }
+
+  async setFeatureState(roomId: string, key: string, value: unknown): Promise<void> {
+    const compositeKey = `${roomId}:${key}`;
+    await this.db.featureState.put({
+      key: compositeKey,
+      roomId,
+      valueJson: JSON.stringify(value),
+    });
+  }
+
+  async deleteFeatureState(roomId: string, key: string): Promise<void> {
+    const compositeKey = `${roomId}:${key}`;
+    await this.db.featureState.where('key').equals(compositeKey).delete();
   }
 }
 

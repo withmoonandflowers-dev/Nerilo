@@ -1,7 +1,7 @@
 import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
-import type { P2PRoom } from '../types';
+import type { P2PRoom, RoomStatus, RoomCapability } from '../types';
 
 // 只在開發模式或明確啟用時輸出 debug log，避免正式環境噪音
 const DEBUG_ROOMS = import.meta.env.DEV || import.meta.env.VITE_DEBUG_ROOMS === 'true';
@@ -171,6 +171,11 @@ export class RoomService {
         ])
       ) : undefined,
       topology: data.topology || 'star',
+      hostMigrationEpoch: data.hostMigrationEpoch ?? 0,
+      version: data.version ?? 0,
+      previousRoomId: data.previousRoomId ?? null,
+      lineageRootRoomId: data.lineageRootRoomId ?? null,
+      capabilityHint: data.capabilityHint,
     };
 
     if (DEBUG_ROOMS) {
@@ -375,16 +380,24 @@ export class RoomService {
   }
 
   /**
-   * 房主離開時的完整流程：
-   * 1. 從 Firestore 刪除房間文件（讓房間從列表消失）
-   * 2. 回傳剩餘成員列表，供呼叫端決定是否需要提升新房主
+   * 房主離開時的完整流程（Host Migration）：
+   * 1. 將房間 status 設為 'migrating'，遞增 hostMigrationEpoch
+   * 2. 嘗試從剩餘成員中選出新房主（promoteNewHost）
+   * 3. 如果找到新房主：更新 ownerUid，設 status='open'
+   * 4. 如果無剩餘成員：設 status='closed'（不刪除文件）
    *
    * 注意：P2P 連線由 P2PManager 管理，這裡只處理 Firestore 狀態。
    */
   static async ownerLeaveRoom(
     roomId: string,
-    ownerUid: string
-  ): Promise<{ remainingParticipants: string[] }> {
+    ownerUid: string,
+    callerName?: string | null,
+    promoteNewHostFn?: (
+      remainingParticipants: string[],
+      callerUid: string,
+      callerName: string | null
+    ) => Promise<string | null>
+  ): Promise<{ remainingParticipants: string[]; newOwnerUid?: string }> {
     const room = await this.getRoom(roomId);
     if (!room) {
       return { remainingParticipants: [] };
@@ -395,17 +408,124 @@ export class RoomService {
     }
 
     const remainingParticipants = room.participants.filter((p) => p !== ownerUid);
+    const currentEpoch = room.hostMigrationEpoch ?? 0;
+    const newEpoch = currentEpoch + 1;
 
-    // 刪除房間文件（讓房間從 Firebase 消失）
-    await deleteDoc(doc(db, 'p2pRooms', roomId));
+    // Step 1: Set status = 'migrating' and increment epoch
+    await updateDoc(doc(db, 'p2pRooms', roomId), {
+      status: 'migrating',
+      hostMigrationEpoch: newEpoch,
+    });
 
-    console.log('[RoomService] ownerLeaveRoom: room deleted from Firebase', {
+    if (DEBUG_ROOMS) {
+      console.log('[RoomService] ownerLeaveRoom: set migrating', {
+        roomId,
+        ownerUid,
+        newEpoch,
+        remainingParticipants,
+      });
+    }
+
+    if (remainingParticipants.length === 0) {
+      // No remaining participants → close the room (do NOT delete document)
+      await updateDoc(doc(db, 'p2pRooms', roomId), {
+        status: 'closed',
+        previousRoomId: room.previousRoomId ?? null,
+        lineageRootRoomId: room.lineageRootRoomId ?? roomId,
+      });
+
+      console.log('[RoomService] ownerLeaveRoom: no remaining participants, room closed', {
+        roomId,
+        ownerUid,
+      });
+
+      return { remainingParticipants: [] };
+    }
+
+    // Step 2: Promote new host if promotion function provided
+    if (promoteNewHostFn) {
+      const newRoomId = await promoteNewHostFn(
+        remainingParticipants,
+        remainingParticipants[0]!,
+        callerName ?? null
+      );
+
+      if (newRoomId) {
+        // New room created by promoted owner - close this room
+        await updateDoc(doc(db, 'p2pRooms', roomId), {
+          status: 'closed',
+          previousRoomId: room.previousRoomId ?? null,
+          lineageRootRoomId: room.lineageRootRoomId ?? roomId,
+        });
+
+        console.log('[RoomService] ownerLeaveRoom: new host promoted, new room created', {
+          roomId,
+          ownerUid,
+          newRoomId,
+        });
+
+        return { remainingParticipants, newOwnerUid: remainingParticipants[0] };
+      }
+    }
+
+    // Step 3: Try to find a new owner among remaining participants
+    // Pick the first remaining participant as new owner
+    const newOwnerUid = remainingParticipants[0]!;
+
+    await updateDoc(doc(db, 'p2pRooms', roomId), {
+      ownerUid: newOwnerUid,
+      status: 'open',
+      participants: remainingParticipants,
+      previousRoomId: room.previousRoomId ?? null,
+      lineageRootRoomId: room.lineageRootRoomId ?? roomId,
+    });
+
+    console.log('[RoomService] ownerLeaveRoom: host migrated', {
       roomId,
-      ownerUid,
+      oldOwnerUid: ownerUid,
+      newOwnerUid,
+      newEpoch,
       remainingParticipants,
     });
 
-    return { remainingParticipants };
+    return { remainingParticipants, newOwnerUid };
+  }
+
+  /**
+   * Update room status
+   */
+  static async updateRoomStatus(roomId: string, status: RoomStatus): Promise<void> {
+    await updateDoc(doc(db, 'p2pRooms', roomId), { status });
+    if (DEBUG_ROOMS) {
+      console.log('[RoomService] updateRoomStatus', { roomId, status });
+    }
+  }
+
+  /**
+   * Increment room version (CAS bump)
+   */
+  static async incrementVersion(roomId: string): Promise<void> {
+    const room = await this.getRoom(roomId);
+    if (!room) throw new Error('房間不存在');
+    const currentVersion = room.version ?? 0;
+    await updateDoc(doc(db, 'p2pRooms', roomId), {
+      version: currentVersion + 1,
+    });
+    if (DEBUG_ROOMS) {
+      console.log('[RoomService] incrementVersion', { roomId, newVersion: currentVersion + 1 });
+    }
+  }
+
+  /**
+   * Set capability hint on the room
+   */
+  static async setCapabilityHint(roomId: string, capability: RoomCapability): Promise<void> {
+    await updateDoc(doc(db, 'p2pRooms', roomId), {
+      capabilityHint: capability,
+    });
+    if (DEBUG_ROOMS) {
+      console.log('[RoomService] setCapabilityHint', { roomId, capability });
+    }
   }
 
   /**
