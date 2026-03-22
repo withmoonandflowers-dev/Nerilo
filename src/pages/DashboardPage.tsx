@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFeatures } from '../contexts/FeatureContext';
-import { RoomService } from '../services/RoomService';
+import { useServices } from '../contexts/ServicesContext';
 import type { P2PRoom } from '../types';
+import { featureLog } from '../utils/featureLog';
 import './DashboardPage.css';
 
 const DashboardPage: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
   const { searchFeatures } = useFeatures();
+  const { roomService } = useServices();
   const [searchKeyword, setSearchKeyword] = useState('');
   const [rooms, setRooms] = useState<P2PRoom[]>([]);
   const [publicRooms, setPublicRooms] = useState<P2PRoom[]>([]);
@@ -25,28 +27,29 @@ const DashboardPage: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = RoomService.subscribeUserRooms(user.uid, (roomList) => {
+    const unsubscribe = roomService.subscribeUserRooms(user.uid, (roomList) => {
       console.log('[Dashboard] subscribeUserRooms for uid', user.uid, roomList);
       setRooms(roomList);
     });
 
     return unsubscribe;
-  }, [user]);
+  }, [user, roomService]);
 
   // 監聽所有公開房間（供訪客與一般使用者瀏覽）
   useEffect(() => {
-    const unsubscribe = RoomService.subscribePublicRooms((roomList) => {
+    const unsubscribe = roomService.subscribePublicRooms((roomList) => {
       console.log('[Dashboard] subscribePublicRooms', roomList);
       setPublicRooms(roomList);
     });
     return unsubscribe;
-  }, []);
+  }, [roomService]);
 
   const handleAuthButtonClick = async () => {
     if (isGuest) {
       navigate('/login');
       return;
     }
+    featureLog('auth', 'logout', {});
     await logout();
     navigate('/login');
   };
@@ -91,7 +94,7 @@ const DashboardPage: React.FC = () => {
       });
       
       // 建立房間（requireAuth: true 確保只允許登入用戶）
-      const roomId = await RoomService.createRoom(
+      const roomId = await roomService.createRoom(
         user.uid, 
         ownerName, 
         isPrivate,
@@ -100,9 +103,8 @@ const DashboardPage: React.FC = () => {
         true // 要求已登入
       );
       
+      featureLog('dashboard', 'room_created', { roomId });
       console.log('[Dashboard] Room created successfully', { roomId });
-      
-      // 創建房間後進入等待頁面
       navigate(`/waiting/${roomId}`);
     } catch (error: any) {
       console.error('[Dashboard] Failed to create room', {
@@ -125,10 +127,11 @@ const DashboardPage: React.FC = () => {
     }
 
     try {
+      featureLog('dashboard', 'join_room_clicked', { roomId, uid: user.uid });
       console.log('[Dashboard] handleJoinRoom called', { roomId, uid: user.uid });
 
       // 先取得房間資訊，判斷狀態
-      const room = await RoomService.getRoom(roomId);
+      const room = await roomService.getRoom(roomId);
       if (!room) {
         console.warn('[Dashboard] Room not found', { roomId });
         alert('房間不存在');
@@ -148,11 +151,10 @@ const DashboardPage: React.FC = () => {
         return;
       }
 
-      // 加入房間（這可能會觸發狀態從 waiting 轉為 open）
-      await RoomService.joinRoom(roomId, user.uid);
+      await roomService.joinRoom(roomId, user.uid);
+      featureLog('dashboard', 'room_joined_from_list', { roomId });
 
-      // 再次取得房間資訊，檢查狀態是否已改變
-      const updatedRoom = await RoomService.getRoom(roomId);
+      const updatedRoom = await roomService.getRoom(roomId);
       if (!updatedRoom) {
         console.warn('[Dashboard] Room not found after join', { roomId });
         alert('房間不存在');
@@ -200,6 +202,12 @@ const DashboardPage: React.FC = () => {
         </div>
       </header>
 
+      {authLoading && (
+        <div className="dashboard-loading">
+          <p>載入中...</p>
+        </div>
+      )}
+      {!authLoading && (
       <main className="dashboard-main">
         {/* 房間區塊 */}
         <section className="rooms-section">
@@ -356,6 +364,7 @@ const DashboardPage: React.FC = () => {
           )}
         </section>
       </main>
+      )}
     </div>
   );
 };

@@ -25,7 +25,18 @@ export default defineConfig(({ mode }) => ({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
-      include: ['src/core/mesh/SharedDataStream.ts', 'src/utils/crypto.ts'],
+      include: [
+        // 核心工具
+        'src/utils/crypto.ts',
+        'src/utils/uuid.ts',
+        // 核心資料結構
+        'src/core/mesh/SharedDataStream.ts',
+        // 業務邏輯（純函式 / 可 mock 的服務）
+        'src/features/chat/hooks/useP2PArchitecture.ts',
+        'src/features/chat/hooks/useChatMessages.ts',
+        'src/features/chat/MeshChatService.ts',
+        'src/services/RoomService.ts',
+      ],
       exclude: ['node_modules', 'tests'],
     },
   },

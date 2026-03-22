@@ -79,6 +79,13 @@ service cloud.firestore {
         // 不允許更新或刪除（append-only）
         allow update, delete: if false;
       }
+
+      // Messages subcollection - 備援聊天訊息（P2P 未連線時使用）
+      match /messages/{messageId} {
+        allow read, create: if isAuthenticated() &&
+          request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
+        allow update, delete: if false;
+      }
     }
 
     // 明確禁止其他集合儲存敏感內容

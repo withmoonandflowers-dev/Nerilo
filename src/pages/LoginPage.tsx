@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { featureLog } from '../utils/featureLog';
 import './LoginPage.css';
 
 const LoginPage: React.FC = () => {
@@ -8,8 +9,15 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { loginWithEmail, loginWithGoogle } = useAuth();
+  const { user, loginWithEmail, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+
+  // 已登入（非遊客）時直接進入儀表板，避免重複登入
+  React.useEffect(() => {
+    if (user && user.role !== 'guest') {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [user, navigate]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,9 +26,10 @@ const LoginPage: React.FC = () => {
 
     try {
       await loginWithEmail(email, password);
+      featureLog('auth', 'login', { method: 'email' });
       navigate('/dashboard');
-    } catch (err: any) {
-      setError(err.message || '登入失敗');
+    } catch (err: unknown) {
+      setError((err as Error)?.message || '登入失敗');
     } finally {
       setLoading(false);
     }
@@ -32,9 +41,10 @@ const LoginPage: React.FC = () => {
 
     try {
       await loginWithGoogle();
+      featureLog('auth', 'login', { method: 'google' });
       navigate('/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Google 登入失敗');
+    } catch (err: unknown) {
+      setError((err as Error)?.message || 'Google 登入失敗');
     } finally {
       setLoading(false);
     }

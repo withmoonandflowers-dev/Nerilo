@@ -1,6 +1,7 @@
 import type { P2PEnvelope, ChatMessage } from '../../types';
 import { P2PChannelBus } from '../../core/p2p/P2PChannelBus';
 import { generateUUID } from '../../utils/uuid';
+import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 
 export class ChatService {
@@ -8,18 +9,21 @@ export class ChatService {
   private localUid: string;
   private deviceId: string;
   private roomId: string;
+  private chatStorage: IChatStorage;
   private messageListeners: Set<(message: ChatMessage) => void> = new Set();
 
   constructor(
     channelBus: P2PChannelBus,
     localUid: string,
     deviceId: string,
-    roomId: string
+    roomId: string,
+    chatStorage: IChatStorage = indexedDBService
   ) {
     this.channelBus = channelBus;
     this.localUid = localUid;
     this.deviceId = deviceId;
     this.roomId = roomId;
+    this.chatStorage = chatStorage;
     this.setupHandlers();
   }
 
@@ -55,8 +59,7 @@ export class ChatService {
       contentLength: content.length,
     });
 
-    // 儲存到 IndexedDB
-    await indexedDBService.saveChatMessage(message, this.roomId);
+    await this.chatStorage.saveChatMessage(message, this.roomId);
     console.log('[ChatService] Message saved to IndexedDB', { roomId: this.roomId, messageId });
 
     // 發送 P2P 訊息
@@ -92,7 +95,7 @@ export class ChatService {
 
   async editMessage(messageId: string, newContent: string): Promise<void> {
     // 更新 IndexedDB
-    await indexedDBService.updateChatMessage(messageId, {
+    await this.chatStorage.updateChatMessage(messageId, {
       content: newContent,
       edited: true,
     });
@@ -115,8 +118,7 @@ export class ChatService {
   }
 
   async deleteMessage(messageId: string): Promise<void> {
-    // 更新 IndexedDB
-    await indexedDBService.updateChatMessage(messageId, {
+    await this.chatStorage.updateChatMessage(messageId, {
       deleted: true,
     });
 
@@ -149,7 +151,7 @@ export class ChatService {
   }
 
   async loadHistory(limit = 100): Promise<ChatMessage[]> {
-    return await indexedDBService.getChatMessages(this.roomId, limit);
+    return await this.chatStorage.getChatMessages(this.roomId, limit);
   }
 
   onMessage(listener: (message: ChatMessage) => void): () => void {
@@ -195,8 +197,7 @@ export class ChatService {
       contentLength: message.content.length,
     });
 
-    // 儲存到 IndexedDB
-    await indexedDBService.saveChatMessage(message, this.roomId);
+    await this.chatStorage.saveChatMessage(message, this.roomId);
     console.log('[ChatService] Message saved to IndexedDB in handleMessageSend', {
       roomId: this.roomId,
       messageId: message.messageId,
@@ -216,7 +217,7 @@ export class ChatService {
   }
 
   private async handleMessageEdit(payload: { messageId: string; content: string }): Promise<void> {
-    await indexedDBService.updateChatMessage(payload.messageId, {
+    await this.chatStorage.updateChatMessage(payload.messageId, {
       content: payload.content,
       edited: true,
     });
@@ -225,7 +226,7 @@ export class ChatService {
   }
 
   private async handleMessageDelete(payload: { messageId: string }): Promise<void> {
-    await indexedDBService.updateChatMessage(payload.messageId, {
+    await this.chatStorage.updateChatMessage(payload.messageId, {
       deleted: true,
     });
   }

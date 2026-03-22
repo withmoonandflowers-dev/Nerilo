@@ -10,15 +10,12 @@ test('兩個 guest 可以建立房間並互相傳訊息', async ({ browser }) =>
 
   // 將瀏覽器 console log 帶到測試輸出，方便偵錯 P2P 狀態
   pageA.on('console', (msg) => {
-    // 只輸出一般 log，避免過多雜訊
     if (msg.type() === 'log' || msg.type() === 'error' || msg.type() === 'warning') {
-      // eslint-disable-next-line no-console
       console.log('[A]', msg.type(), msg.text());
     }
   });
   pageB.on('console', (msg) => {
     if (msg.type() === 'log' || msg.type() === 'error' || msg.type() === 'warning') {
-      // eslint-disable-next-line no-console
       console.log('[B]', msg.type(), msg.text());
     }
   });

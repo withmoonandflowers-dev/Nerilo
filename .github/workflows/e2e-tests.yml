@@ -1,4 +1,5 @@
-name: E2E Tests
+# 全量 E2E（含依賴 WebRTC 的案例）；主 CI 門檻為 .github/workflows/ci.yml（品質 + 穩定 E2E 子集）
+name: E2E Tests (Full)
 
 on:
   push:
