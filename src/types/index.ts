@@ -188,6 +188,96 @@ export interface MeshIdentity {
   joinedAt: number;
 }
 
+// ========== 房間合併/分岔：Chain Marker Payload 型別 ==========
+
+/**
+ * Merge Marker：寫入 Room B 的主鏈，代表「Room A 被合併進來」
+ * 寫入時機：Room B owner 呼叫 acceptMergeRequest() 時
+ */
+export interface ChainMergeMarkerPayload {
+  _type: 'room:merged';
+  /** 被合併的房間 ID（Room A）*/
+  sourceRoomId: string;
+  /** 合併完成的時間戳 */
+  mergedAt: number;
+  /** Room A 的 owner UID */
+  sourceOwnerUid: string;
+}
+
+/**
+ * Split-From Marker：寫入 Room B 的主鏈（第一筆條目），代表「我從 Room A 分岔出來」
+ * 寫入時機：new Room B owner 呼叫 acceptSplitPlan() 時
+ */
+export interface ChainSplitFromMarkerPayload {
+  _type: 'room:split_from';
+  /** 原始房間 ID（Room A）*/
+  sourceRoomId: string;
+  /** 分岔的時間戳 */
+  splitAt: number;
+  /** 分岔時 Room A 的鏈長度（用來截取 provenance）*/
+  sourceChainLength: number;
+}
+
+/**
+ * Split-To Marker：寫入 Room A 的主鏈，代表「Room B 從我分岔出去了」
+ * 寫入時機：Room A owner 偵測到 split completed 後
+ */
+export interface ChainSplitToMarkerPayload {
+  _type: 'room:split_to';
+  /** 新分岔出的房間 ID（Room B）*/
+  targetRoomId: string;
+  /** 移走的成員列表 */
+  targetParticipants: string[];
+  /** 分岔的時間戳 */
+  splitAt: number;
+}
+
+// ========== Provenance（鏈血統）型別 ==========
+
+/** Provenance 鏈的摘要（用於 P2P announce 訊息，不含完整 entries）*/
+export interface ChainProvenanceSummary {
+  /** 原始房間 ID */
+  sourceRoomId: string;
+  /** 如何繼承此鏈：merge = 合併進來；split = 分岔繼承 */
+  operation: 'merge' | 'split';
+  /** 原始鏈的條目數 */
+  entryCount: number;
+  /** 原始鏈最後一筆條目的 entryHash（用於驗證完整性）*/
+  lastHash: string;
+}
+
+/** 帶有 provenance 標記的擴充條目（用於 getFullHistory() 顯示）*/
+export interface LedgerEntryWithProvenance extends LedgerEntry {
+  /** 是否為 provenance 條目（true = 來自另一個房間的歷史）*/
+  isProvenance: boolean;
+  /** 若為 provenance，記錄原始房間 ID */
+  sourceRoomId?: string;
+  /** 繼承方式 */
+  provenanceOperation?: 'merge' | 'split';
+}
+
+// ========== P2P Provenance 同步訊息型別 ==========
+
+/** 宣告自己擁有 provenance 鏈（連線建立後發送）*/
+export interface ChainProvenanceAnnounce {
+  type: 'chain-sync:provenance-announce';
+  provenances: ChainProvenanceSummary[];
+}
+
+/** 請求某個 provenance 鏈的完整條目 */
+export interface ChainProvenanceRequest {
+  type: 'chain-sync:provenance-request';
+  sourceRoomId: string;
+}
+
+/** 回覆 provenance 鏈的完整條目 */
+export interface ChainProvenanceResponse {
+  type: 'chain-sync:provenance-response';
+  sourceRoomId: string;
+  operation: 'merge' | 'split';
+  entries: LedgerEntry[];
+}
+
 // ========== 共享資料流（區塊鏈式） ==========
 
 /** 共享資料流 payload：任意 JSON 可序列化，由業務層定義 */
