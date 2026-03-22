@@ -39,5 +39,12 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 
+# Functions 建置產物
+functions/lib
 
 
+
+
+# Tool directories
+.claude/
+.cursor/
