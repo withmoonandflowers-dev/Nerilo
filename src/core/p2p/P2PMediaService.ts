@@ -152,7 +152,7 @@ export class P2PMediaService {
       case 'MEDIA_READY':
         // 遠端媒體已準備，可以開始顯示
         break;
-      case 'MEDIA_TOGGLE':
+      case 'MEDIA_TOGGLE': {
         // 遠端媒體狀態變更
         const { audioMuted, videoMuted } = envelope.payload as Partial<MediaState>;
         if (audioMuted !== undefined) {
@@ -163,6 +163,7 @@ export class P2PMediaService {
         }
         this.notifyStateListeners();
         break;
+      }
       case 'MEDIA_END':
         // 遠端結束媒體
         this.remoteStream = null;

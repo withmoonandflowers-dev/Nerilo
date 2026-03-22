@@ -1,7 +1,36 @@
 # 測試與建置執行腳本說明
 
-本目錄提供可重複執行的腳本，用於本機或 CI 環境跑單元測試、E2E 測試與建置。  
-詳細測試流程與需求對照請見 [docs/完整測試流程.md](../docs/完整測試流程.md)。
+本目錄提供可重複執行的腳本，用於本機、CI 環境，以及 **Cowork 直接呼叫**。
+每個指令同時提供 `.sh`（macOS / Linux / Cowork sandbox）與 `.bat`（Windows）兩種版本。
+
+詳細測試流程與需求對照請見 [docs/完整測試流程.md](../docs/完整測試流程.md)。文件索引見 [docs/README.md](../docs/README.md)。
+
+## Cowork 可直接呼叫的腳本（sh + bat）
+
+| 腳本 | 用途 | Cowork 呼叫方式 |
+|------|------|----------------|
+| `check.sh` | type-check + 單元測試（品質門檻） | `bash scripts/check.sh` |
+| `check.sh --lint` | 同上，加入 ESLint | `bash scripts/check.sh --lint` |
+| `test.sh` | 僅執行單元測試 | `bash scripts/test.sh` |
+| `test.sh --watch` | 監聽模式（開發用） | `bash scripts/test.sh --watch` |
+| `test-coverage.sh` | 單元測試 + HTML coverage 報表 | `bash scripts/test-coverage.sh` |
+| `build.sh` | 建置前端（tsc + vite build） | `bash scripts/build.sh` |
+| `build.sh --check` | 先品質門檻再 build | `bash scripts/build.sh --check` |
+| `git-commit-fixes.sh` | 提交本輪 bug fixes | `bash scripts/git-commit-fixes.sh` |
+| `git-commit-tests.sh` | 提交本輪新增測試與腳本 | `bash scripts/git-commit-tests.sh` |
+
+### Windows 使用者
+
+將上方 `.sh` 替換為 `.bat`，在命令提示字元或 PowerShell 執行即可：
+
+```bat
+scripts\check.bat
+scripts\test.bat
+scripts\test-coverage.bat --open
+scripts\build.bat --check
+scripts\git-commit-fixes.bat
+scripts\git-commit-tests.bat
+```
 
 ## 環境需求
 
@@ -11,6 +40,27 @@
 - 依賴 WebRTC / Firebase 的 E2E 需可連線至 Firebase 專案（或使用 Emulator）
 
 ## 腳本一覽（Windows PowerShell）
+
+### 部署／上板
+
+| 腳本 | 用途 |
+|------|------|
+| `deploy.ps1` | 建置 + `firebase deploy --only hosting` |
+| `deploy.ps1 -Check` | 先 type-check、lint、單元測試，通過後再 build + deploy hosting |
+| `deploy.ps1 -Full` | 建置 + `firebase deploy`（hosting + firestore + functions） |
+| `deploy-safe.ps1` | 等同 `deploy.ps1 -Check`（安全上板） |
+
+詳見 [docs/上板與部署手冊.md](../docs/上板與部署手冊.md)。歷史文件已清理，若需還原可參考 `scripts/cleanup-removed-docs.bat` 中的刪除清單。
+
+### 品質門檻（與 CI 一致）
+
+| 腳本 / 指令 | 用途 |
+|-------------|------|
+| `.\scripts\check.ps1` | type-check、單元測試（一鍵，等同 `npm run ci:fast`；通過再 push/PR） |
+| `npm run ci:fast`、`npm run check` | 同上，不依賴 PowerShell |
+| `npm run ci` | 完整門檻（含 lint），與 CI 一致 |
+
+### 測試
 
 | 腳本 | 用途 | 預估時間 |
 |------|------|----------|
@@ -35,6 +85,17 @@
 
 # 單元 + 全部 E2E
 .\scripts\run-all-tests.ps1
+
+# 上板（僅 Hosting）
+.\scripts\deploy.ps1
+
+# 安全上板（先檢查再部署）
+.\scripts\deploy.ps1 -Check
+.\scripts\deploy-safe.ps1
+
+# 品質門檻（push/PR 前建議執行）
+.\scripts\check.ps1
+# 或：npm run ci
 ```
 
 或從任意目錄指定專案根：
@@ -53,6 +114,9 @@
 
 | 腳本行為 | 對應 npm 指令 |
 |----------|----------------|
+| 上板（Hosting） | `npm run deploy` 或 `npm run build && firebase deploy --only hosting` |
+| 安全上板（檢查+部署） | `npm run deploy:safe` |
+| 品質門檻（type-check + lint + 單元測試） | `npm run ci` 或 `npm run check` |
 | 快速 E2E | `npm run test:e2e -- tests/e2e/waiting-room.spec.ts ...` |
 | 全部 E2E | `npm run test:e2e` |
 | 單元 | `npm run test:run` |

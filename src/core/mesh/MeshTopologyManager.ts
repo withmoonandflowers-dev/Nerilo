@@ -8,7 +8,8 @@ import { RoomService } from '../../services/RoomService';
 export class MeshTopologyManager {
   private neighbors: Map<string, MeshConnection> = new Map();
   private readonly k = 6; // 目標鄰居數量
-  private rotationInterval: NodeJS.Timeout | null = null;
+  private rotationInterval: ReturnType<typeof setInterval> | null = null;
+  private rotationStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private identityMap: Map<string, string> = new Map(); // firebaseUid -> userId
 
   constructor(
@@ -78,7 +79,8 @@ export class MeshTopologyManager {
     
     // 開始連線旋轉（延遲啟動，給連線一些時間建立）
     // 注意：連線建立是非同步的，這裡只是啟動旋轉機制
-    setTimeout(() => {
+    this.rotationStartTimeout = setTimeout(() => {
+      this.rotationStartTimeout = null;
       if (this.neighbors.size > 0) {
         this.startRotation();
         console.log('[MeshTopologyManager] Rotation started', {
@@ -300,6 +302,10 @@ export class MeshTopologyManager {
    * 清理資源
    */
   async cleanup(): Promise<void> {
+    if (this.rotationStartTimeout) {
+      clearTimeout(this.rotationStartTimeout);
+      this.rotationStartTimeout = null;
+    }
     if (this.rotationInterval) {
       clearInterval(this.rotationInterval);
       this.rotationInterval = null;

@@ -181,12 +181,10 @@ test.describe('架構選擇', () => {
     await pageA.waitForTimeout(5000);
 
     // 確認切換到 Mesh（注意：實際實現中，架構不會動態切換，但新加入的用戶會使用 Mesh）
-    // 這裡主要驗證系統能正確處理 3 人的情況
-    const hasMeshLogAfter = logsA.some(log => 
+    // 這裡主要驗證系統能正確處理 3 人的情況；不強制 assert 以避免 flaky
+    void logsA.some(log =>
       log.includes('Mesh') || log.includes('mesh') || log.includes('Gossip')
     );
-    // 注意：由於架構不會動態切換，A 和 B 可能仍使用星型拓撲
-    // 但 C 應該使用 Mesh，或者所有用戶都應該能正常通信
 
     await contextA.close();
     await contextB.close();
