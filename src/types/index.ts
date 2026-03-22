@@ -24,7 +24,7 @@ export interface P2PRoom {
   createdAt: number;
   waitingTimeout?: number; // 等待超時時間（毫秒），預設 5 分鐘
   waitingStartedAt?: number; // 開始等待的時間戳
-  
+
   // 小網狀架構相關（可選）
   meshIdentities?: {
     [firebaseUid: string]: {
@@ -33,8 +33,58 @@ export interface P2PRoom {
       joinedAt: number;
     };
   };
-  
+
   topology?: 'star' | 'mesh'; // 預設 'star'
+
+  // 待處理的合併請求 ID（由 roomRequests 集合管理）
+  pendingMergeRequestId?: string;
+  // 待處理的分岔計劃 ID（由 roomRequests 集合管理）
+  pendingSplitPlanId?: string;
+}
+
+// ========== 房間合併 / 分岔請求 ==========
+
+/** 合併請求：Room A（source）想被 Room B（target）吸收 */
+export interface RoomMergeRequest {
+  requestId: string;
+  type: 'merge';
+  status: 'pending' | 'accepted' | 'rejected' | 'completed' | 'expired';
+  /** 發起合併的房間（將被關閉）*/
+  sourceRoomId: string;
+  sourceOwnerUid: string;
+  /** 存活的目標房間 */
+  targetRoomId: string;
+  targetOwnerUid: string;
+  createdAt: number;
+  /** 請求過期時間（毫秒 epoch），預設 2 分鐘後 */
+  expiresAt: number;
+}
+
+/**
+ * 分岔計劃：房間 A 的部分成員分裂出去形成新房間 B
+ *
+ * 限制：
+ *  - 只有 sourceOwnerUid 可以發起
+ *  - newRoomOwnerUid 必須「目前沒有自己的房間」
+ *  - participantsToSplit 必須都是 source 房間的現有成員
+ *  - sourceOwnerUid 本身留在 source 房間（不能把自己分岔出去）
+ */
+export interface RoomSplitPlan {
+  planId: string;
+  type: 'split';
+  status: 'pending' | 'accepted' | 'completed' | 'cancelled';
+  /** 原始房間 */
+  sourceRoomId: string;
+  sourceOwnerUid: string;
+  /** 被指定為新房間房主的成員（自己不能擁有其他房間） */
+  newRoomOwnerUid: string;
+  /** 要移動到新房間的成員列表（必須包含 newRoomOwnerUid）*/
+  participantsToSplit: string[];
+  /** 新房間 ID（completed 後填入）*/
+  newRoomId?: string;
+  createdAt: number;
+  /** 計劃過期時間（毫秒 epoch），預設 5 分鐘後 */
+  expiresAt: number;
 }
 
 // Signaling 訊息

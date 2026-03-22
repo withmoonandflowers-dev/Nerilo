@@ -1,20 +1,25 @@
 import { MeshGossipManager } from '../../core/mesh/MeshGossipManager';
+import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 import type { ChatMessage, GossipMessage } from '../../types';
 
 /**
  * Mesh Chat Service
- * 使用 Gossip 協議處理聊天訊息
+ * 使用 Gossip 協議處理聊天訊息；支援注入 IChatStorage 以利測試與可插拔。
  */
 export class MeshChatService {
   private meshGossipManager: MeshGossipManager;
+  private chatStorage: IChatStorage;
   private messageListeners: Set<(message: ChatMessage) => void> = new Set();
+  private messageCounter = 0;
 
   constructor(
     private roomId: string,
-    private localUid: string
+    private localUid: string,
+    chatStorage: IChatStorage = indexedDBService
   ) {
     this.meshGossipManager = new MeshGossipManager(roomId);
+    this.chatStorage = chatStorage;
   }
 
   /**
@@ -33,8 +38,7 @@ export class MeshChatService {
         timestamp: gossipMessage.timestamp,
       };
 
-      // 儲存到 IndexedDB
-      indexedDBService.saveChatMessage(chatMessage, this.roomId).catch(error => {
+      this.chatStorage.saveChatMessage(chatMessage, this.roomId).catch(error => {
         console.error('[MeshChatService] Failed to save message to IndexedDB', { error });
       });
 
@@ -55,9 +59,8 @@ export class MeshChatService {
   async sendMessage(content: string): Promise<string> {
     await this.meshGossipManager.sendMessage(content);
 
-    // 生成 messageId（簡化版，實際應該從 Gossip 訊息獲取）
-    // 注意：這裡無法直接訪問 identityManager，所以使用時間戳
-    const messageId = `${this.localUid}-${Date.now()}`;
+    // 加入自增 counter 避免同一毫秒內發送多則訊息時 ID 碰撞
+    const messageId = `${this.localUid}-${Date.now()}-${++this.messageCounter}`;
     
     // 建立 ChatMessage（用於本地顯示）
     const chatMessage: ChatMessage = {
@@ -67,8 +70,7 @@ export class MeshChatService {
       timestamp: Date.now(),
     };
 
-    // 儲存到 IndexedDB
-    await indexedDBService.saveChatMessage(chatMessage, this.roomId);
+    await this.chatStorage.saveChatMessage(chatMessage, this.roomId);
 
     // 通知本地監聽器
     this.messageListeners.forEach(listener => listener(chatMessage));
@@ -80,7 +82,7 @@ export class MeshChatService {
    * 載入歷史訊息
    */
   async loadHistory(): Promise<ChatMessage[]> {
-    return await indexedDBService.getChatMessages(this.roomId);
+    return await this.chatStorage.getChatMessages(this.roomId);
   }
 
   /**

@@ -4,6 +4,7 @@
 
 import { useRef, useCallback } from 'react';
 import { MeshChatService } from '../MeshChatService';
+import type { IChatStorage } from '../../../ports';
 import type { ChatMessage, ConnectionState } from '../../../types';
 
 export interface MeshTopologyState {
@@ -12,10 +13,15 @@ export interface MeshTopologyState {
   isInitialized: boolean;
 }
 
+export interface UseMeshTopologyOptions {
+  chatStorage?: IChatStorage;
+}
+
 /**
- * Hook 用於管理 Mesh 拓撲 P2P 連線
+ * Hook 用於管理 Mesh 拓撲 P2P 連線；可注入 chatStorage 以利測試與可插拔。
  */
-export function useMeshTopology() {
+export function useMeshTopology(options?: UseMeshTopologyOptions) {
+  const chatStorage = options?.chatStorage;
   const meshChatServiceRef = useRef<MeshChatService | null>(null);
   const connectionStateRef = useRef<ConnectionState>('idle');
   const stateCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -40,12 +46,12 @@ export function useMeshTopology() {
         uid,
       });
 
-      // 建立 MeshChatService
-      const meshChatService = new MeshChatService(roomId, uid);
+      const meshChatService = new MeshChatService(roomId, uid, chatStorage);
       await meshChatService.initialize();
       meshChatServiceRef.current = meshChatService;
 
       // 監聽連線狀態（持續監聽，因為 Mesh 連線可能需要時間）
+      // 只在狀態實際改變時才呼叫 onStateChange，避免不必要的 re-render
       stateCheckIntervalRef.current = setInterval(() => {
         if (!meshChatServiceRef.current) {
           if (stateCheckIntervalRef.current) {
@@ -55,15 +61,14 @@ export function useMeshTopology() {
           return;
         }
         const state = meshChatServiceRef.current.getConnectionState();
-        connectionStateRef.current = state;
-        onStateChange(state);
-
-        // 只在狀態變化時記錄
-        if (state === 'connected') {
-          console.log('[useMeshTopology] Mesh connection established', {
+        if (state !== connectionStateRef.current) {
+          console.log('[useMeshTopology] Mesh connection state changed', {
             roomId,
-            state,
+            from: connectionStateRef.current,
+            to: state,
           });
+          connectionStateRef.current = state;
+          onStateChange(state);
         }
       }, 2000); // 每 2 秒檢查一次
 
@@ -80,7 +85,7 @@ export function useMeshTopology() {
       onStateChange('failed');
       throw error;
     }
-  }, []);
+  }, [chatStorage]);
 
   /**
    * 發送訊息

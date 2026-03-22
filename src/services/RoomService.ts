@@ -1,10 +1,10 @@
-import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
 import type { P2PRoom } from '../types';
 
-// 快速開關房間相關 debug log（目前強制開啟，方便在正式環境排錯）
-const DEBUG_ROOMS = true;
+// 只在開發模式或明確啟用時輸出 debug log，避免正式環境噪音
+const DEBUG_ROOMS = import.meta.env.DEV || import.meta.env.VITE_DEBUG_ROOMS === 'true';
 
 export class RoomService {
   /**
@@ -221,12 +221,8 @@ export class RoomService {
       newParticipants,
     });
 
-    // 如果房間是 waiting 狀態，且有新參與者加入，自動轉為 open
-    // 或者如果房間是 waiting 狀態，且參與者數量 >= 2，也應該轉為 open
-    const shouldActivate = roomData.status === 'waiting' && (
-      isNewParticipant || 
-      newParticipants.length >= 2
-    );
+    // 當 waiting 房間人數達到 2 人時，自動轉為 open 狀態
+    const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
 
     console.log('[RoomService] joinRoom - activation check', {
       roomId,
@@ -234,9 +230,6 @@ export class RoomService {
       status: roomData.status,
       participantCount: newParticipants.length,
       isNewParticipant,
-      reason: shouldActivate 
-        ? (isNewParticipant ? 'new participant' : 'participant count >= 2')
-        : 'no activation needed',
     });
 
     if (isNewParticipant || shouldActivate) {
@@ -246,25 +239,26 @@ export class RoomService {
 
       if (shouldActivate) {
         updateData.status = 'open';
-        console.log('[RoomService] Room activated', { 
-          roomId, 
-          participants: newParticipants,
-          participantCount: newParticipants.length,
-          reason: isNewParticipant ? 'new participant joined' : 'participant count >= 2',
-        });
+        if (DEBUG_ROOMS) {
+          console.log('[RoomService] Room activated', {
+            roomId,
+            participants: newParticipants,
+            participantCount: newParticipants.length,
+          });
+        }
       }
 
       console.log('[RoomService] joinRoom - updating room', { roomId, updateData });
       await updateDoc(roomDoc, updateData);
-      console.log('[RoomService] joinRoom - room updated successfully', { 
+      console.log('[RoomService] joinRoom - room updated successfully', {
         roomId,
         newStatus: updateData.status || roomData.status,
         newParticipantCount: newParticipants.length,
       });
     } else {
-      console.log('[RoomService] joinRoom - no update needed', { 
-        roomId, 
-        uid, 
+      console.log('[RoomService] joinRoom - no update needed', {
+        roomId,
+        uid,
         isNewParticipant,
         currentStatus: roomData.status,
         participantCount: newParticipants.length,
@@ -329,7 +323,7 @@ export class RoomService {
   }
 
   /**
-   * 關閉房間
+   * 關閉房間（標記 status = closed，文件仍保留在 Firestore）
    */
   static async closeRoom(roomId: string, ownerUid: string): Promise<void> {
     const room = await this.getRoom(roomId);
@@ -344,6 +338,74 @@ export class RoomService {
     await updateDoc(doc(db, 'p2pRooms', roomId), {
       status: 'closed',
     });
+  }
+
+  /**
+   * 房主離開房間：直接從 Firestore 刪除房間文件
+   *
+   * 設計說明：
+   * - 房間文件從 Firebase 刪除 → 房間從公開列表消失
+   * - 已建立的 P2P WebRTC 連線不受影響（連線不依賴 Firestore）
+   * - 若剩餘成員中有人沒有自己的房間，可透過 RoomRequestService.promoteNewHost()
+   *   另建新房間，讓後續新人可找到入口
+   *
+   * @param roomId   房間 ID
+   * @param ownerUid 必須是房主的 UID，否則拒絕操作
+   */
+  static async deleteRoom(roomId: string, ownerUid: string): Promise<void> {
+    const room = await this.getRoom(roomId);
+    if (!room) {
+      // 文件已不存在，視為成功
+      return;
+    }
+
+    if (room.ownerUid !== ownerUid) {
+      throw new Error('只有房間擁有者可以刪除房間');
+    }
+
+    await deleteDoc(doc(db, 'p2pRooms', roomId));
+
+    if (DEBUG_ROOMS) {
+      console.log('[RoomService] deleteRoom: room removed from Firebase', {
+        roomId,
+        ownerUid,
+        participants: room.participants,
+      });
+    }
+  }
+
+  /**
+   * 房主離開時的完整流程：
+   * 1. 從 Firestore 刪除房間文件（讓房間從列表消失）
+   * 2. 回傳剩餘成員列表，供呼叫端決定是否需要提升新房主
+   *
+   * 注意：P2P 連線由 P2PManager 管理，這裡只處理 Firestore 狀態。
+   */
+  static async ownerLeaveRoom(
+    roomId: string,
+    ownerUid: string
+  ): Promise<{ remainingParticipants: string[] }> {
+    const room = await this.getRoom(roomId);
+    if (!room) {
+      return { remainingParticipants: [] };
+    }
+
+    if (room.ownerUid !== ownerUid) {
+      throw new Error('只有房間擁有者可以執行 ownerLeaveRoom');
+    }
+
+    const remainingParticipants = room.participants.filter((p) => p !== ownerUid);
+
+    // 刪除房間文件（讓房間從 Firebase 消失）
+    await deleteDoc(doc(db, 'p2pRooms', roomId));
+
+    console.log('[RoomService] ownerLeaveRoom: room deleted from Firebase', {
+      roomId,
+      ownerUid,
+      remainingParticipants,
+    });
+
+    return { remainingParticipants };
   }
 
   /**
