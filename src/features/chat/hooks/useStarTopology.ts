@@ -5,6 +5,7 @@
 import { useRef, useCallback } from 'react';
 import { P2PManager } from '../../../core/p2p/P2PManager';
 import { ChatService } from '../ChatService';
+import type { IChatStorage } from '../../../ports';
 import type { ChatMessage, ConnectionState } from '../../../types';
 
 export interface StarTopologyState {
@@ -14,13 +15,20 @@ export interface StarTopologyState {
   isInitialized: boolean;
 }
 
+export interface UseStarTopologyOptions {
+  chatStorage?: IChatStorage;
+}
+
 /**
- * Hook 用於管理星型拓撲 P2P 連線
+ * Hook 用於管理星型拓撲 P2P 連線；可注入 chatStorage 以利測試與可插拔。
  */
-export function useStarTopology() {
+export function useStarTopology(options?: UseStarTopologyOptions) {
+  const chatStorage = options?.chatStorage;
   const p2pManagerRef = useRef<P2PManager | null>(null);
   const chatServiceRef = useRef<ChatService | null>(null);
   const connectionStateRef = useRef<ConnectionState>('idle');
+  const stateCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stateUnsubscribeRef = useRef<(() => void) | null>(null);
 
   /**
    * 初始化星型拓撲 P2P 連線
@@ -93,8 +101,8 @@ export function useStarTopology() {
       }, 500); // 每 500ms 檢查一次（更頻繁）
 
       // 清理定時器（在 cleanup 時清理）
-      (p2pManagerRef.current as any).__stateCheckInterval = stateCheckInterval;
-      (p2pManagerRef.current as any).__stateUnsubscribe = stateUnsubscribe;
+      stateCheckIntervalRef.current = stateCheckInterval;
+      stateUnsubscribeRef.current = stateUnsubscribe;
 
       // 等待 ChannelBus 準備好
       const checkChannelBus = setInterval(() => {
@@ -110,13 +118,13 @@ export function useStarTopology() {
             onStateChange('connected');
           }
 
-          // 初始化 ChatService
           const deviceId = p2pManager.getDeviceId();
           const chatService = new ChatService(
             channelBus,
             uid,
             deviceId,
-            roomId
+            roomId,
+            chatStorage
           );
           chatServiceRef.current = chatService;
 
@@ -138,7 +146,7 @@ export function useStarTopology() {
       onStateChange('failed');
       throw error;
     }
-  }, []);
+  }, [chatStorage]);
 
   /**
    * 發送訊息
@@ -154,19 +162,19 @@ export function useStarTopology() {
    * 清理資源
    */
   const cleanup = useCallback(() => {
+    // 清理狀態檢查定時器
+    if (stateCheckIntervalRef.current) {
+      clearInterval(stateCheckIntervalRef.current);
+      stateCheckIntervalRef.current = null;
+    }
+
+    // 取消狀態監聽
+    if (stateUnsubscribeRef.current) {
+      stateUnsubscribeRef.current();
+      stateUnsubscribeRef.current = null;
+    }
+
     if (p2pManagerRef.current) {
-      // 清理狀態檢查定時器
-      const stateCheckInterval = (p2pManagerRef.current as any).__stateCheckInterval;
-      if (stateCheckInterval) {
-        clearInterval(stateCheckInterval);
-      }
-      
-      // 取消狀態監聽
-      const stateUnsubscribe = (p2pManagerRef.current as any).__stateUnsubscribe;
-      if (stateUnsubscribe) {
-        stateUnsubscribe();
-      }
-      
       p2pManagerRef.current.close();
       p2pManagerRef.current = null;
     }

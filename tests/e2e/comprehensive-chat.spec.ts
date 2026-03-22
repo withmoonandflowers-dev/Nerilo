@@ -21,12 +21,8 @@ test.describe('完整功能測試套件', () => {
       await expect(page.locator('.role-badge')).toBeVisible({ timeout: 15_000 });
       
       // 在測試環境中，按鈕可能啟用（因為 VITE_ALLOW_GUEST_CREATE_ROOM）
-      // 但正常情況下應該被禁用
+      // 這裡只檢查按鈕存在
       const createButton = page.getByRole('button', { name: '+ 建立新房間' });
-      const isDisabled = await createButton.isDisabled();
-      
-      // 在非測試環境中，按鈕應該被禁用
-      // 這裡我們只檢查按鈕存在
       expect(createButton).toBeVisible();
     });
   });
