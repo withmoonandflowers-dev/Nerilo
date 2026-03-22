@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SharedDataStream } from '../../src/core/mesh/SharedDataStream';
 import { computeEntryHash, computePayloadHash } from '../../src/utils/crypto';
 import type { LedgerEntry } from '../../src/types';
@@ -83,10 +83,12 @@ describe('SharedDataStream', () => {
       const e0 = await stream.append({ n: 0 });
       const payload1 = { n: 1 };
       const payloadHash1 = await computePayloadHash(payload1);
+      // 固定 timestamp，避免 computeEntryHash 與 entry 物件使用不同毫秒造成 hash 不符
+      const ts1 = Date.now();
       const entryHash1 = await computeEntryHash({
         previousHash: e0.entryHash,
         index: 1,
-        timestamp: Date.now(),
+        timestamp: ts1,
         payloadHash: payloadHash1,
         creatorId: 'user-b',
       });
@@ -94,7 +96,7 @@ describe('SharedDataStream', () => {
         index: 1,
         previousHash: e0.entryHash,
         payloadHash: payloadHash1,
-        timestamp: Date.now(),
+        timestamp: ts1,
         creatorId: 'user-b',
         payload: payload1,
         entryHash: entryHash1,
@@ -110,10 +112,11 @@ describe('SharedDataStream', () => {
       const e0 = await stream.append({ n: 0 });
       const payload1 = { n: 1 };
       const payloadHash1 = await computePayloadHash(payload1);
+      const ts1 = Date.now();
       const entryHash1 = await computeEntryHash({
         previousHash: e0.entryHash,
         index: 1,
-        timestamp: Date.now(),
+        timestamp: ts1,
         payloadHash: payloadHash1,
         creatorId: 'user-b',
       });
@@ -121,7 +124,7 @@ describe('SharedDataStream', () => {
         index: 1,
         previousHash: e0.entryHash,
         payloadHash: payloadHash1,
-        timestamp: Date.now(),
+        timestamp: ts1,
         creatorId: 'user-b',
         payload: payload1,
         entryHash: entryHash1,
