@@ -19,7 +19,7 @@ export interface P2PRoom {
   ownerUid: string;
   ownerName?: string; // 房主顯示名稱（顯示在公開房列表）
   participants: string[];
-  status: 'waiting' | 'open' | 'closed'; // waiting: 等待其他人加入
+  status: 'waiting' | 'open' | 'closed' | 'closing' | 'migrating'; // waiting: 等待其他人加入
   isPrivate: boolean;
   createdAt: number;
   waitingTimeout?: number; // 等待超時時間（毫秒），預設 5 分鐘
@@ -34,12 +34,20 @@ export interface P2PRoom {
     };
   };
 
-  topology?: 'star' | 'mesh'; // 預設 'star'
+  topology?: 'star' | 'mesh' | 'hybrid' | 'auto'; // 預設 'star'
 
   // 待處理的合併請求 ID（由 roomRequests 集合管理）
   pendingMergeRequestId?: string;
   // 待處理的分岔計劃 ID（由 roomRequests 集合管理）
   pendingSplitPlanId?: string;
+
+  // Extended lifecycle fields (new)
+  participantCount?: number;
+  version?: number;
+  hostMigrationEpoch?: number;
+  previousRoomId?: string | null;
+  lineageRootRoomId?: string | null;
+  capabilityHint?: RoomCapability;
 }
 
 // ========== 房間合併 / 分岔請求 ==========
@@ -284,14 +292,18 @@ export interface ChainProvenanceResponse {
 export type SharedStreamPayload = Record<string, unknown>;
 
 /** 帳本條目（類似區塊鏈的一筆 block） */
-export interface LedgerEntry {
+export interface LedgerEntry<T = unknown> {
   index: number;
   previousHash: string;
   payloadHash: string;
   timestamp: number;
   creatorId: string;
-  payload: SharedStreamPayload;
-  signature?: string;
+  roomId?: string;
+  epoch?: number;          // host migration epoch counter
+  payloadType?: string;
+  payload: T;
+  nonce?: string;          // replay protection
+  signature?: string;      // ed25519 or ECDSA
   entryHash: string;
 }
 
@@ -312,6 +324,134 @@ export interface SharedStreamConfig {
   appendRateLimitPerSecond?: number;
   /** entryHash / previousHash / payloadHash 預期為 64 字元 hex */
   hashHexLength?: number;
+}
+
+// ========== Room lifecycle & topology ==========
+
+export type RoomStatus = 'waiting' | 'open' | 'closing' | 'closed' | 'migrating';
+export type RoomTopology = 'star' | 'mesh' | 'hybrid' | 'auto';
+
+export interface RoomCapability {
+  features: string[];
+  protocolVersion: number;
+  maxPayloadBytes: number;
+  supportsMesh: boolean;
+  supportsMedia: boolean;
+  supportsLedgerSnapshots: boolean;
+}
+
+// ========== Fork resolution ==========
+
+export interface LedgerFork {
+  parentHash: string;
+  branches: LedgerEntry[];
+  resolvedWinner?: LedgerEntry;
+  orphans: LedgerEntry[];
+}
+
+// ========== Snapshot ==========
+
+export interface LedgerSnapshot {
+  snapshotId: string;
+  roomId: string;
+  upToIndex: number;
+  tipHash: string;
+  stateHash: string;
+  createdAt: number;
+  creatorId: string;
+  chunks: string[];        // base64 serialized chunks
+}
+
+// ========== Web3 checkpoint ==========
+
+export interface ChainCheckpoint {
+  roomId: string;
+  lineageRootRoomId: string;
+  tipHash: string;
+  height: number;
+  snapshotHash?: string;
+  submittedBy: string;
+  submittedAt: number;
+  chainId?: string;
+  txHash?: string;
+}
+
+// ========== Multi-channel ==========
+
+export type ChannelKind = 'control' | 'bulk' | 'gossip';
+
+// ========== Enhanced Envelope ==========
+
+export interface Envelope<T = unknown> {
+  v: number;
+  ns: string;
+  type: string;
+  id: string;
+  ts: number;
+  from: string;
+  to?: string;
+  replyTo?: string;
+  roomId: string;
+  traceId?: string;
+  hopCount?: number;
+  ttl?: number;
+  seq?: number;
+  payload: T;
+  meta?: Record<string, unknown>;
+  sig?: string;
+}
+
+// ========== ACK tracking ==========
+
+export interface PendingAck {
+  envelopeId: string;
+  peerId: string;
+  sentAt: number;
+  retryCount: number;
+  deadline: number;
+}
+
+// ========== Feature plugin system ==========
+
+export interface FeatureContext {
+  selfId: string;
+  roomId: string;
+  send: (peerId: string, env: Envelope) => Promise<void>;
+  broadcast: (env: Envelope) => Promise<void>;
+  appendLedger: (payloadType: string, payload: unknown) => Promise<void>;
+  store: {
+    get(key: string): Promise<unknown>;
+    set(key: string, value: unknown): Promise<void>;
+    delete(key: string): Promise<void>;
+  };
+  logger: {
+    info(msg: string, meta?: Record<string, unknown>): void;
+    warn(msg: string, meta?: Record<string, unknown>): void;
+    error(msg: string, meta?: Record<string, unknown>): void;
+  };
+}
+
+export interface FeatureModule {
+  name: string;
+  version: string;
+  namespaces: string[];
+  capabilities: string[];
+  setup(ctx: FeatureContext): Promise<void>;
+  teardown(): Promise<void>;
+  onPeerJoin?(peerId: string): Promise<void>;
+  onPeerLeave?(peerId: string): Promise<void>;
+  handleEnvelope?(env: Envelope): Promise<void>;
+}
+
+// ========== Host migration ==========
+
+export interface HostMigrationEvent {
+  roomId: string;
+  oldOwnerUid: string;
+  newOwnerUid: string;
+  epoch: number;
+  triggeredAt: number;
+  reason: 'owner_left' | 'owner_timeout' | 'manual';
 }
 
 
