@@ -13,19 +13,40 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:emulator": "firebase emulators:exec --only auth,firestore 'npm run test:integration'",
+    "test:all": "npm run test:run && npm run test:integration",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:headed": "playwright test --headed",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "deploy": "npm run build && firebase deploy --only hosting",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
+    "deploy:full": "npm run build && firebase deploy",
+    "deploy:safe": "npm run type-check && npm run lint && npm run test:run && npm run deploy",
+    "ci": "npm run type-check && npm run lint && npm run test:run",
+    "ci:full": "npm run type-check && npm run lint && npm run test:emulator",
+    "ci:fast": "npm run type-check && npm run test:run",
+    "check": "npm run ci"
   },
   "dependencies": {
     "dexie": "^3.2.4",
     "firebase": "^10.7.1",
+    "firebase-admin": "^13.6.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",
     "uuid": "^9.0.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.55.1",
+    "@rollup/rollup-linux-x64-musl": "4.55.1",
+    "@rollup/rollup-darwin-x64": "4.55.1",
+    "@rollup/rollup-darwin-arm64": "4.55.1",
+    "@esbuild/linux-x64": "0.21.5",
+    "@esbuild/darwin-x64": "0.21.5",
+    "@esbuild/darwin-arm64": "0.21.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

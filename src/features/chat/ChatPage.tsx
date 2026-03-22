@@ -6,8 +6,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { RoomService } from '../../services/RoomService';
-import type { ConnectionState, P2PRoom } from '../../types';
+import { useServices } from '../../contexts/ServicesContext';
+import {
+  sendMessageViaFirestore,
+  subscribeToFirestoreMessages,
+} from '../../services/FirestoreChatFallback';
+import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
+import { featureLog } from '../../utils/featureLog';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -18,18 +23,20 @@ import './ChatPage.css';
 const ChatPage: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
   const { user } = useAuth();
+  const { roomService, chatStorage } = useServices();
   const navigate = useNavigate();
   const [inputValue, setInputValue] = useState('');
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
+  const [showConnectionHint, setShowConnectionHint] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const p2pInitializedRef = useRef(false);
+  const connectingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Hooks
   const architecture = useP2PArchitecture();
-  const starTopology = useStarTopology();
-  const meshTopology = useMeshTopology();
-  const roomSubscription = useRoomSubscription();
+  const starTopology = useStarTopology({ chatStorage });
+  const meshTopology = useMeshTopology({ chatStorage });
+  const roomSubscription = useRoomSubscription({ roomService });
   const { messages, addMessage, setMessagesList } = useChatMessages();
 
   // 避免在 React StrictMode（開發環境）下重複初始化同一個 room + uid
@@ -54,10 +61,11 @@ const ChatPage: React.FC = () => {
     const init = async () => {
       try {
         const uid = user.uid;
+        featureLog('chat', 'init', { roomId, uid });
         console.log('[ChatPage] init started', { roomId, uid });
 
         // 1. 檢查房間是否存在
-        const room = await RoomService.getRoom(roomId);
+        const room = await roomService.getRoom(roomId);
         if (!room) {
           console.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
           navigate('/dashboard');
@@ -81,14 +89,15 @@ const ChatPage: React.FC = () => {
         // 3. 加入房間
         console.log('[ChatPage] Calling joinRoom', { roomId, uid });
         try {
-          await RoomService.joinRoom(roomId, uid);
+          await roomService.joinRoom(roomId, uid);
+          featureLog('chat', 'room_joined', { roomId, uid });
           console.log('[ChatPage] joinRoom completed', { roomId, uid });
 
           // 等待 Firestore 同步更新
           await new Promise(resolve => setTimeout(resolve, 500));
 
           // 再次讀取房間狀態
-          const roomAfterJoin = await RoomService.getRoom(roomId, true);
+          const roomAfterJoin = await roomService.getRoom(roomId, true);
           if (!roomAfterJoin) {
             console.warn('[ChatPage] Room not found after join, navigating to dashboard', { roomId });
             navigate('/dashboard');
@@ -130,6 +139,7 @@ const ChatPage: React.FC = () => {
 
           // 決定架構
           const decision = architecture.decide(room, effectiveCount);
+          featureLog('chat', 'architecture_decided', { roomId, type: decision.type });
           console.log('[ChatPage] Deciding P2P architecture', {
             roomId,
             decision,
@@ -212,7 +222,7 @@ const ChatPage: React.FC = () => {
         });
 
         // 6. 如果初始房間狀態是 open，立即嘗試初始化
-        const initialRoom = await RoomService.getRoom(roomId, true);
+        const initialRoom = await roomService.getRoom(roomId, true);
         if (initialRoom && initialRoom.status === 'open') {
           let effectiveCount = initialRoom.participants.length;
 
@@ -243,31 +253,54 @@ const ChatPage: React.FC = () => {
       meshTopology.cleanup();
 
       if (roomId && user) {
-        RoomService.leaveRoom(roomId, user.uid).catch(console.error);
+        roomService.leaveRoom(roomId, user.uid).catch(console.error);
       }
 
       initializedRef.current = false;
       p2pInitializedRef.current = false;
     };
-  }, [user, roomId, navigate, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList]);
+  }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList]);
+
+  // Firestore 備援：訂閱房間訊息，P2P 未連線時對方經 Firestore 送的訊息也能顯示
+  useEffect(() => {
+    if (!roomId || !user) return;
+    const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage);
+    return () => unsubscribe();
+  }, [roomId, user, addMessage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleSend = async () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || !user || !roomId) return;
+
+    const content = inputValue.trim();
+    setInputValue('');
 
     try {
-      if (architecture.isMesh()) {
-        await meshTopology.sendMessage(inputValue.trim());
-      } else if (architecture.isStar()) {
-        await starTopology.sendMessage(inputValue.trim());
+      if (connectionState === 'connected') {
+        if (architecture.isMesh()) {
+          await meshTopology.sendMessage(content);
+          featureLog('chat', 'message_sent', { roomId, channel: 'p2p_mesh' });
+        } else if (architecture.isStar()) {
+          await starTopology.sendMessage(content);
+          featureLog('chat', 'message_sent', { roomId, channel: 'p2p_star' });
+        } else {
+          console.warn('[ChatPage] No chat service available');
+          return;
+        }
       } else {
-        console.warn('[ChatPage] No chat service available');
-        return;
+        const messageId = await sendMessageViaFirestore(roomId, user.uid, content);
+        featureLog('chat', 'message_sent', { roomId, channel: 'firestore_fallback' });
+        const fallbackMessage: ChatMessage = {
+          messageId,
+          from: user.uid,
+          content,
+          timestamp: Date.now(),
+        };
+        addMessage(fallbackMessage);
       }
-      setInputValue('');
     } catch (error) {
       console.error('[ChatPage] Error sending message:', error);
     }
@@ -275,17 +308,37 @@ const ChatPage: React.FC = () => {
 
   const handleLeaveRoom = async () => {
     if (roomId && user) {
-      await RoomService.leaveRoom(roomId, user.uid);
+      featureLog('chat', 'leave_room', { roomId, uid: user.uid });
+      await roomService.leaveRoom(roomId, user.uid);
       navigate('/dashboard');
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
+
+  // 連線中逾時提示：超過 45 秒仍為「連線中」時顯示操作說明
+  useEffect(() => {
+    if (connectionState === 'connecting') {
+      setShowConnectionHint(false);
+      connectingTimeoutRef.current = setTimeout(() => setShowConnectionHint(true), 45000);
+      return () => {
+        if (connectingTimeoutRef.current) {
+          clearTimeout(connectingTimeoutRef.current);
+          connectingTimeoutRef.current = null;
+        }
+      };
+    }
+    setShowConnectionHint(false);
+    if (connectingTimeoutRef.current) {
+      clearTimeout(connectingTimeoutRef.current);
+      connectingTimeoutRef.current = null;
+    }
+  }, [connectionState]);
 
   const getConnectionStatusText = () => {
     switch (connectionState) {
@@ -316,6 +369,17 @@ const ChatPage: React.FC = () => {
         </div>
       </div>
 
+      {showConnectionHint && (
+        <div className="connection-hint" role="alert">
+          <p>若遲遲無法連線，請確認：</p>
+          <ul>
+            <li>已用<strong>另一個瀏覽器</strong>或<strong>無痕視窗</strong>開啟分享連結（同一帳號開兩個分頁無法連線）</li>
+            <li>對方也已進入此聊天室畫面</li>
+            <li>網路與防火牆允許 WebRTC</li>
+          </ul>
+        </div>
+      )}
+
       <div className="chat-messages">
         {messages.map((msg) => (
           <div
@@ -341,17 +405,19 @@ const ChatPage: React.FC = () => {
       </div>
 
       <div className="chat-input-area">
+        {connectionState !== 'connected' && (
+          <p className="fallback-notice">目前使用備援連線，訊息經由伺服器傳送</p>
+        )}
         <textarea
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyDown}
           placeholder="輸入訊息..."
-          disabled={connectionState !== 'connected'}
           rows={3}
         />
         <button
           onClick={handleSend}
-          disabled={!inputValue.trim() || connectionState !== 'connected'}
+          disabled={!inputValue.trim()}
           className="send-button"
         >
           傳送

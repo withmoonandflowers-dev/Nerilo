@@ -107,6 +107,9 @@ export class P2PConnectionManager {
           this.setState('connected');
           break;
         case 'disconnected':
+          // 'disconnected' 是暫時性狀態，瀏覽器會嘗試自動恢復；
+          // 不立即標記為 failed，留給上層偵測逾時後處理。
+          break;
         case 'failed':
           this.setState('failed');
           break;

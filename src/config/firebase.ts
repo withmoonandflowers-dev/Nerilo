@@ -3,8 +3,8 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 
-// 注意：實際部署時應使用環境變數；
-// 若環境變數缺失或為佔位符，退回到專案 nerilo 的正式設定，避免出現 api-key-not-valid 錯誤
+// 資安：正式環境應僅使用環境變數，勿依賴 fallback。CI/正式 build 請注入 VITE_FIREBASE_*。
+// 以下 fallback 僅供開發/展示；若環境變數缺失或為佔位符，退回到專案預設以避免 api-key-not-valid。
 const isPlaceholder = (value: string | undefined): boolean => {
   if (!value) return true;
   const placeholders = ['your-api-key', 'your-project', 'your-project-id', 'your-app-id'];

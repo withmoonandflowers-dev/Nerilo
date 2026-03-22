@@ -75,6 +75,8 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
       // 載入歷史訊息
       meshChatService.loadHistory().then((messages) => {
         messages.forEach(onMessage);
+      }).catch((err) => {
+        console.warn('[useMeshTopology] Failed to load history', err);
       });
 
       // 監聽新訊息

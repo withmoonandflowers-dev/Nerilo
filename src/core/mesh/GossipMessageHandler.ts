@@ -3,6 +3,7 @@ import { getMessageId } from '../../utils/crypto';
 import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
+import type { MeshConnection } from './MeshConnection';
 
 /**
  * Gossip 訊息處理器
@@ -133,12 +134,10 @@ export class GossipMessageHandler {
     
     // 顯示訊息
     this.notifyMessageListeners(message);
-    
-    // 轉發（如果 TTL > 0）
-    if (message.ttl > 0) {
-      message.ttl -= 1;
-      await this.forwardMessage(message, fromNeighbor);
-    }
+
+    // 轉發（建立副本以避免修改傳入物件）
+    const forwarded: GossipMessage = { ...message, ttl: message.ttl - 1 };
+    await this.forwardMessage(forwarded, fromNeighbor);
   }
 
   /**
@@ -227,9 +226,9 @@ export class GossipMessageHandler {
    * 隨機選擇鄰居
    */
   private selectRandomNeighbors(
-    neighbors: any[],
+    neighbors: MeshConnection[],
     count: number
-  ): any[] {
+  ): MeshConnection[] {
     const shuffled = [...neighbors].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, Math.min(count, neighbors.length));
   }

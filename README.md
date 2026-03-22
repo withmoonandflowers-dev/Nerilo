@@ -103,17 +103,18 @@ nerilo/
 │   │   └── chat/        # 文字聊天
 │   ├── services/         # 服務層
 │   │   ├── IndexedDBService.ts
-│   │   └── SyncService.ts
+│   │   ├── RoomService.ts
+│   │   └── FirestoreChatFallback.ts
 │   ├── contexts/        # React Context
 │   ├── components/      # 共用元件
 │   ├── pages/           # 頁面
 │   └── types/           # TypeScript 類型定義
 ├── functions/           # Cloud Functions
-├── docs/               # 文件
+├── docs/               # 文件（見 docs/README.md 索引）
 │   ├── 架構文件.md
 │   ├── 協議文件.md
+│   ├── 上板與部署手冊.md
 │   ├── 新功能接入SOP.md
-│   ├── 部署手冊.md
 │   └── *.puml         # PlantUML 架構圖
 ├── firestore.rules     # Firestore Security Rules
 └── firebase.json       # Firebase 配置
@@ -131,15 +132,15 @@ nerilo/
 
 ### 功能模組
 
-- **ChatService**：文字聊天
-- **SyncService**：跨裝置同步
+- **ChatService** / **MeshChatService**：文字聊天（星型 / Mesh）
+- **RoomService**：房間與參與者管理
 
 ## 文件
 
 - [架構文件](docs/架構文件.md)
 - [協議文件](docs/協議文件.md)
 - [新功能接入 SOP](docs/新功能接入SOP.md)
-- [部署手冊](docs/部署手冊.md)
+- [上板與部署手冊](docs/上板與部署手冊.md)
 
 ## 協議設計
 

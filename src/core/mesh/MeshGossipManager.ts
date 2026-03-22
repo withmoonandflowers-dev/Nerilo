@@ -16,6 +16,7 @@ export class MeshGossipManager {
   private topologyManager: MeshTopologyManager | null = null;
   private messageHandler: GossipMessageHandler | null = null;
   private initialized = false;
+  private neighborCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(private roomId: string) {
     this.identityManager = new IdentityManager();
@@ -96,18 +97,14 @@ export class MeshGossipManager {
    */
   private setupNeighborMessageHandlers(): void {
     if (!this.topologyManager || !this.messageHandler) return;
-    
-    // 當有新鄰居加入時，設置訊息監聽
-    // 持續監聽新鄰居加入
-    const checkNeighbors = setInterval(() => {
-      if (!this.topologyManager || !this.messageHandler) {
-        clearInterval(checkNeighbors);
-        return;
-      }
-      
+
+    // 每 2 秒掃描鄰居列表，為新加入的鄰居設置訊息監聽
+    // （MeshConnection.onMessage 內部去重，多次設置不會重複觸發）
+    this.neighborCheckInterval = setInterval(() => {
+      if (!this.topologyManager || !this.messageHandler) return;
+
       const neighbors = this.topologyManager.getNeighbors();
       neighbors.forEach(neighbor => {
-        // 設置訊息監聽（每次檢查都會設置，但 onMessage 內部會去重）
         neighbor.onMessage(async (message: GossipMessage) => {
           if (this.messageHandler) {
             await this.messageHandler.handleReceivedMessage(
@@ -117,11 +114,7 @@ export class MeshGossipManager {
           }
         });
       });
-    }, 2000); // 每 2 秒檢查一次
-
-    // 持續監聽（不停止）
-    // 注意：這會造成記憶體洩漏，實際應該在 cleanup 時清理
-    // 這裡簡化處理
+    }, 2000);
   }
 
   /**
@@ -183,6 +176,10 @@ export class MeshGossipManager {
    * 清理資源
    */
   async cleanup(): Promise<void> {
+    if (this.neighborCheckInterval) {
+      clearInterval(this.neighborCheckInterval);
+      this.neighborCheckInterval = null;
+    }
     if (this.topologyManager) {
       await this.topologyManager.cleanup();
     }
