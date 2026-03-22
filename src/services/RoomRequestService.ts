@@ -154,15 +154,31 @@ export class RoomRequestService {
   /**
    * 目標房主接受合併請求
    *
-   * 執行順序：
+   * Firestore 執行順序：
    * 1. 將 Room A 的 participants 加入 Room B
    * 2. 刪除 Room A 文件（房間從列表消失）
    * 3. 清除 Room B 上的 pendingMergeRequestId
    * 4. 更新 request status = 'completed'
+   *
+   * Chain 後續動作（由呼叫端使用 onChainAction callback 執行）：
+   * - Room B owner 呼叫 ChainMergeService.writeMergeMarker()
+   *   把合併事件寫入 Room B 的主鏈
+   * - Room A 成員透過 P2P 宣告 provenance（chain-sync:provenance-announce）
+   *   Room B 成員收到後請求並儲存 Room A 的鏈
+   *
+   * @param onChainAction 可選的 chain 操作回呼，在 Firestore 更新完成後呼叫。
+   *   接收 mergeInfo，呼叫端可用來：
+   *   - 呼叫 ChainMergeService.writeMergeMarker(sourceRoomId, sourceOwnerUid)
    */
   static async acceptMergeRequest(
     requestId: string,
-    targetOwnerUid: string
+    targetOwnerUid: string,
+    onChainAction?: (mergeInfo: {
+      sourceRoomId: string;
+      sourceOwnerUid: string;
+      targetRoomId: string;
+      mergedParticipants: string[];
+    }) => Promise<void>
   ): Promise<void> {
     const requestDoc = await getDoc(doc(db, 'roomRequests', requestId));
     if (!requestDoc.exists()) throw new Error('合併請求不存在');
@@ -204,12 +220,24 @@ export class RoomRequestService {
       status: 'completed',
     });
 
-    console.log('[RoomRequestService] Merge accepted', {
+    console.log('[RoomRequestService] Merge accepted (Firestore done)', {
       requestId,
       sourceRoomId: request.sourceRoomId,
       targetRoomId: request.targetRoomId,
       mergedParticipants: sourceParticipants,
     });
+
+    // 5. Chain 操作（在 Firestore 更新完成後執行，由呼叫端提供）
+    //    典型用法：
+    //    await mergeService.writeMergeMarker(sourceRoomId, sourceOwnerUid)
+    if (onChainAction) {
+      await onChainAction({
+        sourceRoomId: request.sourceRoomId,
+        sourceOwnerUid: request.sourceOwnerUid,
+        targetRoomId: request.targetRoomId,
+        mergedParticipants: sourceParticipants,
+      });
+    }
   }
 
   /**
@@ -366,21 +394,34 @@ export class RoomRequestService {
   /**
    * 被指定的新房主接受分岔計劃
    *
-   * 執行順序：
+   * Firestore 執行順序：
    * 1. newRoomOwnerUid 建立新房間（自動帶入 participantsToSplit）
    * 2. 將 participantsToSplit 從 source 房間移除
    * 3. 清除 source 上的 pendingSplitPlanId
    * 4. 更新 plan status = 'completed'，填入 newRoomId
    *
-   * @param planId         分岔計劃 ID
+   * Chain 後續動作（由呼叫端使用 onChainAction callback 執行）：
+   * - new Room B owner 呼叫 ChainMergeService.writeSplitFromMarker(sourceRoomId, sourceEntries)
+   *   其中 sourceEntries = 從 IndexedDB 讀取的 Room A 鏈（new owner 本人在 A 所以有）
+   * - Room A owner 偵測到 split completed 後呼叫
+   *   ChainMergeService.writeSplitToMarker(targetRoomId, participantsToSplit)
+   *
+   * @param planId          分岔計劃 ID
    * @param newRoomOwnerUid 接受者（必須與計劃中的 newRoomOwnerUid 一致）
-   * @param ownerName      新房主的顯示名稱
+   * @param ownerName       新房主的顯示名稱
+   * @param onChainAction   可選的 chain 操作回呼，在 Firestore 更新完成後呼叫
    * @returns 新建立的房間 ID
    */
   static async acceptSplitPlan(
     planId: string,
     newRoomOwnerUid: string,
-    ownerName: string | null
+    ownerName: string | null,
+    onChainAction?: (splitInfo: {
+      newRoomId: string;
+      sourceRoomId: string;
+      sourceOwnerUid: string;
+      participantsToSplit: string[];
+    }) => Promise<void>
   ): Promise<string> {
     const planDoc = await getDoc(doc(db, 'roomRequests', planId));
     if (!planDoc.exists()) throw new Error('分岔計劃不存在');
@@ -411,12 +452,25 @@ export class RoomRequestService {
       newRoomId,
     });
 
-    console.log('[RoomRequestService] Split plan accepted', {
+    console.log('[RoomRequestService] Split plan accepted (Firestore done)', {
       planId,
       sourceRoomId: plan.sourceRoomId,
       newRoomId,
       movedParticipants: plan.participantsToSplit,
     });
+
+    // 4. Chain 操作（Firestore 完成後，由呼叫端執行）
+    //    典型用法：
+    //    const sourceEntries = await indexedDBService.getChainEntries(sourceRoomId)
+    //    await mergeService.writeSplitFromMarker(sourceRoomId, sourceEntries)
+    if (onChainAction) {
+      await onChainAction({
+        newRoomId,
+        sourceRoomId: plan.sourceRoomId,
+        sourceOwnerUid: plan.sourceOwnerUid,
+        participantsToSplit: plan.participantsToSplit,
+      });
+    }
 
     return newRoomId;
   }
