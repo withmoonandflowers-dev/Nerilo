@@ -81,11 +81,22 @@ export class RoomService {
       waitingStartedAt: now,
     };
 
-    await setDoc(doc(db, 'p2pRooms', roomId), {
+    const firestoreData: Record<string, unknown> = {
       ...roomData,
       createdAt: Timestamp.fromMillis(roomData.createdAt),
       waitingStartedAt: Timestamp.fromMillis(roomData.waitingStartedAt!),
-    });
+    };
+
+    // Test mode：加入 e2eTestMode 標記讓 Firestore rules 允許匿名使用者建立房間
+    const isTestEnvForFirestore = typeof window !== 'undefined' && (
+      import.meta.env.MODE === 'test' ||
+      import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM === 'true'
+    );
+    if (isTestEnvForFirestore) {
+      firestoreData.e2eTestMode = true;
+    }
+
+    await setDoc(doc(db, 'p2pRooms', roomId), firestoreData);
 
     return roomId;
   }

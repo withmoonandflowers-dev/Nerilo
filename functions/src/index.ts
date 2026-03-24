@@ -60,11 +60,13 @@ export const getIceServers = functions.https.onCall(async (data, context) => {
 
     const iceServers = [
       ...defaultServers,
-      ...token.iceServers.map((server: any) => ({
-        urls: server.url,
-        username: server.username,
-        credential: server.credential,
-      })),
+      ...token.iceServers
+        .filter((server) => server.url)
+        .map((server) => ({
+          urls: server.url!,
+          username: server.username ?? '',
+          credential: server.credential ?? '',
+        })),
     ];
 
     return { iceServers };
