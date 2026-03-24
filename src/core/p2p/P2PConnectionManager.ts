@@ -25,6 +25,8 @@ export class P2PConnectionManager {
   private stateListeners: Set<(state: ConnectionState) => void> = new Set();
   private iceServers: RTCConfiguration['iceServers'] = [];
   private signalUnsubscribers: (() => void)[] = [];
+  /** ICE candidates that arrived before remoteDescription was set; flushed after setRemoteDescription */
+  private pendingIceCandidates: RTCIceCandidateInit[] = [];
 
   constructor(roomId: string, localUid: string) {
     this.roomId = roomId;
@@ -128,13 +130,19 @@ export class P2PConnectionManager {
   }
 
   private setupSignalingListeners(): void {
+    // 清除既有 listeners，避免 reconnect 時累積 (#9)
+    this.signalUnsubscribers.forEach(unsub => unsub());
+    this.signalUnsubscribers = [];
+
     console.log('[P2PConnectionManager] setupSignalingListeners', { roomId: this.roomId });
-    
+
     const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
     // 只依照建立時間排序取得最近的訊號，實際過濾「自己送出的訊號」
     // 交給 handleSignal 裡的 `if (signal.from === this.localUid) return;` 處理，
     // 這樣可以避免使用 `where('!=')` 帶來的複合索引需求。
-    const q = query(signalsRef, orderBy('createdAt', 'desc'), limit(50));
+    // 使用 asc 排序確保因果順序：offer/answer 先到，ICE candidates 後到
+    // desc 排序會導致 ICE candidates 先於 offer 被處理，觸發 buffering 問題
+    const q = query(signalsRef, orderBy('createdAt', 'asc'), limit(50));
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       console.log('[P2PConnectionManager] Signal snapshot received', {
@@ -200,7 +208,9 @@ export class P2PConnectionManager {
             );
             return;
           }
-          await this.pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+          await this.pc.setRemoteDescription(new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit));
+          // Flush ICE candidates that arrived before the offer (Firestore desc-order issue)
+          await this.flushPendingIceCandidates();
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
           this.sendSignal('answer', answer);
@@ -228,30 +238,53 @@ export class P2PConnectionManager {
             console.debug('[P2PConnectionManager] Ignore answer - no local description set');
             return;
           }
-          await this.pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+          await this.pc.setRemoteDescription(new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit));
+          // Flush ICE candidates that arrived before the answer (Firestore desc-order issue)
+          await this.flushPendingIceCandidates();
           break;
         }
 
         case 'ice': {
-          // 只有在已經有 remoteDescription 時才加入 ICE，否則會觸發 InvalidStateError
+          const icePayload = signal.payload as RTCIceCandidateInit;
+          const candidate: RTCIceCandidateInit = {
+            candidate: icePayload.candidate,
+            sdpMid: icePayload.sdpMid,
+            sdpMLineIndex: icePayload.sdpMLineIndex,
+          };
           if (!this.pc.remoteDescription) {
+            // Buffer early ICE candidates; they will be flushed after setRemoteDescription.
+            // This happens when Firestore returns signals newest-first (desc order),
+            // causing ICE to arrive before the offer/answer is processed.
             console.debug(
-              '[P2PConnectionManager] Skip ICE candidate because remoteDescription is null'
+              '[P2PConnectionManager] Buffering ICE candidate (remoteDescription not set yet)',
+              { buffered: this.pendingIceCandidates.length + 1 }
             );
+            this.pendingIceCandidates.push(candidate);
             return;
           }
-          await this.pc.addIceCandidate(
-            new RTCIceCandidate({
-              candidate: signal.payload.candidate,
-              sdpMid: signal.payload.sdpMid,
-              sdpMLineIndex: signal.payload.sdpMLineIndex,
-            })
-          );
+          await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
           break;
         }
       }
     } catch (error) {
       console.error('Error handling signal:', error);
+    }
+  }
+
+  /** Apply all buffered ICE candidates that arrived before remoteDescription was set. */
+  private async flushPendingIceCandidates(): Promise<void> {
+    if (this.pendingIceCandidates.length === 0) return;
+    console.log('[P2PConnectionManager] Flushing buffered ICE candidates', {
+      roomId: this.roomId,
+      count: this.pendingIceCandidates.length,
+    });
+    const toFlush = this.pendingIceCandidates.splice(0);
+    for (const candidate of toFlush) {
+      try {
+        await this.pc!.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn('[P2PConnectionManager] Failed to add buffered ICE candidate', err);
+      }
     }
   }
 
@@ -289,21 +322,23 @@ export class P2PConnectionManager {
     }
   }
 
-  private async sendSignal(type: 'offer' | 'answer' | 'ice', payload: any): Promise<void> {
+  private async sendSignal(type: 'offer' | 'answer' | 'ice', payload: RTCSessionDescriptionInit | RTCIceCandidate): Promise<void> {
     const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
     // Firestore 只接受可序列化的 JSON 資料，因此需要將 RTCSessionDescription / RTCIceCandidate 序列化
-    let serializedPayload: any = payload;
+    let serializedPayload: Record<string, unknown> = {};
 
     if (type === 'offer' || type === 'answer') {
+      const sdpPayload = payload as RTCSessionDescriptionInit;
       serializedPayload = {
-        type: payload.type,
-        sdp: payload.sdp,
+        type: sdpPayload.type,
+        sdp: sdpPayload.sdp,
       };
     } else if (type === 'ice' && payload) {
+      const icePayload = payload as RTCIceCandidate;
       serializedPayload = {
-        candidate: payload.candidate,
-        sdpMid: payload.sdpMid,
-        sdpMLineIndex: payload.sdpMLineIndex,
+        candidate: icePayload.candidate,
+        sdpMid: icePayload.sdpMid,
+        sdpMLineIndex: icePayload.sdpMLineIndex,
       };
     }
 
@@ -347,6 +382,7 @@ export class P2PConnectionManager {
   async close(): Promise<void> {
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
+    this.pendingIceCandidates = [];
 
     if (this.pc) {
       this.pc.close();

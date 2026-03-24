@@ -24,6 +24,9 @@ import {
 } from 'firebase/auth';
 
 const TEST_PROJECT_ID = 'nerilo';
+// Firebase Web SDK 要求 apiKey 存在且格式正確（即使連 Emulator 也不例外）
+// Emulator 不驗證 key 的有效性，所以用一個假的即可
+const TEST_API_KEY = 'AIzaSyFakeKeyForEmulatorTesting123456';
 
 interface TestClient {
   app: FirebaseApp;
@@ -41,7 +44,7 @@ const _clients = new Map<string, TestClient>();
 function getClient(name: string): TestClient {
   if (_clients.has(name)) return _clients.get(name)!;
 
-  const app = initializeApp({ projectId: TEST_PROJECT_ID }, `test-web-${name}`);
+  const app = initializeApp({ projectId: TEST_PROJECT_ID, apiKey: TEST_API_KEY }, `test-web-${name}`);
   const db = getFirestore(app);
   const auth = getAuth(app);
 

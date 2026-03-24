@@ -36,6 +36,8 @@ function makeMockIdentityManager() {
   return {
     exportPublicKey: vi.fn().mockResolvedValue('mock-pub-key-base64'),
     getPrivateKey: vi.fn().mockReturnValue({} as CryptoKey),
+    // deriveUserId：預設回傳 'sender-abc' 以匹配 makeMessage 的 senderId
+    deriveUserId: vi.fn().mockResolvedValue('sender-abc'),
   };
 }
 

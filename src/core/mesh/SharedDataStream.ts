@@ -28,6 +28,24 @@ export class SharedDataStream {
   /** append 速率限制：最近 N 筆 append 的時間戳 */
   private appendTimestamps: number[] = [];
 
+  /**
+   * Freeze 狀態：merge / split 期間禁止本地新 append，避免鏈血統混亂。
+   * 外部透過 freeze() / unfreeze() 控制；handleReceivedEntry 不受影響（
+   * 遠端條目仍可接收，只有本地發起的 append 被阻擋）。
+   *
+   * 整合邊界說明
+   * ─────────────────────────────────────────────────────
+   * SharedDataStream  = Gossip 廣播傳輸層 + 記憶體內鏈存儲（有速率、大小、freeze 保護）
+   *                     由 ChainSyncService 管理；每個 peer 各自持有一份實例。
+   *
+   * SharedLedgerEngine = Fork 偵測解決 + Snapshot 分析層（無廣播邏輯）
+   *                     可選性地包裹 SharedDataStream 的輸出；
+   *                     在收到遠端條目後呼叫 SharedLedgerEngine.append()
+   *                     進行 fork 偵測，並透過 onFork 回呼通知上層處理。
+   * ─────────────────────────────────────────────────────
+   */
+  private frozen = false;
+
   constructor(config: SharedStreamConfig) {
     this.config = {
       genesisPreviousHash: DEFAULT_GENESIS_PREVIOUS_HASH,
@@ -45,6 +63,32 @@ export class SharedDataStream {
    */
   setBroadcastHandler(handler: (entry: LedgerEntry) => void): void {
     this.onBroadcast = handler;
+  }
+
+  // ── Freeze / Unfreeze（Merge / Split 保護） ─────────────────────────────
+
+  /**
+   * 凍結鏈：禁止本地新增條目，直到 unfreeze()。
+   * 應在 merge / split 請求被接受後立即呼叫，完成後再呼叫 unfreeze()。
+   * 遠端收到的條目（handleReceivedEntry）不受影響。
+   */
+  freeze(): void {
+    this.frozen = true;
+    console.log('[SharedDataStream] Frozen — local appends blocked', { roomId: this.config.roomId });
+  }
+
+  /**
+   * 解凍鏈：恢復允許本地新增條目。
+   * merge / split 完成後呼叫。
+   */
+  unfreeze(): void {
+    this.frozen = false;
+    console.log('[SharedDataStream] Unfrozen — local appends resumed', { roomId: this.config.roomId });
+  }
+
+  /** 目前是否處於凍結狀態 */
+  isFrozen(): boolean {
+    return this.frozen;
   }
 
   /**
@@ -82,8 +126,16 @@ export class SharedDataStream {
   /**
    * 附加一筆新條目到本地鏈，並可觸發廣播
    * 會驗證 payload 為純物件、大小、條目數上限與 append 速率。
+   * 若鏈處於凍結狀態（freeze()），本地 append 將拋出錯誤。
    */
   async append(payload: SharedStreamPayload): Promise<LedgerEntry> {
+    // Merge / Split freeze guard — only block local appends
+    if (this.frozen) {
+      throw new Error(
+        '[SharedDataStream] append blocked: stream is frozen during merge/split operation. ' +
+        'Call unfreeze() after the operation completes.'
+      );
+    }
     if (!isPlainObject(payload)) {
       throw new TypeError('SharedDataStream.append: payload must be a plain object');
     }
@@ -226,7 +278,7 @@ export class SharedDataStream {
     // 驗證 payloadHash（含 payload 大小限制）
     let payloadHash: string;
     try {
-      payloadHash = await computePayloadHash(entry.payload, this.config.maxPayloadSize);
+      payloadHash = await computePayloadHash(entry.payload as Record<string, unknown>, this.config.maxPayloadSize);
     } catch (err) {
       console.warn('[SharedDataStream] Payload hash error (e.g. oversized)', {
         roomId: this.config.roomId,
@@ -293,6 +345,13 @@ export class SharedDataStream {
    * 遠端條目數不得超過 MAX_RESET_ENTRIES。
    */
   async resetFromEntries(remoteEntries: LedgerEntry[]): Promise<boolean> {
+    // Freeze guard — 與 append() 一致，凍結期間拒絕重設，防止惡意 peer 繞過 merge 保護
+    if (this.frozen) {
+      console.warn('[SharedDataStream] resetFromEntries blocked: stream is frozen during merge/split', {
+        roomId: this.config.roomId,
+      });
+      return false;
+    }
     if (!Array.isArray(remoteEntries) || remoteEntries.length === 0) {
       return false;
     }
@@ -326,7 +385,7 @@ export class SharedDataStream {
       if (expectedHash !== entry.entryHash) return false;
 
       try {
-        const payloadHash = await computePayloadHash(entry.payload, this.config.maxPayloadSize);
+        const payloadHash = await computePayloadHash(entry.payload as Record<string, unknown>, this.config.maxPayloadSize);
         if (payloadHash !== entry.payloadHash) return false;
       } catch {
         return false; // 例如 payload 過大

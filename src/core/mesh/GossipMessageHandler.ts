@@ -100,7 +100,7 @@ export class GossipMessageHandler {
     // 驗證簽名
     const publicKey = await this.securityManager.importPublicKey(message.pubKey);
     const isValid = await this.securityManager.verifyMessage(message, publicKey);
-    
+
     if (!isValid) {
       console.warn('[GossipMessageHandler] Invalid signature', {
         roomId: this.roomId,
@@ -109,7 +109,30 @@ export class GossipMessageHandler {
       });
       return; // 簽名無效
     }
-    
+
+    // 驗證 pubKey 對應 senderId（#16：防止攻擊者用自己的 key 偽造其他人的 senderId）
+    if (this.identityManager) {
+      const derivedId = await this.identityManager.deriveUserId(publicKey);
+      if (derivedId !== message.senderId) {
+        console.warn('[GossipMessageHandler] Sender identity mismatch (possible spoofing)', {
+          roomId: this.roomId,
+          claimed: message.senderId,
+          derived: derivedId,
+        });
+        return;
+      }
+    }
+
+    // 檢查 TTL 型別驗證 (#39)
+    if (typeof message.ttl !== 'number' || !Number.isFinite(message.ttl)) {
+      console.warn('[GossipMessageHandler] Invalid TTL type', {
+        roomId: this.roomId,
+        senderId: message.senderId,
+        ttl: message.ttl,
+      });
+      return;
+    }
+
     // 檢查序列號
     if (!this.checkSequence(message.senderId, message.seq)) {
       console.warn('[GossipMessageHandler] Invalid sequence', {

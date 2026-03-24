@@ -194,14 +194,20 @@ export class ChainMergeService {
       return false;
     }
 
-    // 基本驗證：index 連續性（不重算 hash，信任已通過 P2P 的條目）
+    // 驗證 index 連續性 + hash chain 連續性（#19）
     for (let i = 0; i < entries.length; i++) {
       if (entries[i]!.index !== i) {
         console.warn('[ChainMergeService] adoptProvenanceChain: index discontinuity', {
-          roomId: this.roomId,
-          sourceRoomId,
-          expected: i,
-          got: entries[i]!.index,
+          roomId: this.roomId, sourceRoomId, expected: i, got: entries[i]!.index,
+        });
+        return false;
+      }
+      // 驗證 hash 鏈連續性：每筆的 previousHash 必須等於前一筆的 entryHash
+      if (i > 0 && entries[i]!.previousHash !== entries[i - 1]!.entryHash) {
+        console.warn('[ChainMergeService] adoptProvenanceChain: hash chain broken', {
+          roomId: this.roomId, sourceRoomId, brokenAt: i,
+          expected: entries[i - 1]!.entryHash.slice(0, 16),
+          got: entries[i]!.previousHash.slice(0, 16),
         });
         return false;
       }

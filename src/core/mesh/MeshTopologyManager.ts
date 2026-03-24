@@ -12,6 +12,16 @@ export class MeshTopologyManager {
   private rotationStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private identityMap: Map<string, string> = new Map(); // firebaseUid -> userId
 
+  /** 重連重試設定 */
+  private static readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private static readonly BASE_RECONNECT_DELAY_MS = 1_000;
+  private static readonly MAX_RECONNECT_DELAY_MS = 30_000;
+
+  /** 追蹤每個 peer 的重試次數，避免無限重試 */
+  private reconnectAttempts: Map<string, number> = new Map();
+  /** 進行中的重連 timer，cleanup 時需要清除 */
+  private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
   constructor(
     private roomId: string,
     private localUserId: string,
@@ -92,68 +102,131 @@ export class MeshTopologyManager {
   }
 
   /**
-   * 建立鄰居連線
+   * 建立鄰居連線（含重試機制）
    */
   async connectToNeighbors(targetUserIds: string[]): Promise<void> {
     for (const userId of targetUserIds) {
       if (this.neighbors.size >= this.k) break;
       if (this.neighbors.has(userId)) continue;
       if (userId === this.localUserId) continue;
-      
-      try {
-        // 判斷誰是 initiator（使用 userId 比較，較小的作為 initiator）
-        const isInitiator = this.localUserId < userId;
-        
-        // 注意：MeshConnection 使用 userId 作為 localUid，但 P2PConnectionManager 需要 Firebase UID
-        // 這裡我們使用 userId，但需要確保 signaling 能正確工作
-        // 實際上，我們需要找到對應的 Firebase UID
-        const remoteFirebaseUid = this.getFirebaseUidFromUserId(userId);
-        const localFirebaseUid = this.localFirebaseUid;
-        
-        // 使用 Firebase UID 進行 signaling（因為 P2PConnectionManager 依賴它）
-        // 但使用 userId 進行 Gossip 訊息傳輸
-        // 如果找不到 Firebase UID，跳過這個節點（等待它註冊身分）
-        if (!remoteFirebaseUid) {
-          console.log('[MeshTopologyManager] Remote Firebase UID not found, skipping', {
+
+      await this.connectToSingleNeighbor(userId);
+    }
+  }
+
+  /**
+   * 連線到單一鄰居，失敗時排程指數退避重試
+   */
+  private async connectToSingleNeighbor(userId: string): Promise<void> {
+    try {
+      const isInitiator = this.localUserId < userId;
+      const remoteFirebaseUid = this.getFirebaseUidFromUserId(userId);
+      const localFirebaseUid = this.localFirebaseUid;
+
+      if (!remoteFirebaseUid) {
+        console.log('[MeshTopologyManager] Remote Firebase UID not found, scheduling retry', {
+          roomId: this.roomId,
+          remoteUserId: userId,
+        });
+        this.scheduleReconnect(userId);
+        return;
+      }
+
+      const connection = new MeshConnection(
+        this.roomId,
+        localFirebaseUid,
+        remoteFirebaseUid,
+        userId,
+        isInitiator
+      );
+
+      // 等待連線就緒，失敗時觸發重試
+      connection.waitForReady()
+        .then(() => {
+          // 連線成功，重設重試計數
+          this.reconnectAttempts.delete(userId);
+          console.log('[MeshTopologyManager] Connection ready', {
             roomId: this.roomId,
             remoteUserId: userId,
           });
-          continue;
-        }
-        
-        const connection = new MeshConnection(
-          this.roomId,
-          localFirebaseUid, // 使用 Firebase UID 進行 signaling
-          remoteFirebaseUid, // 使用 Firebase UID 進行 signaling
-          userId, // 保存 userId 用於 Gossip
-          isInitiator
-        );
-        
-        // 不等待連線準備就緒，讓它非同步建立
-        connection.waitForReady().catch(error => {
-          console.warn('[MeshTopologyManager] Connection not ready', {
+        })
+        .catch((error) => {
+          console.warn('[MeshTopologyManager] Connection not ready, scheduling retry', {
             roomId: this.roomId,
             remoteUserId: userId,
             error,
           });
+          // 移除失敗的連線，排程重試
+          this.neighbors.delete(userId);
+          this.scheduleReconnect(userId);
         });
-        
-        this.neighbors.set(userId, connection);
-        
-        console.log('[MeshTopologyManager] Initiating connection to neighbor', {
-          roomId: this.roomId,
-          remoteUserId: userId,
-          remoteFirebaseUid,
-          isInitiator,
-        });
-      } catch (error) {
-        console.warn('[MeshTopologyManager] Failed to connect to neighbor', {
-          roomId: this.roomId,
-          remoteUserId: userId,
-          error,
-        });
-      }
+
+      this.neighbors.set(userId, connection);
+
+      console.log('[MeshTopologyManager] Initiating connection to neighbor', {
+        roomId: this.roomId,
+        remoteUserId: userId,
+        remoteFirebaseUid,
+        isInitiator,
+      });
+    } catch (error) {
+      console.warn('[MeshTopologyManager] Failed to connect to neighbor, scheduling retry', {
+        roomId: this.roomId,
+        remoteUserId: userId,
+        error,
+      });
+      this.scheduleReconnect(userId);
     }
+  }
+
+  /**
+   * 以指數退避排程重連
+   */
+  private scheduleReconnect(userId: string): void {
+    const attempts = this.reconnectAttempts.get(userId) ?? 0;
+    if (attempts >= MeshTopologyManager.MAX_RECONNECT_ATTEMPTS) {
+      console.warn('[MeshTopologyManager] Max reconnect attempts reached, giving up', {
+        roomId: this.roomId,
+        remoteUserId: userId,
+        attempts,
+      });
+      this.reconnectAttempts.delete(userId);
+      return;
+    }
+
+    // 指數退避 + jitter：delay = min(base * 2^attempts + jitter, max)
+    // jitter 取 ±10% 避免 thundering herd（#32），原本 jitter 等於 base delay 過大
+    const baseDelay = MeshTopologyManager.BASE_RECONNECT_DELAY_MS * Math.pow(2, attempts);
+    const jitter = (Math.random() - 0.5) * baseDelay * 0.2;
+    const delay = Math.min(baseDelay + jitter, MeshTopologyManager.MAX_RECONNECT_DELAY_MS);
+
+    this.reconnectAttempts.set(userId, attempts + 1);
+
+    console.log('[MeshTopologyManager] Scheduling reconnect', {
+      roomId: this.roomId,
+      remoteUserId: userId,
+      attempt: attempts + 1,
+      maxAttempts: MeshTopologyManager.MAX_RECONNECT_ATTEMPTS,
+      delayMs: Math.round(delay),
+    });
+
+    // 清除已有的 timer（避免重複排程）
+    const existingTimer = this.reconnectTimers.get(userId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const timer = setTimeout(async () => {
+      this.reconnectTimers.delete(userId);
+      // 如果已經有這個鄰居了（可能透過其他路徑連上），跳過
+      if (this.neighbors.has(userId)) return;
+      // 如果已達上限，跳過
+      if (this.neighbors.size >= this.k) return;
+
+      // 重新發現節點以更新 identityMap（peer 可能在等待期間才註冊身分）
+      await this.discoverNodes();
+      await this.connectToSingleNeighbor(userId);
+    }, delay);
+
+    this.reconnectTimers.set(userId, timer);
   }
 
   /**
@@ -169,21 +242,25 @@ export class MeshTopologyManager {
   }
 
   /**
-   * 處理鄰居斷線
+   * 處理鄰居斷線：先嘗試重連同一 peer，若失敗再補連其他 peer
    */
   async handleNeighborDisconnected(neighborId: string): Promise<void> {
     console.log('[MeshTopologyManager] Neighbor disconnected', {
       roomId: this.roomId,
       neighborId,
     });
-    
+
     const neighbor = this.neighbors.get(neighborId);
     if (neighbor) {
       await neighbor.close();
       this.neighbors.delete(neighborId);
     }
-    
-    // 立即補連
+
+    // 先嘗試重連同一 peer（重設重試計數，給它一次新機會）
+    this.reconnectAttempts.delete(neighborId);
+    this.scheduleReconnect(neighborId);
+
+    // 同時也補連其他 peer，確保鄰居數量充足
     await this.fillNeighbors();
   }
 
@@ -302,6 +379,13 @@ export class MeshTopologyManager {
    * 清理資源
    */
   async cleanup(): Promise<void> {
+    // 清除所有重連 timer
+    for (const timer of this.reconnectTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.reconnectTimers.clear();
+    this.reconnectAttempts.clear();
+
     if (this.rotationStartTimeout) {
       clearTimeout(this.rotationStartTimeout);
       this.rotationStartTimeout = null;
@@ -310,13 +394,13 @@ export class MeshTopologyManager {
       clearInterval(this.rotationInterval);
       this.rotationInterval = null;
     }
-    
+
     const closePromises = Array.from(this.neighbors.values()).map(neighbor =>
       neighbor.close().catch(error => {
         console.error('[MeshTopologyManager] Error closing neighbor', { error });
       })
     );
-    
+
     await Promise.allSettled(closePromises);
     this.neighbors.clear();
     this.identityMap.clear();

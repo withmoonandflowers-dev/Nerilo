@@ -1,4 +1,3 @@
-/// <reference types="vitest/config" />
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -21,13 +20,12 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/integration/**/*.spec.ts'],
     setupFiles: ['tests/integration/helpers/emulator-env.ts'],
-    testTimeout: 30_000,   // Firebase 操作可能需要較長時間
+    testTimeout: 30_000,
     hookTimeout: 30_000,
     reporters: ['verbose'],
-    // 整合測試序列執行，避免 Emulator 狀態干擾
-    pool: 'forks',
-    poolOptions: {
-      forks: { singleFork: true },
-    },
+    // Vitest 4: 使用 threads 取代棄用的 poolOptions.forks
+    // 序列執行避免 Emulator 狀態干擾
+    sequence: { concurrent: false },
+    fileParallelism: false,
   },
 });
