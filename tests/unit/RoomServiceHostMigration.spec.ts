@@ -32,7 +32,6 @@ const mockRunTransaction = vi.fn(async (_db: unknown, cb: (t: unknown) => Promis
 });
 
 /** Mock increment()：回傳一個帶有 __increment 標記的哨兵物件，方便斷言 */
-const MOCK_INCREMENT_SENTINEL = { __type: 'FieldValue.increment', operand: 1 };
 const mockIncrement = vi.fn((n: number) => ({ __type: 'FieldValue.increment', operand: n }));
 
 vi.mock('firebase/firestore', () => ({
