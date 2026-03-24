@@ -12,9 +12,7 @@ import {
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import type { User, UserRole } from '../types';
-
-// 調整這個旗標可以快速開關認證相關的 debug log（目前強制開啟，方便在正式環境排錯）
-const DEBUG_AUTH = true;
+import { logger } from '../utils/logger';
 
 interface AuthContextType {
   user: User | null;
@@ -26,22 +24,46 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/** Session timeout（毫秒）：8 小時無互動後自動登出 */
+const SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // ── Session timeout：偵測使用者閒置，超時後自動登出 ──────────────
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(async () => {
+        logger.warn('[Auth] Session timeout — auto logout');
+        try { await signOut(auth); } catch { /* ignore */ }
+      }, SESSION_TIMEOUT_MS);
+    };
+
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll'] as const;
+    events.forEach((evt) => window.addEventListener(evt, resetTimer, { passive: true }));
+    resetTimer(); // 初始啟動計時
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+    };
+  }, []);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
-      if (DEBUG_AUTH) {
-        console.log('[Auth] onAuthStateChanged', {
-          hasUser: !!firebaseUser,
-          uid: firebaseUser?.uid,
-        });
-      }
+      logger.debug('[Auth] onAuthStateChanged', {
+        hasUser: !!firebaseUser,
+        uid: firebaseUser?.uid,
+      });
       if (firebaseUser) {
         await loadUserData(firebaseUser);
-      } else {
-        // 如果沒有使用者，自動使用匿名登入
+      } else if (!user) {
+        // 只在初次載入（user 尚未設定）時自動匿名登入
+        // 使用者主動登出後不會自動重新匿名登入，讓使用者能真正回到未登入狀態
         try {
           const anonymousUser = await signInAnonymously(auth);
           await loadUserData(anonymousUser.user);
@@ -50,6 +72,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(null);
           setLoading(false);
         }
+      } else {
+        // 使用者主動登出
+        setUser(null);
+        setLoading(false);
       }
     });
 
@@ -65,14 +91,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? 'guest' 
         : ((tokenResult.claims.role as UserRole) || 'user');
 
-      if (DEBUG_AUTH) {
-        console.log('[Auth] loadUserData', {
-          uid: firebaseUser.uid,
-          isAnonymous: firebaseUser.isAnonymous,
-          role,
-          claims: tokenResult.claims,
-        });
-      }
+      logger.debug('[Auth] loadUserData', {
+        uid: firebaseUser.uid,
+        isAnonymous: firebaseUser.isAnonymous,
+        role,
+        // claims 在正式環境會被自動遮罩
+        claims: tokenResult.claims,
+      });
 
       // 取得使用者 profile（可選）
       const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
@@ -114,11 +139,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 優先嘗試使用 popup
       const userCredential = await signInWithPopup(auth, provider);
       await loadUserData(userCredential.user);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Google login error:', error);
 
       // 若被瀏覽器擋掉 popup，改用 redirect 流程
-      if (error?.code === 'auth/popup-blocked') {
+      if ((error as { code?: string })?.code === 'auth/popup-blocked') {
         await signInWithRedirect(auth, provider);
         // 重新導向回來後，onAuthStateChanged 會自動載入使用者，不需要在這裡再處理
         return;

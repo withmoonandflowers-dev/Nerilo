@@ -1,7 +1,14 @@
-import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
 import type { P2PRoom, RoomStatus, RoomCapability } from '../types';
+
+/** Firestore meshIdentity 文件的原始欄位型別（joinedAt 可能為 Timestamp） */
+interface FirestoreMeshIdentity {
+  userId: string;
+  pubKey: string;
+  joinedAt: { toMillis?: () => number } | number;
+}
 
 // 只在開發模式或明確啟用時輸出 debug log，避免正式環境噪音
 const DEBUG_ROOMS = import.meta.env.DEV || import.meta.env.VITE_DEBUG_ROOMS === 'true';
@@ -33,7 +40,7 @@ export class RoomService {
     // 安全檢查：只允許已登入的用戶建立房間
     // 在測試環境中，允許 guest 用戶建立房間（用於 E2E 測試）
     const isTestEnv = typeof window !== 'undefined' && (
-      (window as any).__PLAYWRIGHT_TEST__ === true ||
+      (window as unknown as Record<string, unknown>).__PLAYWRIGHT_TEST__ === true ||
       import.meta.env.MODE === 'test' ||
       import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM === 'true'
     );
@@ -123,8 +130,17 @@ export class RoomService {
     });
 
     if (batch.length > 0) {
-      await Promise.all(batch);
-      console.log('[RoomService] Closed all', batch.length, 'rooms for user', ownerUid);
+      // 使用 allSettled 確保單一房間失敗不會阻斷其他房間的關閉 (#33)
+      const results = await Promise.allSettled(batch);
+      const failed = results
+        .map((r, i) => r.status === 'rejected' ? allRooms[i]?.roomId : null)
+        .filter(Boolean);
+      if (failed.length > 0) {
+        console.error('[RoomService] Failed to close some rooms', { ownerUid, failed });
+      }
+      console.log('[RoomService] Closed rooms for user', {
+        ownerUid, total: batch.length, failed: failed.length,
+      });
     }
   }
 
@@ -161,12 +177,12 @@ export class RoomService {
       waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
       waitingStartedAt: data.waitingStartedAt?.toMillis(),
       meshIdentities: data.meshIdentities ? Object.fromEntries(
-        Object.entries(data.meshIdentities).map(([key, value]: [string, any]) => [
+        (Object.entries(data.meshIdentities) as [string, FirestoreMeshIdentity][]).map(([key, value]) => [
           key,
           {
             userId: value.userId,
             pubKey: value.pubKey,
-            joinedAt: value.joinedAt?.toMillis?.() || value.joinedAt || Date.now(),
+            joinedAt: (typeof value.joinedAt === 'object' && value.joinedAt?.toMillis?.()) || (typeof value.joinedAt === 'number' ? value.joinedAt : Date.now()),
           },
         ])
       ) : undefined,
@@ -186,89 +202,109 @@ export class RoomService {
   }
 
   /**
-   * 加入房間
-   * 如果房間是 waiting 狀態且有第二個人加入，自動轉為 open 狀態
+   * 加入房間（使用 Firestore transaction，避免並發 race condition）
+   *
+   * 安全保證：
+   * - 原子性：participants 更新與 status 變更在同一 transaction 內完成
+   * - 防重複：若 uid 已在 participants 中則不做任何修改
+   * - 狀態保護：closed / migrating 房間拒絕加入
+   * - 自動激活：waiting 房間滿 2 人時自動轉為 open
    */
   static async joinRoom(roomId: string, uid: string): Promise<void> {
     console.log('[RoomService] joinRoom called', { roomId, uid });
-    
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-    const room = await getDoc(roomDoc);
 
-    if (!room.exists()) {
-      console.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
-      throw new Error('房間不存在');
+    // Firebase SDK on the REST transport does not auto-retry 'failed-precondition'
+    // (which is what Firestore returns when the updateTime precondition on a write
+    // fails, i.e. another client wrote to the doc between our read and commit).
+    // gRPC transport returns 'aborted' for the same situation and the SDK retries;
+    // here we add our own retry to cover both transports.
+    const MAX_ATTEMPTS = 4;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await this._joinRoomTransaction(db, roomId, uid);
+        return;
+      } catch (err: unknown) {
+        const code: string = (err as { code?: string })?.code ?? '';
+        const isRetryable = code === 'failed-precondition' || code === 'aborted';
+        if (isRetryable && attempt < MAX_ATTEMPTS) {
+          const delayMs = 150 * attempt;
+          console.warn('[RoomService] joinRoom transaction conflict, retrying', {
+            roomId, uid, attempt, code, delayMs,
+          });
+          await new Promise(r => setTimeout(r, delayMs));
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
     }
+    throw lastError;
+  }
 
-    const roomData = room.data();
-    console.log('[RoomService] joinRoom - current room data', {
-      roomId,
-      status: roomData.status,
-      participants: roomData.participants || [],
-      ownerUid: roomData.ownerUid,
-    });
+  /** Inner transaction logic – extracted so the retry loop stays clean. */
+  private static async _joinRoomTransaction(
+    db: Parameters<typeof runTransaction>[0],
+    roomId: string,
+    uid: string
+  ): Promise<void> {
+    await runTransaction(db, async (transaction) => {
+      const roomDocRef = doc(db, 'p2pRooms', roomId);
+      const roomSnap = await transaction.get(roomDocRef);
 
-    // 檢查房間狀態
-    if (roomData.status === 'closed') {
-      console.warn('[RoomService] joinRoom failed: Room is closed', { roomId, uid });
-      throw new Error('房間已關閉');
-    }
+      if (!roomSnap.exists()) {
+        console.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
+        throw new Error('房間不存在');
+      }
 
-    const participants = roomData.participants || [];
-    const isNewParticipant = !participants.includes(uid);
-    const newParticipants = isNewParticipant ? [...participants, uid] : participants;
+      const roomData = roomSnap.data();
 
-    console.log('[RoomService] joinRoom - participant check', {
-      roomId,
-      uid,
-      isNewParticipant,
-      currentParticipants: participants,
-      newParticipants,
-    });
+      // 拒絕加入已關閉或遷移中的房間（提供清晰的狀態錯誤碼）
+      if (roomData.status === 'closed') {
+        console.warn('[RoomService] joinRoom failed: Room is closed', { roomId, uid });
+        throw Object.assign(
+          new Error('房間已關閉，請返回房間列表'),
+          { code: 'room-closed', roomStatus: 'closed' }
+        );
+      }
+      if (roomData.status === 'migrating') {
+        console.warn('[RoomService] joinRoom failed: Room is migrating', { roomId, uid });
+        throw Object.assign(
+          new Error('房間正在遷移主機中，請稍後重試'),
+          { code: 'room-migrating', roomStatus: 'migrating' }
+        );
+      }
 
-    // 當 waiting 房間人數達到 2 人時，自動轉為 open 狀態
-    const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
+      const participants: string[] = roomData.participants || [];
 
-    console.log('[RoomService] joinRoom - activation check', {
-      roomId,
-      shouldActivate,
-      status: roomData.status,
-      participantCount: newParticipants.length,
-      isNewParticipant,
-    });
+      // 若已在房間內，不做任何修改（Transaction 仍需 commit 但無寫入）
+      if (participants.includes(uid)) {
+        console.log('[RoomService] joinRoom - already a participant, no-op', { roomId, uid });
+        return;
+      }
 
-    if (isNewParticipant || shouldActivate) {
-      const updateData: any = {
+      const newParticipants = [...participants, uid];
+      // 當 waiting 房間滿 2 人時，自動轉為 open
+      const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
+
+      const updateData: Record<string, unknown> = {
         participants: newParticipants,
+        participantCount: newParticipants.length,
       };
 
       if (shouldActivate) {
         updateData.status = 'open';
-        if (DEBUG_ROOMS) {
-          console.log('[RoomService] Room activated', {
-            roomId,
-            participants: newParticipants,
-            participantCount: newParticipants.length,
-          });
-        }
       }
 
-      console.log('[RoomService] joinRoom - updating room', { roomId, updateData });
-      await updateDoc(roomDoc, updateData);
-      console.log('[RoomService] joinRoom - room updated successfully', {
-        roomId,
-        newStatus: updateData.status || roomData.status,
-        newParticipantCount: newParticipants.length,
-      });
-    } else {
-      console.log('[RoomService] joinRoom - no update needed', {
+      transaction.update(roomDocRef, updateData);
+
+      console.log('[RoomService] joinRoom - transaction committed', {
         roomId,
         uid,
-        isNewParticipant,
-        currentStatus: roomData.status,
-        participantCount: newParticipants.length,
+        newStatus: shouldActivate ? 'open' : roomData.status,
+        newParticipantCount: newParticipants.length,
       });
-    }
+    });
   }
 
   /**
@@ -307,24 +343,66 @@ export class RoomService {
 
   /**
    * 離開房間
+   *
+   * 使用 Firestore Transaction 確保原子性，並對 failed-precondition / aborted 做重試，
+   * 避免 React StrictMode cleanup 與 joinRoom 並發寫入時發生衝突。
    */
   static async leaveRoom(roomId: string, uid: string): Promise<void> {
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-    const room = await getDoc(roomDoc);
+    console.log('[RoomService] leaveRoom called', { roomId, uid });
 
-    if (!room.exists()) {
-      return;
+    const MAX_ATTEMPTS = 4;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await runTransaction(db, async (transaction) => {
+          const roomDocRef = doc(db, 'p2pRooms', roomId);
+          const roomSnap = await transaction.get(roomDocRef);
+
+          if (!roomSnap.exists()) {
+            // 房間已不存在，視為成功
+            return;
+          }
+
+          const roomData = roomSnap.data();
+          const participants: string[] = roomData.participants || [];
+          const newParticipants = participants.filter((p: string) => p !== uid);
+
+          // 若用戶本來就不在房間內，不需要寫入（避免空 commit 觸發 precondition）
+          if (newParticipants.length === participants.length) {
+            console.log('[RoomService] leaveRoom - uid not in participants, no-op', { roomId, uid });
+            return;
+          }
+
+          // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
+          // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
+          transaction.update(roomDocRef, {
+            participants: newParticipants,
+            participantCount: newParticipants.length,
+          });
+        });
+        return; // success
+      } catch (err: unknown) {
+        const code: string = (err as { code?: string })?.code ?? '';
+        const isRetryable = code === 'failed-precondition' || code === 'aborted';
+        if (isRetryable && attempt < MAX_ATTEMPTS) {
+          const delayMs = 150 * attempt;
+          console.warn('[RoomService] leaveRoom transaction conflict, retrying', {
+            roomId, uid, attempt, code, delayMs,
+          });
+          await new Promise(r => setTimeout(r, delayMs));
+          lastError = err;
+          continue;
+        }
+        // Non-retryable or exhausted attempts: log but don't throw
+        // leaveRoom is best-effort; we don't want to break navigation on failure
+        console.error('[RoomService] leaveRoom failed (non-retryable or exhausted)', {
+          roomId, uid, attempt, err,
+        });
+        return;
+      }
     }
-
-    const roomData = room.data();
-    const participants = roomData.participants || [];
-    const newParticipants = participants.filter((p: string) => p !== uid);
-
-    // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
-    // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
-    await updateDoc(roomDoc, {
-      participants: newParticipants,
-    });
+    // Exhausted retries — log but swallow to avoid breaking navigation
+    console.error('[RoomService] leaveRoom exhausted retries', { roomId, uid, lastError });
   }
 
   /**
@@ -408,42 +486,54 @@ export class RoomService {
     }
 
     const remainingParticipants = room.participants.filter((p) => p !== ownerUid);
-    const currentEpoch = room.hostMigrationEpoch ?? 0;
-    const newEpoch = currentEpoch + 1;
 
-    // Step 1: Set status = 'migrating' and increment epoch
-    await updateDoc(doc(db, 'p2pRooms', roomId), {
-      status: 'migrating',
-      hostMigrationEpoch: newEpoch,
+    // 使用 Transaction 確保 host migration 的所有狀態更新是原子的
+    // 避免其他 peer 在 migrating → open/closed 之間讀到不一致狀態
+    const result = await runTransaction(db, async (transaction) => {
+      const roomDocRef = doc(db, 'p2pRooms', roomId);
+      const roomSnap = await transaction.get(roomDocRef);
+      if (!roomSnap.exists()) return { remainingParticipants: [] };
+
+      const data = roomSnap.data();
+      const currentEpoch = data.hostMigrationEpoch ?? 0;
+      const newEpoch = currentEpoch + 1;
+
+      if (remainingParticipants.length === 0) {
+        // 無剩餘成員 → 原子地設為 closed
+        transaction.update(roomDocRef, {
+          status: 'closed',
+          hostMigrationEpoch: newEpoch,
+          participants: [],
+          previousRoomId: data.previousRoomId ?? null,
+          lineageRootRoomId: data.lineageRootRoomId ?? roomId,
+        });
+
+        console.log('[RoomService] ownerLeaveRoom: no remaining, room closed (atomic)', {
+          roomId, ownerUid,
+        });
+        return { remainingParticipants: [] as string[] };
+      }
+
+      // 有剩餘成員 → 原子地 migrating + 選新房主 + 重設為 open
+      const newOwnerUid = remainingParticipants[0]!;
+      transaction.update(roomDocRef, {
+        status: 'open',
+        ownerUid: newOwnerUid,
+        hostMigrationEpoch: newEpoch,
+        participants: remainingParticipants,
+        previousRoomId: data.previousRoomId ?? null,
+        lineageRootRoomId: data.lineageRootRoomId ?? roomId,
+      });
+
+      console.log('[RoomService] ownerLeaveRoom: host migrated (atomic)', {
+        roomId, oldOwnerUid: ownerUid, newOwnerUid, newEpoch, remainingParticipants,
+      });
+      return { remainingParticipants, newOwnerUid };
     });
 
-    if (DEBUG_ROOMS) {
-      console.log('[RoomService] ownerLeaveRoom: set migrating', {
-        roomId,
-        ownerUid,
-        newEpoch,
-        remainingParticipants,
-      });
-    }
-
-    if (remainingParticipants.length === 0) {
-      // No remaining participants → close the room (do NOT delete document)
-      await updateDoc(doc(db, 'p2pRooms', roomId), {
-        status: 'closed',
-        previousRoomId: room.previousRoomId ?? null,
-        lineageRootRoomId: room.lineageRootRoomId ?? roomId,
-      });
-
-      console.log('[RoomService] ownerLeaveRoom: no remaining participants, room closed', {
-        roomId,
-        ownerUid,
-      });
-
-      return { remainingParticipants: [] };
-    }
-
-    // Step 2: Promote new host if promotion function provided
-    if (promoteNewHostFn) {
+    // 若有 promoteNewHostFn（需建立新房間），在 transaction 外執行
+    // 因為 promoteNewHostFn 可能涉及多個 Firestore 操作，無法包在同一 transaction
+    if (remainingParticipants.length > 0 && promoteNewHostFn) {
       const newRoomId = await promoteNewHostFn(
         remainingParticipants,
         remainingParticipants[0]!,
@@ -451,44 +541,17 @@ export class RoomService {
       );
 
       if (newRoomId) {
-        // New room created by promoted owner - close this room
         await updateDoc(doc(db, 'p2pRooms', roomId), {
           status: 'closed',
-          previousRoomId: room.previousRoomId ?? null,
-          lineageRootRoomId: room.lineageRootRoomId ?? roomId,
         });
 
-        console.log('[RoomService] ownerLeaveRoom: new host promoted, new room created', {
-          roomId,
-          ownerUid,
-          newRoomId,
+        console.log('[RoomService] ownerLeaveRoom: new room promoted', {
+          roomId, newRoomId,
         });
-
-        return { remainingParticipants, newOwnerUid: remainingParticipants[0] };
       }
     }
 
-    // Step 3: Try to find a new owner among remaining participants
-    // Pick the first remaining participant as new owner
-    const newOwnerUid = remainingParticipants[0]!;
-
-    await updateDoc(doc(db, 'p2pRooms', roomId), {
-      ownerUid: newOwnerUid,
-      status: 'open',
-      participants: remainingParticipants,
-      previousRoomId: room.previousRoomId ?? null,
-      lineageRootRoomId: room.lineageRootRoomId ?? roomId,
-    });
-
-    console.log('[RoomService] ownerLeaveRoom: host migrated', {
-      roomId,
-      oldOwnerUid: ownerUid,
-      newOwnerUid,
-      newEpoch,
-      remainingParticipants,
-    });
-
-    return { remainingParticipants, newOwnerUid };
+    return result;
   }
 
   /**
@@ -505,14 +568,12 @@ export class RoomService {
    * Increment room version (CAS bump)
    */
   static async incrementVersion(roomId: string): Promise<void> {
-    const room = await this.getRoom(roomId);
-    if (!room) throw new Error('房間不存在');
-    const currentVersion = room.version ?? 0;
+    // 使用 Firestore increment() 原子操作，避免 read-then-write race condition
     await updateDoc(doc(db, 'p2pRooms', roomId), {
-      version: currentVersion + 1,
+      version: increment(1),
     });
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] incrementVersion', { roomId, newVersion: currentVersion + 1 });
+      console.log('[RoomService] incrementVersion (atomic)', { roomId });
     }
   }
 
@@ -598,12 +659,12 @@ export class RoomService {
         waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
         waitingStartedAt: data.waitingStartedAt?.toMillis(),
         meshIdentities: data.meshIdentities ? Object.fromEntries(
-          Object.entries(data.meshIdentities).map(([key, value]: [string, any]) => [
+          (Object.entries(data.meshIdentities) as [string, FirestoreMeshIdentity][]).map(([key, value]) => [
             key,
             {
               userId: value.userId,
               pubKey: value.pubKey,
-              joinedAt: value.joinedAt?.toMillis?.() || value.joinedAt || Date.now(),
+              joinedAt: (typeof value.joinedAt === 'object' && value.joinedAt?.toMillis?.()) || (typeof value.joinedAt === 'number' ? value.joinedAt : Date.now()),
             },
           ])
         ) : undefined,
@@ -678,7 +739,19 @@ export class RoomService {
     if (!participants.includes(firebaseUid)) {
       throw new Error('用戶不是房間參與者');
     }
-    
+
+    // 驗證 userId 和 pubKey 格式
+    if (typeof userId !== 'string' || userId.length < 8 || userId.length > 64) {
+      throw new Error('Invalid userId format: must be 8-64 characters');
+    }
+    if (typeof pubKey !== 'string' || pubKey.length < 40 || pubKey.length > 512) {
+      throw new Error('Invalid pubKey format: must be 40-512 characters');
+    }
+    // 驗證 pubKey 是合法的 Base64
+    if (!/^[A-Za-z0-9+/]+=*$/.test(pubKey)) {
+      throw new Error('Invalid pubKey format: must be valid Base64');
+    }
+
     // 更新 meshIdentities
     const meshIdentities = roomData.meshIdentities || {};
     meshIdentities[firebaseUid] = {

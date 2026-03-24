@@ -3,12 +3,44 @@ import { ForkResolver } from './ForkResolver';
 
 const SNAPSHOT_INTERVAL = 1000;
 
+/**
+ * 簡易非同步互斥鎖（Mutex）
+ * 確保 append / mergeEntries 操作的原子性，
+ * 防止並發 fork 偵測與鏈修改產生不一致狀態。
+ */
+class AsyncMutex {
+  private queue: Array<() => void> = [];
+  private locked = false;
+
+  async acquire(): Promise<void> {
+    if (!this.locked) {
+      this.locked = true;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift()!;
+      // 讓下一個等待者在 microtask 中取得鎖，避免堆疊溢出
+      queueMicrotask(next);
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
 export class SharedLedgerEngine {
   private chain: LedgerEntry[] = [];
   private forkResolver = new ForkResolver();
   private entryCallbacks: Array<(entry: LedgerEntry) => void> = [];
   private forkCallbacks: Array<(fork: LedgerFork) => void> = [];
   private snapshots: LedgerSnapshot[] = [];
+  /** 保護 append 操作的互斥鎖，防止並發 fork 偵測 race condition */
+  private readonly appendMutex = new AsyncMutex();
 
   // ── Core chain operations ────────────────────────────────────────────────
 
@@ -32,9 +64,25 @@ export class SharedLedgerEngine {
     return [...this.chain];
   }
 
-  // ── Append with fork detection ───────────────────────────────────────────
+  // ── Append with fork detection (mutex-protected) ────────────────────────
 
+  /**
+   * 追加條目至鏈尾。使用 mutex 保護整個 fork 偵測 + 寫入流程，
+   * 確保並發呼叫不會在偵測與寫入之間產生不一致的 fork 狀態。
+   */
   async append(entry: LedgerEntry): Promise<'ok' | 'fork_detected' | 'duplicate' | 'invalid'> {
+    await this.appendMutex.acquire();
+    try {
+      return await this.appendUnsafe(entry);
+    } finally {
+      this.appendMutex.release();
+    }
+  }
+
+  /**
+   * 內部 append 邏輯（無鎖版本），僅供持有 mutex 的呼叫者使用。
+   */
+  private async appendUnsafe(entry: LedgerEntry): Promise<'ok' | 'fork_detected' | 'duplicate' | 'invalid'> {
     // Check duplicate
     if (this.chain.some((e) => e.entryHash === entry.entryHash)) {
       return 'duplicate';
@@ -66,7 +114,9 @@ export class SharedLedgerEngine {
           orphans: [],
         };
         for (const cb of this.forkCallbacks) {
-          cb(forkEntry);
+          try { cb(forkEntry); } catch (err) {
+            console.error('[SharedLedgerEngine] Fork callback error', { error: err });
+          }
         }
         return 'fork_detected';
       }
@@ -81,7 +131,9 @@ export class SharedLedgerEngine {
         orphans: [],
       };
       for (const cb of this.forkCallbacks) {
-        cb(fork);
+        try { cb(fork); } catch (err) {
+          console.error('[SharedLedgerEngine] Fork callback error', { error: err });
+        }
       }
       return 'fork_detected';
     }
@@ -101,26 +153,36 @@ export class SharedLedgerEngine {
     return 'ok';
   }
 
-  // ── Merge from remote ───────────────────────────────────────────────────
+  // ── Merge from remote (mutex-protected batch) ──────────────────────────
 
+  /**
+   * 批次合併遠端條目。整個批次在同一把 mutex 鎖下執行，
+   * 避免批次中途被其他 append 插入導致鏈狀態不一致。
+   */
   async mergeEntries(
     entries: LedgerEntry[]
   ): Promise<{ added: number; forks: number; duplicates: number }> {
-    let added = 0;
-    let forks = 0;
-    let duplicates = 0;
+    await this.appendMutex.acquire();
+    try {
+      let added = 0;
+      let forks = 0;
+      let duplicates = 0;
 
-    // Sort by index before merging
-    const sorted = [...entries].sort((a, b) => a.index - b.index);
+      // Sort by index before merging
+      const sorted = [...entries].sort((a, b) => a.index - b.index);
 
-    for (const entry of sorted) {
-      const result = await this.append(entry);
-      if (result === 'ok') added++;
-      else if (result === 'fork_detected') forks++;
-      else if (result === 'duplicate') duplicates++;
+      for (const entry of sorted) {
+        // 直接呼叫無鎖版本，因為我們已持有 mutex
+        const result = await this.appendUnsafe(entry);
+        if (result === 'ok') added++;
+        else if (result === 'fork_detected') forks++;
+        else if (result === 'duplicate') duplicates++;
+      }
+
+      return { added, forks, duplicates };
+    } finally {
+      this.appendMutex.release();
     }
-
-    return { added, forks, duplicates };
   }
 
   // ── Chain integrity ─────────────────────────────────────────────────────
