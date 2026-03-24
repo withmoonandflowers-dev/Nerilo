@@ -50,8 +50,8 @@ service cloud.firestore {
     match /p2pRooms/{roomId} {
       // 讀取：允許已登入用戶讀取公開房間，或讀取自己參與的房間
       allow read: if isAuthenticated() && (
-        // 公開房間
-        !resource.data.isPrivate ||
+        // 公開房間（isPrivate 不存在時視為公開）
+        !('isPrivate' in resource.data) || !resource.data.isPrivate ||
         // 或參與者列表包含當前用戶
         request.auth.uid in resource.data.participants ||
         // 或是房主
@@ -60,9 +60,11 @@ service cloud.firestore {
 
       // 建立：只允許已登入的用戶（非匿名）建立房間
       // 且 ownerUid 必須是當前用戶
+      // 例外：若文件帶有 e2eTestMode=true 標記，允許匿名使用者建立（僅 emulator 環境有效）
       allow create: if isAuthenticated() &&
-        request.auth.token.firebase.sign_in_provider != "anonymous" &&
-        request.resource.data.ownerUid == request.auth.uid;
+        request.resource.data.ownerUid == request.auth.uid &&
+        (request.auth.token.firebase.sign_in_provider != "anonymous" ||
+         request.resource.data.e2eTestMode == true);
 
       // 更新：允許房主更新房間，或參與者加入/更新自己的身分
       allow update: if isAuthenticated() && (
