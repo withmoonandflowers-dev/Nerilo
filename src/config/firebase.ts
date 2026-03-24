@@ -3,39 +3,46 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 
-// 資安：正式環境應僅使用環境變數，勿依賴 fallback。CI/正式 build 請注入 VITE_FIREBASE_*。
-// 以下 fallback 僅供開發/展示；若環境變數缺失或為佔位符，退回到專案預設以避免 api-key-not-valid。
-const isPlaceholder = (value: string | undefined): boolean => {
-  if (!value) return true;
-  const placeholders = ['your-api-key', 'your-project', 'your-project-id', 'your-app-id'];
-  return placeholders.some(placeholder => value.includes(placeholder));
-};
+/**
+ * Firebase 設定
+ *
+ * 所有值均從環境變數讀取（Vite 透過 import.meta.env 注入）。
+ * - 本機開發：在專案根目錄建立 `.env.local`，填入 VITE_FIREBASE_* 變數
+ * - CI / 正式部署：注入對應環境變數
+ *
+ * 若任何必要變數缺失，在開發模式下會輸出警告；
+ * 正式環境則直接使用空字串（Firebase SDK 會在初始化時拋出更明確的錯誤）。
+ */
+
+const REQUIRED_VARS = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN',
+  'VITE_FIREBASE_PROJECT_ID',
+  'VITE_FIREBASE_STORAGE_BUCKET',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APP_ID',
+] as const;
+
+// 開發模式下檢查環境變數是否齊全
+if (import.meta.env.DEV) {
+  const missing = REQUIRED_VARS.filter(
+    (key) => !import.meta.env[key] || import.meta.env[key] === `your-${key.toLowerCase()}`
+  );
+  if (missing.length > 0) {
+    console.warn(
+      `[Firebase] 缺少環境變數，請確認 .env.local 已正確設定：\n  ${missing.join('\n  ')}\n` +
+      `可參考 .env.local.example 範本。`
+    );
+  }
+}
 
 const firebaseConfig = {
-  apiKey:
-    (import.meta.env.VITE_FIREBASE_API_KEY && !isPlaceholder(import.meta.env.VITE_FIREBASE_API_KEY))
-      ? import.meta.env.VITE_FIREBASE_API_KEY
-      : 'AIzaSyB3JwZFuRYHYkRReoYW94cfJGXDr6B9msY',
-  authDomain:
-    (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN && !isPlaceholder(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN))
-      ? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN
-      : 'nerilo.firebaseapp.com',
-  projectId:
-    (import.meta.env.VITE_FIREBASE_PROJECT_ID && !isPlaceholder(import.meta.env.VITE_FIREBASE_PROJECT_ID))
-      ? import.meta.env.VITE_FIREBASE_PROJECT_ID
-      : 'nerilo',
-  storageBucket:
-    (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET && !isPlaceholder(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET))
-      ? import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
-      : 'nerilo.firebasestorage.app',
-  messagingSenderId:
-    (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID && !isPlaceholder(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID))
-      ? import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID
-      : '367602787660',
-  appId:
-    (import.meta.env.VITE_FIREBASE_APP_ID && !isPlaceholder(import.meta.env.VITE_FIREBASE_APP_ID))
-      ? import.meta.env.VITE_FIREBASE_APP_ID
-      : '1:367602787660:web:b2078171fb068d39099be9',
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            ?? '',
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        ?? '',
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         ?? '',
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     ?? '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? '',
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID             ?? '',
 };
 
 const app = initializeApp(firebaseConfig);
@@ -44,6 +51,3 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
 export default app;
-
-
-
