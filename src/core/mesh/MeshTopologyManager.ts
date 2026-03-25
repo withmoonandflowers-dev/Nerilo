@@ -140,7 +140,7 @@ export class MeshTopologyManager {
         isInitiator
       );
 
-      // 等待連線就緒，失敗時觸發重試
+      // 等待連線就緒，失敗時先 close 再排程重試
       connection.waitForReady()
         .then(() => {
           // 連線成功，重設重試計數
@@ -150,14 +150,15 @@ export class MeshTopologyManager {
             remoteUserId: userId,
           });
         })
-        .catch((error) => {
-          console.warn('[MeshTopologyManager] Connection not ready, scheduling retry', {
+        .catch(async (error) => {
+          console.warn('[MeshTopologyManager] Connection not ready, closing and scheduling retry', {
             roomId: this.roomId,
             remoteUserId: userId,
             error,
           });
-          // 移除失敗的連線，排程重試
+          // 先 close 失敗的連線（釋放 RTCPeerConnection），再排程重試
           this.neighbors.delete(userId);
+          await connection.close().catch(() => {});
           this.scheduleReconnect(userId);
         });
 
