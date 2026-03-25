@@ -28,6 +28,7 @@ const ChatPage: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [showConnectionHint, setShowConnectionHint] = useState(false);
+  const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const p2pInitializedRef = useRef(false);
@@ -98,6 +99,7 @@ const ChatPage: React.FC = () => {
           if (!isMounted()) return; // guard: cleanup ran during joinRoom (retry loop)
           featureLog('chat', 'room_joined', { roomId, uid });
           console.log('[ChatPage] joinRoom completed', { roomId, uid });
+          setHasJoinedRoom(true);
 
           // 等待 Firestore 同步更新
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -277,11 +279,12 @@ const ChatPage: React.FC = () => {
   }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList]);
 
   // Firestore 備援：訂閱房間訊息，P2P 未連線時對方經 Firestore 送的訊息也能顯示
+  // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied
   useEffect(() => {
-    if (!roomId || !user) return;
+    if (!roomId || !user || !hasJoinedRoom) return;
     const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage);
     return () => unsubscribe();
-  }, [roomId, user, addMessage]);
+  }, [roomId, user, addMessage, hasJoinedRoom]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
