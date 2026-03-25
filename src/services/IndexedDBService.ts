@@ -28,7 +28,7 @@ interface SystemEvent {
   id?: number;
   eventId: string;
   type: string;
-  data: any;
+  data: unknown;
   timestamp: number;
   roomId: string;
 }
@@ -121,19 +121,23 @@ class NeriloDB extends Dexie {
         await tx
           .table('chainEntries')
           .toCollection()
-          .modify((rec: any) => {
+          .modify((rec: Record<string, unknown>) => {
             if (rec.isProvenance === undefined) rec.isProvenance = 0;
           });
       });
 
     // v4: add snapshots and featureState tables
+    // ⚠️ 保留 ++id 自增主鍵 — Dexie 不支援更換主鍵
+    // 之前嘗試把 chats/files/events 的主鍵從 ++id 改成 messageId/fileId/eventId，
+    // 導致 "UpgradeError Not yet support for changing primary key" 錯誤。
+    // chainEntries 同理：保留 ++id，改用 compound index 加速查詢。
     this.version(4)
       .stores({
-        chats: 'messageId, timestamp, roomId, from',
-        files: 'fileId, timestamp, roomId',
-        events: 'eventId, timestamp, roomId, type',
+        chats: '++id, messageId, timestamp, roomId, from',
+        files: '++id, fileId, timestamp, roomId',
+        events: '++id, eventId, timestamp, roomId, type',
         chainEntries:
-          'entryHash, entryIndex, roomId, timestamp, creatorId, [roomId+isProvenance], isProvenance, sourceRoomId',
+          '++id, entryHash, entryIndex, roomId, timestamp, creatorId, [roomId+isProvenance], isProvenance, sourceRoomId',
         snapshots: 'snapshotId, roomId, upToIndex, createdAt',
         featureState: 'key, roomId',
       })
@@ -248,7 +252,7 @@ export class IndexedDBService {
   async saveSystemEvent(
     eventId: string,
     type: string,
-    data: any,
+    data: unknown,
     roomId: string
   ): Promise<void> {
     await this.db.events.add({
