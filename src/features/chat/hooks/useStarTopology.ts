@@ -2,7 +2,7 @@
  * 星型拓撲 P2P 連線管理 Hook
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import { P2PManager } from '../../../core/p2p/P2PManager';
 import { ChatService } from '../ChatService';
 import type { IChatStorage } from '../../../ports';
@@ -69,38 +69,37 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       connectionStateRef.current = 'connecting';
       onStateChange('connecting');
 
-      // 定期檢查連線狀態（作為備份機制，確保狀態正確更新）
+      // 定期檢查連線狀態（備份機制，只關注重大變化）
+      // 重要：只處理「最終態」(connected/failed/closed)，
+      // 忽略暫態 (new/connecting/disconnected) 以避免 connected↔connecting 震盪。
       const stateCheckInterval = setInterval(() => {
         const pc = connectionManager.getPeerConnection();
-        if (pc) {
-          const pcState = pc.connectionState;
-          let mappedState: ConnectionState;
-          
-          if (pcState === 'connected') {
-            mappedState = 'connected';
-          } else if (pcState === 'disconnected' || pcState === 'failed') {
-            mappedState = 'failed';
-          } else if (pcState === 'closed') {
-            mappedState = 'closed';
-          } else {
-            mappedState = 'connecting';
-          }
-          
-          // 如果狀態不同，更新狀態
-          if (connectionStateRef.current !== mappedState) {
-            console.log('[useStarTopology] State check detected change', {
-              roomId,
-              oldState: connectionStateRef.current,
-              newState: mappedState,
-              pcState,
-            });
-            connectionStateRef.current = mappedState;
-            onStateChange(mappedState);
-          }
-        }
-      }, 500); // 每 500ms 檢查一次（更頻繁）
+        if (!pc) return;
 
-      // 清理定時器（在 cleanup 時清理）
+        const pcState = pc.connectionState;
+        let mappedState: ConnectionState | null = null;
+
+        if (pcState === 'connected' && connectionStateRef.current !== 'connected') {
+          mappedState = 'connected';
+        } else if (pcState === 'failed' && connectionStateRef.current !== 'failed') {
+          mappedState = 'failed';
+        } else if (pcState === 'closed' && connectionStateRef.current !== 'closed') {
+          mappedState = 'closed';
+        }
+        // 不處理 'new'/'connecting'/'disconnected' → 避免 connected↔connecting 震盪
+
+        if (mappedState) {
+          console.log('[useStarTopology] State check detected change', {
+            roomId,
+            oldState: connectionStateRef.current,
+            newState: mappedState,
+            pcState,
+          });
+          connectionStateRef.current = mappedState;
+          onStateChange(mappedState);
+        }
+      }, 2000); // 每 2 秒檢查一次（降頻避免不必要的 re-render）
+
       stateCheckIntervalRef.current = stateCheckInterval;
       stateUnsubscribeRef.current = stateUnsubscribe;
 
@@ -194,10 +193,12 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     };
   }, []);
 
-  return {
+  // useMemo ensures the returned object is the same reference between renders,
+  // preventing ChatPage's useEffect from re-running unnecessarily.
+  return useMemo(() => ({
     initialize,
     sendMessage,
     cleanup,
     getState,
-  };
+  }), [initialize, sendMessage, cleanup, getState]);
 }
