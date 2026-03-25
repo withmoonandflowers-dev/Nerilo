@@ -1,5 +1,7 @@
 import { MeshConnection } from './MeshConnection';
 import { RoomService } from '../../services/RoomService';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 /**
  * Mesh 拓撲管理器
@@ -11,6 +13,8 @@ export class MeshTopologyManager {
   private rotationInterval: ReturnType<typeof setInterval> | null = null;
   private rotationStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private identityMap: Map<string, string> = new Map(); // firebaseUid -> userId
+  /** Firestore 實時訂閱（用於動態發現新加入的節點） */
+  private discoveryUnsubscribe: (() => void) | null = null;
 
   /** 重連重試設定 */
   private static readonly MAX_RECONNECT_ATTEMPTS = 5;
@@ -37,58 +41,29 @@ export class MeshTopologyManager {
       localUserId: this.localUserId,
       localFirebaseUid: this.localFirebaseUid,
     });
-    
-    // 等待一下，確保其他節點有時間註冊身分
-    // 對於 3 人房間，等待 3 秒；對於 5 人房間，等待 5 秒
-    const waitTime = 3000;
-    await new Promise(resolve => setTimeout(resolve, waitTime));
-    
-    // 獲取節點列表（可能需要多次嘗試，最多重試 3 次）
-    let candidates = await this.discoverNodes();
-    let retryCount = 0;
-    const maxRetries = 3;
-    
-    while (candidates.length === 0 && retryCount < maxRetries) {
-      console.log('[MeshTopologyManager] No nodes found, waiting and retrying', {
+
+    // ── 策略：Firestore 實時訂閱 + 反應式連線 ──
+    // 不再用固定等待+輪詢，改用 onSnapshot 監聽 meshIdentities 變化。
+    // 當新節點註冊身分時，立即嘗試連線，大幅縮短發現延遲。
+    //
+    // 同時做一次初始讀取：如果此時已有其他節點，立即連線。
+    const initialCandidates = await this.discoverNodes();
+    if (initialCandidates.length > 0) {
+      console.log('[MeshTopologyManager] Initial candidates found', {
         roomId: this.roomId,
-        retryCount: retryCount + 1,
-        maxRetries,
+        count: initialCandidates.length,
       });
-      await new Promise(resolve => setTimeout(resolve, 3000)); // 增加等待時間
-      candidates = await this.discoverNodes();
-      retryCount++;
+      const maxNeighbors = Math.min(this.k, initialCandidates.length);
+      const selected = await this.selectNeighbors(initialCandidates, maxNeighbors);
+      this.connectToNeighbors(selected).catch(error => {
+        console.error('[MeshTopologyManager] Error connecting to initial neighbors', { error });
+      });
     }
-    
-    if (candidates.length === 0) {
-      console.warn('[MeshTopologyManager] No nodes found after retries', {
-        roomId: this.roomId,
-        retryCount,
-      });
-      return; // 沒有節點可連線
-    }
-    
-    // 選擇鄰居（最多選擇 min(k, candidates.length) 個）
-    const maxNeighbors = Math.min(this.k, candidates.length);
-    const selected = await this.selectNeighbors(candidates, maxNeighbors);
-    
-    console.log('[MeshTopologyManager] Selected neighbors', {
-      roomId: this.roomId,
-      candidateCount: candidates.length,
-      selectedCount: selected.length,
-      maxNeighbors,
-      selectedUserIds: selected,
-    });
-    
-    // 建立連線（不等待所有連線完成，讓它們非同步建立）
-    this.connectToNeighbors(selected).catch(error => {
-      console.error('[MeshTopologyManager] Error connecting to neighbors', {
-        roomId: this.roomId,
-        error,
-      });
-    });
-    
-    // 開始連線旋轉（延遲啟動，給連線一些時間建立）
-    // 注意：連線建立是非同步的，這裡只是啟動旋轉機制
+
+    // 啟動 Firestore 實時訂閱：監聽房間 meshIdentities 變化
+    this.startReactiveDiscovery();
+
+    // 延遲啟動鄰居旋轉（15 秒後，給所有節點時間建立初始連線）
     this.rotationStartTimeout = setTimeout(() => {
       this.rotationStartTimeout = null;
       if (this.neighbors.size > 0) {
@@ -98,7 +73,51 @@ export class MeshTopologyManager {
           neighborCount: this.neighbors.size,
         });
       }
-    }, 10000); // 延遲到 10 秒後啟動旋轉
+    }, 15000);
+  }
+
+  /**
+   * 啟動 Firestore 實時訂閱，當新節點加入（註冊 meshIdentity）時自動嘗試連線。
+   * 這解決了「所有人同時加入，互相看不到」的競態問題。
+   */
+  private startReactiveDiscovery(): void {
+    const roomRef = doc(db, 'p2pRooms', this.roomId);
+
+    this.discoveryUnsubscribe = onSnapshot(roomRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (!data.meshIdentities) return;
+
+      const newCandidates: string[] = [];
+
+      for (const [firebaseUid, identity] of Object.entries(data.meshIdentities)) {
+        if (firebaseUid === this.localFirebaseUid) continue;
+        const typedIdentity = identity as { userId: string; pubKey: string; joinedAt: unknown };
+        const userId = typedIdentity.userId;
+
+        // 更新 identity map
+        this.identityMap.set(firebaseUid, userId);
+
+        // 如果這個節點不是現有鄰居，且不在連線中，就加入候選
+        if (!this.neighbors.has(userId) && !this.reconnectAttempts.has(userId)) {
+          newCandidates.push(userId);
+        }
+      }
+
+      if (newCandidates.length > 0 && this.neighbors.size < this.k) {
+        console.log('[MeshTopologyManager] Reactive discovery: new candidates found', {
+          roomId: this.roomId,
+          newCandidates,
+          currentNeighbors: this.neighbors.size,
+        });
+        const toConnect = newCandidates.slice(0, this.k - this.neighbors.size);
+        this.connectToNeighbors(toConnect).catch(error => {
+          console.error('[MeshTopologyManager] Reactive connect error', { error });
+        });
+      }
+    }, (error) => {
+      console.warn('[MeshTopologyManager] Reactive discovery error', { error });
+    });
   }
 
   /**
@@ -394,6 +413,12 @@ export class MeshTopologyManager {
    * 清理資源
    */
   async cleanup(): Promise<void> {
+    // 停止 Firestore 實時訂閱
+    if (this.discoveryUnsubscribe) {
+      this.discoveryUnsubscribe();
+      this.discoveryUnsubscribe = null;
+    }
+
     // 清除所有重連 timer
     for (const timer of this.reconnectTimers.values()) {
       clearTimeout(timer);

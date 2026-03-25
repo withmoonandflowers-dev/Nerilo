@@ -35,16 +35,21 @@ export function decideArchitecture(
     };
   }
 
-  // ── Mesh 架構目前僅用於「房間明確設為 mesh」的情況 ──
-  // 自動 Star→Mesh 遷移尚未實作（既有 Star 使用者不會註冊 meshIdentities，
-  // 導致第 3 人加入時 discoverNodes() 找不到節點）。
-  // 在遷移機制完成前，3+ 人房間仍使用 Star 拓撲（hub-and-spoke）。
-  // TODO: 實作 Star→Mesh 遷移協議後，將閾值降回 3。
+  // 3+ 人自動使用 Mesh topology（全鏈式 P2P：A↔B↔C↔D，Gossip 多跳轉發）
+  // 2 人使用 Star topology（直連 DataChannel，延遲最低）
+  if (effectiveParticipantCount >= 3) {
+    return {
+      type: 'mesh',
+      participantCount: effectiveParticipantCount,
+      reason: `Mesh topology for ${effectiveParticipantCount} participants (gossip relay, TTL=8)`,
+    };
+  }
+
   if (effectiveParticipantCount >= 2) {
     return {
       type: 'star',
       participantCount: effectiveParticipantCount,
-      reason: `Star topology for ${effectiveParticipantCount} participants (Mesh migration not yet implemented)`,
+      reason: `Star topology for ${effectiveParticipantCount} participants (direct P2P)`,
     };
   }
 
