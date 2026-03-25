@@ -33,6 +33,11 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
   /**
    * 初始化星型拓撲 P2P 連線
    */
+  // 使用 ref 儲存 callback，確保 ChatService listener 總是呼叫最新的版本
+  // （避免 React StrictMode re-mount 後 closure stale 問題）
+  const onMessageRef = useRef<((message: ChatMessage) => void) | null>(null);
+  const onStateChangeRef = useRef<((state: ConnectionState) => void) | null>(null);
+
   const initialize = useCallback(async (
     roomId: string,
     uid: string,
@@ -40,9 +45,18 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     onStateChange: (state: ConnectionState) => void,
     onMessage: (message: ChatMessage) => void
   ): Promise<void> => {
+    // 更新 ref，確保後續的 callback 呼叫使用最新的函式
+    onMessageRef.current = onMessage;
+    onStateChangeRef.current = onStateChange;
+
+    // 如果已有舊的連線，先清理再重建（支援 StrictMode re-mount）
     if (p2pManagerRef.current) {
-      console.log('[useStarTopology] Already initialized, skipping');
-      return;
+      console.log('[useStarTopology] Cleaning up previous instance before re-init');
+      if (stateCheckIntervalRef.current) clearInterval(stateCheckIntervalRef.current);
+      if (stateUnsubscribeRef.current) stateUnsubscribeRef.current();
+      p2pManagerRef.current.close();
+      p2pManagerRef.current = null;
+      chatServiceRef.current = null;
     }
 
     try {
@@ -57,17 +71,17 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       await p2pManager.initialize();
       p2pManagerRef.current = p2pManager;
 
-      // 監聽連線狀態
+      // 監聽連線狀態（透過 ref 呼叫，確保用最新的 callback）
       const connectionManager = p2pManager.getConnectionManager();
       const stateUnsubscribe = connectionManager.onStateChange((state) => {
         console.log('[useStarTopology] Connection state changed', { roomId, state });
         connectionStateRef.current = state;
-        onStateChange(state);
+        onStateChangeRef.current?.(state);
       });
 
       // 設置初始狀態為 connecting
       connectionStateRef.current = 'connecting';
-      onStateChange('connecting');
+      onStateChangeRef.current?.('connecting');
 
       // 定期檢查連線狀態（備份機制，只關注重大變化）
       // 重要：只處理「最終態」(connected/failed/closed)，
@@ -96,7 +110,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
             pcState,
           });
           connectionStateRef.current = mappedState;
-          onStateChange(mappedState);
+          onStateChangeRef.current?.(mappedState);
         }
       }, 2000); // 每 2 秒檢查一次（降頻避免不必要的 re-render）
 
@@ -114,7 +128,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
           if (pc && pc.connectionState === 'connected') {
             console.log('[useStarTopology] ChannelBus ready and connection is connected', { roomId });
             connectionStateRef.current = 'connected';
-            onStateChange('connected');
+            onStateChangeRef.current?.('connected');
           }
 
           const deviceId = p2pManager.getDeviceId();
@@ -129,11 +143,17 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
 
           // 載入歷史訊息
           chatService.loadHistory().then((messages) => {
-            messages.forEach(onMessage);
+            messages.forEach(m => onMessageRef.current?.(m));
           });
 
-          // 監聽新訊息
-          chatService.onMessage(onMessage);
+          // 監聽新訊息（透過 ref 呼叫，確保 StrictMode re-mount 後仍用最新的 addMessage）
+          chatService.onMessage((msg) => {
+            console.log('[useStarTopology] onMessage wrapper called', {
+              messageId: msg.messageId,
+              hasRef: !!onMessageRef.current,
+            });
+            onMessageRef.current?.(msg);
+          });
         }
       }, 100);
 
@@ -142,7 +162,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     } catch (error) {
       console.error('[useStarTopology] Error initializing', error);
       connectionStateRef.current = 'failed';
-      onStateChange('failed');
+      onStateChangeRef.current?.('failed');
       throw error;
     }
   }, [chatStorage]);
