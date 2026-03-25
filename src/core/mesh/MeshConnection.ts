@@ -35,33 +35,35 @@ export class MeshConnection {
 
   private async initialize(): Promise<void> {
     await this.p2pManager.initialize();
-    
-    // 等待 ChannelBus 準備好（增加超時時間，因為 Mesh 連線可能需要更長時間）
-    const checkInterval = setInterval(() => {
-      const bus = this.p2pManager.getChannelBus();
-      if (bus && bus.getReadyState() === 'open') {
-        clearInterval(checkInterval);
-        this.channelBus = bus;
-        this.setupMessageHandlers();
-        console.log('[MeshConnection] ChannelBus ready', {
-          roomId: this.roomId,
-          remoteFirebaseUid: this.remoteFirebaseUid,
-          meshUserId: this.meshUserId,
-        });
-      }
-    }, 200); // 每 200ms 檢查一次
 
-    // 超時處理（增加到 30 秒，因為 Mesh 連線建立可能需要更長時間）
-    setTimeout(() => {
-      clearInterval(checkInterval);
-      if (!this.channelBus) {
+    // 等待 ChannelBus 就緒，帶有明確的 resolve/reject
+    await new Promise<void>((resolve, reject) => {
+      const checkInterval = setInterval(() => {
+        const bus = this.p2pManager.getChannelBus();
+        if (bus && bus.getReadyState() === 'open') {
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          this.channelBus = bus;
+          this.setupMessageHandlers();
+          console.log('[MeshConnection] ChannelBus ready', {
+            roomId: this.roomId,
+            remoteFirebaseUid: this.remoteFirebaseUid,
+            meshUserId: this.meshUserId,
+          });
+          resolve();
+        }
+      }, 200);
+
+      const timeout = setTimeout(() => {
+        clearInterval(checkInterval);
         console.warn('[MeshConnection] ChannelBus not ready after timeout', {
           roomId: this.roomId,
           remoteFirebaseUid: this.remoteFirebaseUid,
           meshUserId: this.meshUserId,
         });
-      }
-    }, 30000); // 30 秒超時
+        reject(new Error('MeshConnection timeout: ChannelBus not ready after 30s'));
+      }, 30_000);
+    });
   }
 
   /**

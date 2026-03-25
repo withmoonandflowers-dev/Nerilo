@@ -40,13 +40,22 @@ export class P2PConnectionManager {
         localUid: this.localUid,
       });
 
+      // 清理上一次的 RTCPeerConnection（防止資源洩漏）
+      if (this.pc) {
+        console.warn('[P2PConnectionManager] Closing stale RTCPeerConnection before re-init', {
+          roomId: this.roomId,
+        });
+        this.pc.close();
+        this.pc = null;
+      }
+
       // 取得 ICE servers（可選：從 Cloud Functions）
       this.iceServers = await this.getIceServers();
       console.log('[P2PConnectionManager] ICE servers obtained', {
         roomId: this.roomId,
         serverCount: this.iceServers?.length || 0,
       });
-      
+
       // 建立 RTCPeerConnection
       this.pc = new RTCPeerConnection({
         iceServers: this.iceServers,
