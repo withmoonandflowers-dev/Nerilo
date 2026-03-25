@@ -31,7 +31,10 @@ const ChatPage: React.FC = () => {
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
-  const p2pInitializedRef = useRef(false);
+  /** 當前拓撲類型：null=未初始化, 'star'=2人直連, 'mesh'=多人鏈式 */
+  const currentTopologyRef = useRef<'star' | 'mesh' | null>(null);
+  /** 拓撲初始化/遷移互斥鎖，防止並行 init */
+  const migrationInProgressRef = useRef(false);
   const connectingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const architecture = useP2PArchitecture();
@@ -134,70 +137,64 @@ const ChatPage: React.FC = () => {
           throw error;
         }
 
-        // 4. 初始化 P2P 連線（含互斥鎖：防止兩條路徑同時觸發）
+        // 4. 初始化 P2P 連線（支援 Star→Mesh 拓撲遷移）
+        //
+        // 拓撲遷移流程：
+        //   - 2 人加入 → Star（直連 DataChannel）
+        //   - 第 3 人加入 → onRoomOpen 觸發 → decision 變為 mesh
+        //   → cleanup Star → initialize Mesh
+        //   → MeshGossipManager 註冊 meshIdentity
+        //   → MeshTopologyManager reactive discovery 發現彼此
+        //   → 建立全鏈式 P2P (A↔B↔C, gossip relay)
+        //
         const initializeP2P = async (room: P2PRoom, effectiveParticipantCount?: number) => {
-          // ── 互斥鎖 ── p2pInitializedRef 在 await 之前設為 true，
-          // 確保即使兩條路徑（onRoomOpen + 直接讀取）同時觸發，只有第一個能進入。
-          if (p2pInitializedRef.current) {
-            return;
-          }
-          p2pInitializedRef.current = true;
-
-          const effectiveCount = effectiveParticipantCount ?? room.participants.length;
-          if (room.status !== 'open' || effectiveCount < 2) {
-            p2pInitializedRef.current = false;
-            return;
-          }
-
-          // 決定架構
-          const decision = architecture.decide(room, effectiveCount);
-          featureLog('chat', 'architecture_decided', { roomId, type: decision.type });
-          console.log('[ChatPage] Deciding P2P architecture', {
-            roomId,
-            decision,
-          });
+          // 互斥鎖：防止並行初始化（onRoomOpen + 直接讀取同時觸發）
+          if (migrationInProgressRef.current) return;
+          migrationInProgressRef.current = true;
 
           try {
+            const effectiveCount = effectiveParticipantCount ?? room.participants.length;
+            if (room.status !== 'open' || effectiveCount < 2) return;
 
-            if (decision.type === 'mesh') {
-              // 使用 Mesh 架構
-              console.log('[ChatPage] Initializing Mesh topology', {
-                roomId,
-                uid,
-                participantCount: effectiveCount,
-              });
+            const decision = architecture.decide(room, effectiveCount);
+            const currentTopo = currentTopologyRef.current;
 
-              await meshTopology.initialize(
-                roomId,
-                uid,
-                setConnectionState,
-                addMessage
-              );
-            } else {
-              // 使用星型拓撲
-              const isInitiator = room.ownerUid === uid;
-              console.log('[ChatPage] Initializing Star topology', {
-                roomId,
-                uid,
-                isInitiator,
-              });
+            // 同拓撲 → 不需要遷移
+            if (currentTopo === decision.type) return;
 
-              await starTopology.initialize(
-                roomId,
-                uid,
-                isInitiator,
-                setConnectionState,
-                addMessage
-              );
-            }
-          } catch (error) {
-            console.error('[ChatPage] Error initializing P2P', {
-              roomId,
-              architecture: decision.type,
-              error,
+            featureLog('chat', 'architecture_decided', { roomId, type: decision.type, from: currentTopo });
+            console.log('[ChatPage] P2P topology', {
+              roomId, currentTopo, newTopo: decision.type, effectiveCount,
             });
-            p2pInitializedRef.current = false;
+
+            // ★ MIGRATION: Star → Mesh（第 3 人加入時觸發）
+            if (currentTopo === 'star' && decision.type === 'mesh') {
+              console.log('[ChatPage] Migrating Star → Mesh', { roomId, effectiveCount });
+              starTopology.cleanup();
+              setConnectionState('connecting');
+              await meshTopology.initialize(roomId, uid, setConnectionState, addMessage);
+              currentTopologyRef.current = 'mesh';
+              return;
+            }
+
+            // FIRST INIT（currentTopo === null）
+            if (currentTopo === null) {
+              if (decision.type === 'mesh') {
+                console.log('[ChatPage] Initializing Mesh topology', { roomId, uid, effectiveCount });
+                await meshTopology.initialize(roomId, uid, setConnectionState, addMessage);
+              } else {
+                const isInitiator = room.ownerUid === uid;
+                console.log('[ChatPage] Initializing Star topology', { roomId, uid, isInitiator });
+                await starTopology.initialize(roomId, uid, isInitiator, setConnectionState, addMessage);
+              }
+              currentTopologyRef.current = decision.type;
+            }
+            // mesh → star: 不降級（避免震盪），保持 mesh 運作
+          } catch (error) {
+            console.error('[ChatPage] Error initializing P2P', { roomId, error });
             setConnectionState('failed');
+          } finally {
+            migrationInProgressRef.current = false;
           }
         };
 
@@ -274,7 +271,8 @@ const ChatPage: React.FC = () => {
       }
 
       initializedRef.current = false;
-      p2pInitializedRef.current = false;
+      currentTopologyRef.current = null;
+      migrationInProgressRef.current = false;
     };
   }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList]);
 

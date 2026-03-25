@@ -38,10 +38,18 @@ export class P2PConnectionManager {
   private readonly sessionStartedAt: Timestamp = Timestamp.now();
   /** 是否已清理舊 signals（只在首次連線成功時執行一次） */
   private hasCleanedOldSignals = false;
+  /**
+   * Signal 通道標籤：用於隔離同一房間內不同連線的 signals。
+   * - Star: 'chat'
+   * - Mesh neighbor: 'mesh-{remoteFirebaseUid}'
+   * 寫入 Firestore signal 文件，收到時只處理匹配的 channelLabel。
+   */
+  private readonly channelLabel: string;
 
-  constructor(roomId: string, localUid: string) {
+  constructor(roomId: string, localUid: string, channelLabel = 'default') {
     this.roomId = roomId;
     this.localUid = localUid;
+    this.channelLabel = channelLabel;
   }
 
   async initialize(): Promise<void> {
@@ -221,15 +229,15 @@ export class P2PConnectionManager {
       return;
     }
     
+    // 過濾不屬於此 channelLabel 的 signal（Star 和 Mesh 隔離）
+    // 向後相容：channelLabel 為 undefined 的舊 signals 不過濾
+    const signalLabel = (signal as unknown as Record<string, unknown>).channelLabel as string | undefined;
+    if (signalLabel && signalLabel !== this.channelLabel) {
+      return;
+    }
+
     // 過濾不屬於自己的 signal（多人房間中，signal.to 可指定接收者）
     if (signal.to && signal.to !== this.localUid) {
-      console.debug('[P2PConnectionManager] handleSignal: Ignoring signal not addressed to us', {
-        roomId: this.roomId,
-        signalType: signal.type,
-        from: signal.from,
-        to: signal.to,
-        localUid: this.localUid,
-      });
       return;
     }
 
@@ -415,6 +423,7 @@ export class P2PConnectionManager {
       type,
       payload: serializedPayload,
       createdAt: Timestamp.now(),
+      channelLabel: this.channelLabel,
     });
   }
 

@@ -28,7 +28,7 @@ export class P2PManager {
     this.deviceId = generateDeviceId();
     this.dataChannelLabel = dataChannelLabel;
     this.isInitiator = isInitiator;
-    this.connectionManager = new P2PConnectionManager(roomId, localUid);
+    this.connectionManager = new P2PConnectionManager(roomId, localUid, dataChannelLabel);
     this.protocolRegistry = new P2PProtocolRegistry();
   }
 
