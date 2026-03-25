@@ -48,7 +48,7 @@ const ChatPage: React.FC = () => {
 
     if (initKey) {
       // 使用 window 全域旗標避免 StrictMode 導致的重複初始化
-      const w = window as any;
+      const w = window as unknown as Record<string, Record<string, boolean>>;
       w.__neriloChatInitRooms = w.__neriloChatInitRooms || {};
       if (w.__neriloChatInitRooms[initKey]) {
         return;
@@ -58,6 +58,10 @@ const ChatPage: React.FC = () => {
 
     initializedRef.current = true;
 
+    // 如果 cleanup 在 async init() 執行期間被呼叫（例如 React StrictMode 雙重掛載），
+    // 這個 guard 可以讓 init() 提前返回，避免操作已清理的資源。
+    const isMounted = () => initializedRef.current;
+
     const init = async () => {
       try {
         const uid = user.uid;
@@ -66,6 +70,7 @@ const ChatPage: React.FC = () => {
 
         // 1. 檢查房間是否存在
         const room = await roomService.getRoom(roomId);
+        if (!isMounted()) return; // guard: cleanup ran while awaiting
         if (!room) {
           console.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
           navigate('/dashboard');
@@ -90,14 +95,17 @@ const ChatPage: React.FC = () => {
         console.log('[ChatPage] Calling joinRoom', { roomId, uid });
         try {
           await roomService.joinRoom(roomId, uid);
+          if (!isMounted()) return; // guard: cleanup ran during joinRoom (retry loop)
           featureLog('chat', 'room_joined', { roomId, uid });
           console.log('[ChatPage] joinRoom completed', { roomId, uid });
 
           // 等待 Firestore 同步更新
           await new Promise(resolve => setTimeout(resolve, 500));
+          if (!isMounted()) return;
 
           // 再次讀取房間狀態
           const roomAfterJoin = await roomService.getRoom(roomId, true);
+          if (!isMounted()) return;
           if (!roomAfterJoin) {
             console.warn('[ChatPage] Room not found after join, navigating to dashboard', { roomId });
             navigate('/dashboard');
@@ -113,27 +121,29 @@ const ChatPage: React.FC = () => {
             navigate(`/waiting/${roomId}`);
             return;
           }
-        } catch (error: any) {
-          console.error('[ChatPage] joinRoom failed', { roomId, uid, error: error.message });
-          if (error.message === '房間已關閉') {
+        } catch (error: unknown) {
+          const errMsg = error instanceof Error ? error.message : '';
+          console.error('[ChatPage] joinRoom failed', { roomId, uid, error: errMsg });
+          if (!isMounted()) return;
+          if (errMsg === '房間已關閉') {
             navigate('/dashboard');
             return;
           }
           throw error;
         }
 
-        // 4. 初始化 P2P 連線
+        // 4. 初始化 P2P 連線（含互斥鎖：防止兩條路徑同時觸發）
         const initializeP2P = async (room: P2PRoom, effectiveParticipantCount?: number) => {
+          // ── 互斥鎖 ── p2pInitializedRef 在 await 之前設為 true，
+          // 確保即使兩條路徑（onRoomOpen + 直接讀取）同時觸發，只有第一個能進入。
           if (p2pInitializedRef.current) {
-            const starState = starTopology.getState();
-            const meshState = meshTopology.getState();
-            if (starState.isInitialized || meshState.isInitialized) {
-              return; // 已經初始化
-            }
+            return;
           }
+          p2pInitializedRef.current = true;
 
           const effectiveCount = effectiveParticipantCount ?? room.participants.length;
           if (room.status !== 'open' || effectiveCount < 2) {
+            p2pInitializedRef.current = false;
             return;
           }
 
@@ -146,7 +156,6 @@ const ChatPage: React.FC = () => {
           });
 
           try {
-            p2pInitializedRef.current = true;
 
             if (decision.type === 'mesh') {
               // 使用 Mesh 架構
@@ -190,6 +199,8 @@ const ChatPage: React.FC = () => {
           }
         };
 
+        if (!isMounted()) return;
+
         // 5. 訂閱房間變化
         await roomSubscription.subscribe(roomId, {
           onRoomClosed: () => {
@@ -201,19 +212,12 @@ const ChatPage: React.FC = () => {
             navigate(`/waiting/${roomId}`);
           },
           onRoomOpen: async (room, effectiveParticipantCount) => {
-            console.log('[ChatPage] Room is open, initializing P2P', {
+            console.log('[ChatPage] Room is open via subscription', {
               roomId,
-              participantCount: room.participants.length,
               effectiveParticipantCount,
             });
-
-            const starState = starTopology.getState();
-            const meshState = meshTopology.getState();
-
-            // 如果還沒有初始化，且有效參與者數量 >= 2，初始化 P2P
-            if (!starState.isInitialized && !meshState.isInitialized && effectiveParticipantCount >= 2) {
-              await initializeP2P(room, effectiveParticipantCount);
-            }
+            // initializeP2P 內部已有互斥鎖，直接呼叫即可
+            await initializeP2P(room, effectiveParticipantCount);
           },
           onRoomNotFound: () => {
             console.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
@@ -221,8 +225,11 @@ const ChatPage: React.FC = () => {
           },
         });
 
+        if (!isMounted()) return;
+
         // 6. 如果初始房間狀態是 open，立即嘗試初始化
         const initialRoom = await roomService.getRoom(roomId, true);
+        if (!isMounted()) return;
         if (initialRoom && initialRoom.status === 'open') {
           let effectiveCount = initialRoom.participants.length;
 
@@ -254,6 +261,14 @@ const ChatPage: React.FC = () => {
 
       if (roomId && user) {
         roomService.leaveRoom(roomId, user.uid).catch(console.error);
+      }
+
+      // 清除 StrictMode 防重入旗標，讓 re-mount（開發模式下的雙重渲染）能正常重新初始化
+      if (initKey) {
+        const w = window as unknown as Record<string, Record<string, boolean>>;
+        if (w.__neriloChatInitRooms) {
+          delete w.__neriloChatInitRooms[initKey];
+        }
       }
 
       initializedRef.current = false;
