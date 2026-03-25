@@ -221,6 +221,18 @@ export class P2PConnectionManager {
       return;
     }
     
+    // 過濾不屬於自己的 signal（多人房間中，signal.to 可指定接收者）
+    if (signal.to && signal.to !== this.localUid) {
+      console.debug('[P2PConnectionManager] handleSignal: Ignoring signal not addressed to us', {
+        roomId: this.roomId,
+        signalType: signal.type,
+        from: signal.from,
+        to: signal.to,
+        localUid: this.localUid,
+      });
+      return;
+    }
+
     if (signal.from === this.localUid) {
       console.debug('[P2PConnectionManager] handleSignal: Ignoring signal from self', {
         roomId: this.roomId,
