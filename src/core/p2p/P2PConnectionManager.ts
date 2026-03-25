@@ -27,6 +27,10 @@ export class P2PConnectionManager {
   private signalUnsubscribers: (() => void)[] = [];
   /** ICE candidates that arrived before remoteDescription was set; flushed after setRemoteDescription */
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
+  /** 已處理的 signal ID 集合，防止 Firestore 快照重播導致重複處理 */
+  private processedSignalIds: Set<string> = new Set();
+  /** Signal 處理互斥鎖：確保 handleSignal 不會並行執行（避免 signalingState 競態） */
+  private signalMutex: Promise<void> = Promise.resolve();
 
   constructor(roomId: string, localUid: string) {
     this.roomId = roomId;
@@ -153,7 +157,7 @@ export class P2PConnectionManager {
     // desc 排序會導致 ICE candidates 先於 offer 被處理，觸發 buffering 問題
     const q = query(signalsRef, orderBy('createdAt', 'asc'), limit(50));
 
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       console.log('[P2PConnectionManager] Signal snapshot received', {
         roomId: this.roomId,
         changeCount: snapshot.docChanges().length,
@@ -162,13 +166,31 @@ export class P2PConnectionManager {
       for (const change of snapshot.docChanges()) {
         if (change.type === 'added') {
           const signal = { ...change.doc.data(), signalId: change.doc.id } as Signal;
+
+          // 去重：Firestore onSnapshot 在重連時可能重播已處理的 signals
+          if (this.processedSignalIds.has(signal.signalId)) {
+            continue;
+          }
+          this.processedSignalIds.add(signal.signalId);
+
           console.log('[P2PConnectionManager] Processing signal', {
             roomId: this.roomId,
             signalId: signal.signalId,
             type: signal.type,
             from: signal.from,
           });
-          await this.handleSignal(signal);
+
+          // 串行化：每個 signal 必須等前一個完成後才處理
+          // 防止兩個 answer/offer 並行執行導致 signalingState 競態
+          this.signalMutex = this.signalMutex
+            .then(() => this.handleSignal(signal))
+            .catch((err) => {
+              console.error('[P2PConnectionManager] Signal mutex error', {
+                roomId: this.roomId,
+                signalId: signal.signalId,
+                err,
+              });
+            });
         }
       }
     });
@@ -392,6 +414,8 @@ export class P2PConnectionManager {
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
     this.pendingIceCandidates = [];
+    this.processedSignalIds.clear();
+    this.signalMutex = Promise.resolve();
 
     if (this.pc) {
       this.pc.close();
