@@ -11,18 +11,27 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
+    // 降低 chunk size 警告閾值，鼓勵更細粒度的拆分
+    chunkSizeWarningLimit: 200,
     rollupOptions: {
       output: {
         manualChunks: {
-          // Firebase SDK 單獨打包（最大依賴，約 300KB+）
-          'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/functions'],
-          // React 生態系
+          // Firebase Auth — 登入頁面首屏需要，獨立打包以利快取
+          'vendor-firebase-auth': ['firebase/app', 'firebase/auth'],
+          // Firebase Firestore — 進入 Dashboard/Chat 才需要
+          'vendor-firebase-firestore': ['firebase/firestore'],
+          // React 核心 — 所有頁面都需要
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          // IndexedDB ORM
+          // IndexedDB ORM — 只有 ChatPage 需要
           'vendor-dexie': ['dexie'],
         },
       },
     },
+    // 啟用 CSS code splitting（每個 lazy page 獨立 CSS）
+    cssCodeSplit: true,
+    // 使用 esbuild minify（比 terser 快 20-100x，gzip 效果差異 < 2%）
+    minify: 'esbuild',
+    target: 'es2020',
   },
   server: {
     port: 3000,
