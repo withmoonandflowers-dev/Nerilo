@@ -119,6 +119,17 @@ export class MeshTopologyManager {
    */
   private async connectToSingleNeighbor(userId: string): Promise<void> {
     try {
+      // ── 防止資源洩漏：若已有連線物件，先關閉它 ──
+      const existing = this.neighbors.get(userId);
+      if (existing) {
+        console.log('[MeshTopologyManager] Closing existing connection before reconnect', {
+          roomId: this.roomId,
+          remoteUserId: userId,
+        });
+        this.neighbors.delete(userId);
+        await existing.close().catch(() => {});
+      }
+
       const isInitiator = this.localUserId < userId;
       const remoteFirebaseUid = this.getFirebaseUidFromUserId(userId);
       const localFirebaseUid = this.localFirebaseUid;
@@ -140,6 +151,15 @@ export class MeshTopologyManager {
         isInitiator
       );
 
+      this.neighbors.set(userId, connection);
+
+      console.log('[MeshTopologyManager] Initiating connection to neighbor', {
+        roomId: this.roomId,
+        remoteUserId: userId,
+        remoteFirebaseUid,
+        isInitiator,
+      });
+
       // 等待連線就緒，失敗時先 close 再排程重試
       connection.waitForReady()
         .then(() => {
@@ -156,20 +176,14 @@ export class MeshTopologyManager {
             remoteUserId: userId,
             error,
           });
-          // 先 close 失敗的連線（釋放 RTCPeerConnection），再排程重試
-          this.neighbors.delete(userId);
+          // 只有當 neighbors 中仍是同一個 connection 才清除
+          // （可能在等待期間已被新的 connectToSingleNeighbor 呼叫替換）
+          if (this.neighbors.get(userId) === connection) {
+            this.neighbors.delete(userId);
+          }
           await connection.close().catch(() => {});
           this.scheduleReconnect(userId);
         });
-
-      this.neighbors.set(userId, connection);
-
-      console.log('[MeshTopologyManager] Initiating connection to neighbor', {
-        roomId: this.roomId,
-        remoteUserId: userId,
-        remoteFirebaseUid,
-        isInitiator,
-      });
     } catch (error) {
       console.warn('[MeshTopologyManager] Failed to connect to neighbor, scheduling retry', {
         roomId: this.roomId,
