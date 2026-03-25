@@ -43,18 +43,19 @@ describe('decideArchitecture', () => {
     });
   });
 
-  describe('Mesh 拓撲', () => {
-    it('3 人時切換為 mesh', () => {
+  describe('Mesh 拓撲（僅限明確標記 topology=mesh）', () => {
+    // 3+ 人房間目前保持 Star（Mesh 遷移機制尚未實作）
+    it('3 人時仍使用 star（Star→Mesh 遷移未實作）', () => {
       const room = makeRoom({ participants: ['u1', 'u2', 'u3'] });
       const result = decideArchitecture(room);
-      expect(result.type).toBe('mesh');
+      expect(result.type).toBe('star');
       expect(result.participantCount).toBe(3);
     });
 
-    it('5 人時使用 mesh', () => {
+    it('5 人時仍使用 star（Star→Mesh 遷移未實作）', () => {
       const room = makeRoom({ participants: ['u1', 'u2', 'u3', 'u4', 'u5'] });
       const result = decideArchitecture(room);
-      expect(result.type).toBe('mesh');
+      expect(result.type).toBe('star');
     });
 
     it('topology 明確設為 mesh 時強制使用 mesh（即使只有 1 人）', () => {
@@ -73,10 +74,10 @@ describe('decideArchitecture', () => {
       expect(result.participantCount).toBe(2);
     });
 
-    it('覆蓋參與者數量後正確決策 — 3 人覆蓋值 → mesh', () => {
+    it('覆蓋參與者數量後正確決策 — 3 人覆蓋值 → star（Mesh 遷移未實作）', () => {
       const room = makeRoom({ participants: ['u1', 'u2'] }); // 實際 2 人
       const result = decideArchitecture(room, 3);             // 覆蓋為 3
-      expect(result.type).toBe('mesh');
+      expect(result.type).toBe('star');
       expect(result.participantCount).toBe(3);
     });
 

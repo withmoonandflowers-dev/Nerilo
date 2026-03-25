@@ -229,6 +229,11 @@ export class P2PConnectionManager {
       return;
     }
 
+    // 3+ 人房間：signal.to 存在時，只處理「寄給我的」信號
+    if (signal.to && signal.to !== this.localUid) {
+      return;
+    }
+
     this.remoteUid = signal.from;
 
     console.log('[P2PConnectionManager] handleSignal', {
