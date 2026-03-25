@@ -457,14 +457,45 @@ export class RoomService {
       throw new Error('只有房間擁有者可以刪除房間');
     }
 
+    // 先清理子集合（Firestore 刪除父文件不會自動刪除子集合）
+    await this.deleteRoomSubcollections(roomId);
     await deleteDoc(doc(db, 'p2pRooms', roomId));
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] deleteRoom: room removed from Firebase', {
+      console.log('[RoomService] deleteRoom: room + subcollections removed from Firebase', {
         roomId,
         ownerUid,
         participants: room.participants,
       });
+    }
+  }
+
+  /**
+   * 清理房間的所有子集合（signals, messages）
+   * Firestore 不會在刪除父文件時自動刪除子集合，需要手動逐筆刪除。
+   * Best-effort：失敗不影響主流程。
+   */
+  private static async deleteRoomSubcollections(roomId: string): Promise<void> {
+    const subcollections = ['signals', 'messages'];
+    for (const sub of subcollections) {
+      try {
+        const ref = collection(db, 'p2pRooms', roomId, sub);
+        const snapshot = await getDocs(query(ref));
+        if (snapshot.empty) continue;
+
+        // 批次刪除（每次最多 500，Firestore 限制）
+        const batch: Promise<void>[] = [];
+        for (const d of snapshot.docs) {
+          batch.push(deleteDoc(d.ref));
+        }
+        await Promise.allSettled(batch);
+
+        if (DEBUG_ROOMS) {
+          console.log(`[RoomService] Deleted ${snapshot.size} docs from ${sub}`, { roomId });
+        }
+      } catch (err) {
+        console.warn(`[RoomService] Failed to cleanup subcollection ${sub}`, { roomId, err });
+      }
     }
   }
 

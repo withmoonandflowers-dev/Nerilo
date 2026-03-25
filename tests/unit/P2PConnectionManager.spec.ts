@@ -28,7 +28,10 @@ vi.mock('firebase/firestore', () => ({
   addDoc: mockAddDoc,
   query: vi.fn((ref: unknown) => ref),
   orderBy: vi.fn(() => ({})),
+  where: vi.fn(() => ({})),
   limit: vi.fn(() => ({})),
+  getDocs: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
+  deleteDoc: vi.fn().mockResolvedValue(undefined),
   Timestamp: { now: vi.fn(() => ({ toMillis: () => Date.now() })) },
 }));
 

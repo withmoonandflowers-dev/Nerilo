@@ -1,11 +1,14 @@
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  query, 
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  query,
   orderBy,
+  where,
   limit,
-  Timestamp 
+  Timestamp,
+  getDocs,
+  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import type { ConnectionState, Signal } from '../../types';
@@ -31,6 +34,10 @@ export class P2PConnectionManager {
   private processedSignalIds: Set<string> = new Set();
   /** Signal 處理互斥鎖：確保 handleSignal 不會並行執行（避免 signalingState 競態） */
   private signalMutex: Promise<void> = Promise.resolve();
+  /** 此連線的建立時間戳，用來過濾掉舊 session 殘留的 signals */
+  private readonly sessionStartedAt: Timestamp = Timestamp.now();
+  /** 是否已清理舊 signals（只在首次連線成功時執行一次） */
+  private hasCleanedOldSignals = false;
 
   constructor(roomId: string, localUid: string) {
     this.roomId = roomId;
@@ -120,6 +127,8 @@ export class P2PConnectionManager {
       switch (state) {
         case 'connected':
           this.setState('connected');
+          // 連線成功後清理舊 session 的 signals（非阻塞）
+          this.cleanupOldSignals();
           break;
         case 'disconnected':
           // 'disconnected' 是暫時性狀態，瀏覽器會嘗試自動恢復；
@@ -150,12 +159,15 @@ export class P2PConnectionManager {
     console.log('[P2PConnectionManager] setupSignalingListeners', { roomId: this.roomId });
 
     const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
-    // 只依照建立時間排序取得最近的訊號，實際過濾「自己送出的訊號」
-    // 交給 handleSignal 裡的 `if (signal.from === this.localUid) return;` 處理，
-    // 這樣可以避免使用 `where('!=')` 帶來的複合索引需求。
-    // 使用 asc 排序確保因果順序：offer/answer 先到，ICE candidates 後到
-    // desc 排序會導致 ICE candidates 先於 offer 被處理，觸發 buffering 問題
-    const q = query(signalsRef, orderBy('createdAt', 'asc'), limit(50));
+    // 只訂閱「本次 session 之後」建立的 signals，忽略舊 session 殘留。
+    // 這是最關鍵的 signal 隔離：避免上一輪的 offer/answer 干擾新連線。
+    // 使用 asc 排序確保因果順序：offer/answer 先到，ICE candidates 後到。
+    const q = query(
+      signalsRef,
+      where('createdAt', '>=', this.sessionStartedAt),
+      orderBy('createdAt', 'asc'),
+      limit(50)
+    );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       console.log('[P2PConnectionManager] Signal snapshot received', {
@@ -410,7 +422,68 @@ export class P2PConnectionManager {
     this.stateListeners.forEach(listener => listener(newState));
   }
 
+  /**
+   * 清理 Firestore 中此房間的舊 signals（本次 session 之前的）
+   * 在 P2P 連線成功（ICE connected）後呼叫一次。
+   * 設計原則：signal 僅用於建立連線，連線建立後即無用途，不需保留。
+   */
+  private async cleanupOldSignals(): Promise<void> {
+    if (this.hasCleanedOldSignals) return;
+    this.hasCleanedOldSignals = true;
+
+    try {
+      const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
+      // 刪除本次 session 之前的所有 signals
+      const oldSignalsQuery = query(
+        signalsRef,
+        where('createdAt', '<', this.sessionStartedAt),
+        limit(100)
+      );
+      const snapshot = await getDocs(oldSignalsQuery);
+      if (snapshot.empty) return;
+
+      const deletions = snapshot.docs.map(d => deleteDoc(d.ref));
+      await Promise.allSettled(deletions);
+
+      console.log('[P2PConnectionManager] Cleaned up old signals', {
+        roomId: this.roomId,
+        deletedCount: snapshot.size,
+      });
+    } catch (err) {
+      // 清理失敗不影響功能，只記 log
+      console.warn('[P2PConnectionManager] Failed to cleanup old signals', err);
+    }
+  }
+
+  /**
+   * 清理此連線本次 session 產生的 signals（離開房間時呼叫）
+   * 確保離開後不留下任何 signaling 資料。
+   */
+  private async cleanupSessionSignals(): Promise<void> {
+    try {
+      const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
+      const sessionSignalsQuery = query(
+        signalsRef,
+        where('from', '==', this.localUid),
+        limit(100)
+      );
+      const snapshot = await getDocs(sessionSignalsQuery);
+      if (snapshot.empty) return;
+
+      const deletions = snapshot.docs.map(d => deleteDoc(d.ref));
+      await Promise.allSettled(deletions);
+
+      console.log('[P2PConnectionManager] Cleaned up session signals on close', {
+        roomId: this.roomId,
+        deletedCount: snapshot.size,
+      });
+    } catch (err) {
+      console.warn('[P2PConnectionManager] Failed to cleanup session signals', err);
+    }
+  }
+
   async close(): Promise<void> {
+    // 先取消 Firestore 訂閱，避免 close 過程中收到新 signals
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
     this.pendingIceCandidates = [];
@@ -421,6 +494,9 @@ export class P2PConnectionManager {
       this.pc.close();
       this.pc = null;
     }
+
+    // 離開時清理自己在 Firestore 留下的 signals（非阻塞，best-effort）
+    this.cleanupSessionSignals().catch(() => {});
 
     this.setState('closed');
   }

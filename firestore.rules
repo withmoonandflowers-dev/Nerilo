@@ -99,14 +99,21 @@ service cloud.firestore {
           && request.resource.size() < 10 * 1024
           // createdAt 可為 number（客戶端 Date.now()）或 timestamp（serverTimestamp()）
           && (request.resource.data.createdAt is number || request.resource.data.createdAt is timestamp);
-        allow update, delete: if false;
+        allow update: if false;
+        // 允許 signal 發送者刪除自己的 signal（連線建立後清理）
+        // 或房間參與者刪除該房間的舊 signals（session cleanup）
+        allow delete: if isAuthenticated()
+          && resource.data.from == request.auth.uid;
       }
 
       // Messages subcollection - 備援聊天訊息（P2P 未連線時使用）
+      // 允許參與者刪除（離開房間時清理個人訊息）
       match /messages/{messageId} {
         allow read, create: if isAuthenticated() &&
           request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isAuthenticated()
+          && resource.data.from == request.auth.uid;
       }
     }
 
