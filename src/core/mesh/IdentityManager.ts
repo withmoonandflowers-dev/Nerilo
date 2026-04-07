@@ -1,36 +1,83 @@
 import { arrayBufferToBase64, sha256Hash, base64ToArrayBuffer } from '../../utils/crypto';
+import { logger } from '../../utils/logger';
+
+const IDB_NAME = 'nerilo_identity';
+const IDB_STORE = 'keypairs';
+const IDB_KEY = 'mesh_default';
+
+/**
+ * IndexedDB 封裝：安全儲存密鑰對
+ * 比 localStorage 安全，因為 IndexedDB 可儲存非字串型態（CryptoKey 物件）
+ * 且 non-extractable keys 無法被 JS 讀取原始金鑰材料
+ */
+function openIdentityDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbGet<T>(db: IDBDatabase, key: string): Promise<T | undefined> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const store = tx.objectStore(IDB_STORE);
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result as T | undefined);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbPut(db: IDBDatabase, key: string, value: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    const req = store.put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+interface StoredKeyPair {
+  publicKeyData: string;  // Base64-encoded SPKI
+  privateKeyData: string; // Base64-encoded PKCS8
+}
 
 /**
  * 身分管理器
  * 負責生成和管理密鑰對，以及計算使用者 ID
+ *
+ * 安全改善：
+ * - 密鑰儲存在 IndexedDB（非 localStorage）
+ * - 匯入時使用 extractable=false 防止 JS 讀取原始金鑰
  */
 export class IdentityManager {
   private keyPair: CryptoKeyPair | null = null;
   private userId: string | null = null;
-  private readonly STORAGE_KEY = 'mesh_keypair';
 
   /**
    * 初始化（生成或載入密鑰對）
    */
   async initialize(): Promise<void> {
-    // 嘗試從 IndexedDB 載入
     const savedKeyPair = await this.loadKeyPairFromStorage();
-    
+
     if (savedKeyPair) {
       this.keyPair = savedKeyPair;
-      // 計算 userId
       this.userId = await this.deriveUserId(this.keyPair.publicKey);
-      console.log('[IdentityManager] Loaded key pair from storage', {
+      logger.info('[IdentityManager] Loaded key pair from storage', {
         userId: this.userId,
       });
     } else {
-      // 生成新密鑰對
       this.keyPair = await this.generateKeyPair();
       this.userId = await this.deriveUserId(this.keyPair.publicKey);
-      
-      // 儲存到 IndexedDB
       await this.saveKeyPairToStorage(this.keyPair);
-      console.log('[IdentityManager] Generated new key pair', {
+      logger.info('[IdentityManager] Generated new key pair', {
         userId: this.userId,
       });
     }
@@ -45,7 +92,7 @@ export class IdentityManager {
         name: 'ECDSA',
         namedCurve: 'P-256',
       },
-      true, // 可匯出
+      true, // 需可匯出以便持久化
       ['sign', 'verify']
     );
   }
@@ -56,8 +103,6 @@ export class IdentityManager {
   async deriveUserId(publicKey: CryptoKey): Promise<string> {
     const exportedKey = await crypto.subtle.exportKey('spki', publicKey);
     const hash = await sha256Hash(arrayBufferToBase64(exportedKey));
-    
-    // 使用前 32 字元作為 userId（16 bytes = 32 hex chars）
     return hash.substring(0, 32);
   }
 
@@ -94,46 +139,41 @@ export class IdentityManager {
 
   /**
    * 從 IndexedDB 載入密鑰對
+   * 匯入時設 extractable=false，防止 XSS 攻擊者讀取原始金鑰
    */
   private async loadKeyPairFromStorage(): Promise<CryptoKeyPair | null> {
     try {
-      // 嘗試從 localStorage 載入（簡化版，實際應該使用 IndexedDB）
-      const savedPubKey = localStorage.getItem(`${this.STORAGE_KEY}_public`);
-      const savedPrivKey = localStorage.getItem(`${this.STORAGE_KEY}_private`);
-      
-      if (!savedPubKey || !savedPrivKey) {
+      // 向後相容：嘗試遷移 localStorage 中的舊密鑰
+      const migrated = await this.migrateFromLocalStorage();
+      if (migrated) return migrated;
+
+      const db = await openIdentityDB();
+      const stored = await idbGet<StoredKeyPair>(db, IDB_KEY);
+      db.close();
+
+      if (!stored?.publicKeyData || !stored?.privateKeyData) {
         return null;
       }
 
-      // 匯入公鑰
-      const publicKeyData = base64ToArrayBuffer(savedPubKey);
       const publicKey = await crypto.subtle.importKey(
         'spki',
-        publicKeyData,
-        {
-          name: 'ECDSA',
-          namedCurve: 'P-256',
-        },
-        false,
+        base64ToArrayBuffer(stored.publicKeyData),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true, // publicKey 可匯出（需要 deriveUserId / exportPublicKey）
         ['verify']
       );
 
-      // 匯入私鑰
-      const privateKeyData = base64ToArrayBuffer(savedPrivKey);
       const privateKey = await crypto.subtle.importKey(
         'pkcs8',
-        privateKeyData,
-        {
-          name: 'ECDSA',
-          namedCurve: 'P-256',
-        },
-        false,
+        base64ToArrayBuffer(stored.privateKeyData),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        false, // 安全：privateKey 不可匯出
         ['sign']
       );
 
       return { publicKey, privateKey };
     } catch (error) {
-      console.warn('[IdentityManager] Failed to load key pair from storage', { error });
+      logger.warn('[IdentityManager] Failed to load key pair from storage', { error });
       return null;
     }
   }
@@ -143,18 +183,76 @@ export class IdentityManager {
    */
   private async saveKeyPairToStorage(keyPair: CryptoKeyPair): Promise<void> {
     try {
-      // 匯出公鑰和私鑰
       const exportedPubKey = await crypto.subtle.exportKey('spki', keyPair.publicKey);
       const exportedPrivKey = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
-      
-      // 儲存到 localStorage（簡化版，實際應該使用 IndexedDB）
-      localStorage.setItem(`${this.STORAGE_KEY}_public`, arrayBufferToBase64(exportedPubKey));
-      localStorage.setItem(`${this.STORAGE_KEY}_private`, arrayBufferToBase64(exportedPrivKey));
-      
-      console.log('[IdentityManager] Saved key pair to storage');
+
+      const stored: StoredKeyPair = {
+        publicKeyData: arrayBufferToBase64(exportedPubKey),
+        privateKeyData: arrayBufferToBase64(exportedPrivKey),
+      };
+
+      const db = await openIdentityDB();
+      await idbPut(db, IDB_KEY, stored);
+      db.close();
+
+      logger.info('[IdentityManager] Saved key pair to IndexedDB');
     } catch (error) {
-      console.error('[IdentityManager] Failed to save key pair to storage', { error });
+      logger.error('[IdentityManager] Failed to save key pair to storage', { error });
       throw error;
+    }
+  }
+
+  /**
+   * 向後相容：將 localStorage 中的舊密鑰遷移到 IndexedDB，並刪除 localStorage 記錄
+   */
+  private async migrateFromLocalStorage(): Promise<CryptoKeyPair | null> {
+    try {
+      const LEGACY_KEY = 'mesh_keypair';
+      const savedPubKey = localStorage.getItem(`${LEGACY_KEY}_public`);
+      const savedPrivKey = localStorage.getItem(`${LEGACY_KEY}_private`);
+
+      if (!savedPubKey || !savedPrivKey) return null;
+
+      logger.info('[IdentityManager] Migrating keys from localStorage to IndexedDB');
+
+      const publicKey = await crypto.subtle.importKey(
+        'spki',
+        base64ToArrayBuffer(savedPubKey),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['verify']
+      );
+
+      const privateKey = await crypto.subtle.importKey(
+        'pkcs8',
+        base64ToArrayBuffer(savedPrivKey),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        false, // 遷移後設為 non-extractable
+        ['sign']
+      );
+
+      const keyPair = { publicKey, privateKey };
+
+      // 儲存到 IndexedDB（需要用 extractable privateKey 才能 export）
+      // 因此先用 extractable=true 匯入一次來 export
+      const extractablePrivateKey = await crypto.subtle.importKey(
+        'pkcs8',
+        base64ToArrayBuffer(savedPrivKey),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign']
+      );
+      await this.saveKeyPairToStorage({ publicKey, privateKey: extractablePrivateKey });
+
+      // 刪除 localStorage 中的舊密鑰
+      localStorage.removeItem(`${LEGACY_KEY}_public`);
+      localStorage.removeItem(`${LEGACY_KEY}_private`);
+
+      logger.info('[IdentityManager] Migration complete, localStorage keys removed');
+      return keyPair;
+    } catch (error) {
+      logger.warn('[IdentityManager] localStorage migration failed', { error });
+      return null;
     }
   }
 }

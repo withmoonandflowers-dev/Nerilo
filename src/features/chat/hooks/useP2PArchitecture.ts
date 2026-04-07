@@ -3,7 +3,7 @@
  * 根據參與者數量和房間配置自動選擇最適合的 P2P 架構
  */
 
-import { useRef } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import type { P2PRoom } from '../../../types';
 
 export type ArchitectureType = 'star' | 'mesh';
@@ -35,21 +35,21 @@ export function decideArchitecture(
     };
   }
 
-  // 如果參與者 >= 3，使用 Mesh 架構
+  // 3+ 人自動使用 Mesh topology（全鏈式 P2P：A↔B↔C↔D，Gossip 多跳轉發）
+  // 2 人使用 Star topology（直連 DataChannel，延遲最低）
   if (effectiveParticipantCount >= 3) {
     return {
       type: 'mesh',
       participantCount: effectiveParticipantCount,
-      reason: `Participant count (${effectiveParticipantCount}) >= 3`,
+      reason: `Mesh topology for ${effectiveParticipantCount} participants (gossip relay, TTL=8)`,
     };
   }
 
-  // 2 人使用星型拓撲
-  if (effectiveParticipantCount === 2) {
+  if (effectiveParticipantCount >= 2) {
     return {
       type: 'star',
       participantCount: effectiveParticipantCount,
-      reason: 'Participant count is 2 (optimal for star topology)',
+      reason: `Star topology for ${effectiveParticipantCount} participants (direct P2P)`,
     };
   }
 
@@ -67,28 +67,30 @@ export function decideArchitecture(
 export function useP2PArchitecture() {
   const currentArchitectureRef = useRef<ArchitectureDecision | null>(null);
 
-  const decide = (room: P2PRoom, overrideParticipantCount?: number): ArchitectureDecision => {
+  const decide = useCallback((room: P2PRoom, overrideParticipantCount?: number): ArchitectureDecision => {
     const decision = decideArchitecture(room, overrideParticipantCount);
     currentArchitectureRef.current = decision;
     return decision;
-  };
+  }, []);
 
-  const getCurrent = (): ArchitectureDecision | null => {
+  const getCurrent = useCallback((): ArchitectureDecision | null => {
     return currentArchitectureRef.current;
-  };
+  }, []);
 
-  const isMesh = (): boolean => {
+  const isMesh = useCallback((): boolean => {
     return currentArchitectureRef.current?.type === 'mesh';
-  };
+  }, []);
 
-  const isStar = (): boolean => {
+  const isStar = useCallback((): boolean => {
     return currentArchitectureRef.current?.type === 'star';
-  };
+  }, []);
 
-  return {
+  // useMemo ensures the returned object is the same reference between renders,
+  // preventing ChatPage's useEffect from re-running unnecessarily.
+  return useMemo(() => ({
     decide,
     getCurrent,
     isMesh,
     isStar,
-  };
+  }), [decide, getCurrent, isMesh, isStar]);
 }

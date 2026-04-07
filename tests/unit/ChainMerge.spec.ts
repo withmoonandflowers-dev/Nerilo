@@ -49,7 +49,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SharedDataStream } from '../../src/core/mesh/SharedDataStream';
 import { ChainMergeService } from '../../src/core/chain/ChainMergeService';
 import { ChainSyncService } from '../../src/core/chain/ChainSyncService';

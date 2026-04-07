@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nerilo QA Report - 2026-03-22</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 960px; margin: 0 auto; padding: 32px 24px; background: #f8f9fa; }
+  h1 { font-size: 28px; border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 8px; }
+  .meta { color: #666; font-size: 14px; margin-bottom: 32px; }
+  h2 { font-size: 22px; margin-top: 36px; margin-bottom: 16px; color: #1e3a5f; }
+  h3 { font-size: 17px; margin-top: 20px; margin-bottom: 8px; }
+  p, li { font-size: 15px; margin-bottom: 8px; }
+  ul { padding-left: 24px; }
+  code { background: #e8edf2; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 12px 0; }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }
+  .summary-card { background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .summary-card .number { font-size: 36px; font-weight: 700; }
+  .summary-card .label { font-size: 13px; color: #666; margin-top: 4px; }
+  .pass { color: #16a34a; }
+  .fail { color: #dc2626; }
+  .warn { color: #d97706; }
+  .info { color: #2563eb; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; color: white; }
+  .badge-critical { background: #dc2626; }
+  .badge-high { background: #ea580c; }
+  .badge-medium { background: #d97706; }
+  .badge-low { background: #2563eb; }
+  .badge-pass { background: #16a34a; }
+  .badge-fail { background: #dc2626; }
+  .badge-blocked { background: #6b7280; }
+
+  .issue { background: white; border-radius: 8px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #ddd; }
+  .issue.critical { border-left-color: #dc2626; }
+  .issue.high { border-left-color: #ea580c; }
+  .issue.medium { border-left-color: #d97706; }
+  .issue.low { border-left-color: #2563eb; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
+  th { background: #f1f5f9; font-weight: 600; color: #374151; }
+  tr:last-child td { border-bottom: none; }
+
+  .section { background: white; border-radius: 12px; padding: 24px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+</style>
+</head>
+<body>
+
+<h1>Nerilo QA Report</h1>
+<p class="meta">Firebase + WebRTC P2P 即時互動平台 &mdash; 日期: 2026-03-22 &mdash; 標準: 嚴格 QA</p>
+
+<!-- ===== SUMMARY ===== -->
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="number pass">240</div>
+    <div class="label">Unit Tests Passed</div>
+  </div>
+  <div class="summary-card">
+    <div class="number fail">5</div>
+    <div class="label">Unit Tests Failed</div>
+  </div>
+  <div class="summary-card">
+    <div class="number warn">107</div>
+    <div class="label">Lint Issues (9 err / 98 warn)</div>
+  </div>
+  <div class="summary-card">
+    <div class="number info">0</div>
+    <div class="label">TypeScript Errors</div>
+  </div>
+</div>
+
+<!-- ===== 1. TEST EXECUTION ===== -->
+<div class="section">
+<h2>1. 測試執行結果</h2>
+
+<h3>1.1 TypeScript 型別檢查</h3>
+<p><span class="badge badge-pass">PASS</span> <code>tsc --noEmit</code> &mdash; 零錯誤，所有型別完整一致。</p>
+
+<h3>1.2 ESLint 靜態分析</h3>
+<p><span class="badge badge-fail">FAIL</span> 共 107 個問題 (9 errors / 98 warnings)</p>
+
+<table>
+<tr><th>嚴重度</th><th>檔案</th><th>行號</th><th>問題</th></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>src/core/transport/MultiChannelBus.ts</code></td><td>213</td><td><code>_removed</code> 宣告但未使用</td></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>tests/integration/firestore-rules.spec.ts</code></td><td>31</td><td><code>TEST_PROJECT_ID</code> 宣告但未使用</td></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>tests/integration/helpers/admin-client.ts</code></td><td>17</td><td>未使用的 eslint-disable</td></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>tests/unit/MultiChannelBus.spec.ts</code></td><td>3</td><td><code>ChannelKind</code> import 未使用</td></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>tests/unit/P2PConnectionManager.spec.ts</code></td><td>12</td><td><code>MockInstance</code> import 未使用</td></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>tests/unit/useChatMessages.spec.ts</code></td><td>46</td><td><code>_state</code> 宣告但未使用</td></tr>
+<tr><td><span class="badge badge-fail">error</span></td><td><code>vitest.integration.config.ts</code></td><td>1</td><td>三斜線引用應改為 import</td></tr>
+<tr><td><span class="badge badge-medium">warn</span></td><td>跨 15+ 個檔案</td><td>-</td><td>98 個 <code>@typescript-eslint/no-explicit-any</code> 警告</td></tr>
+</table>
+
+<h3>1.3 單元測試 (Vitest)</h3>
+<p><span class="badge badge-fail">FAIL</span> 18 個測試檔案: <strong class="pass">17 passed</strong> / <strong class="fail">1 failed</strong> &mdash; 245 個測試案例: <strong class="pass">240 passed</strong> / <strong class="fail">5 failed</strong></p>
+
+<table>
+<tr><th>狀態</th><th>測試檔案</th><th>案例數</th></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>ChainMerge.spec.ts</td><td>32</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>SharedLedgerEngine.spec.ts</td><td>25</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>crypto.spec.ts</td><td>19</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>SharedDataStream.spec.ts</td><td>17</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>MultiChannelBus.spec.ts</td><td>16</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>ChatFeature.spec.ts</td><td>14</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>FeatureRegistry.spec.ts</td><td>14</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>useChatMessages.spec.ts</td><td>13</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>ForkResolver.spec.ts</td><td>12</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>RoomServiceHostMigration.spec.ts</td><td>11</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>decideArchitecture.spec.ts</td><td>10</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>GossipMessageHandler.spec.ts</td><td>10</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>AckManager.spec.ts</td><td>9</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>MeshGossipManager.spec.ts</td><td>9</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>MeshChatService.spec.ts</td><td>8</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>RoomService.spec.ts</td><td>7</td></tr>
+<tr><td><span class="badge badge-pass">PASS</span></td><td>ServicesContext.spec.ts</td><td>2</td></tr>
+<tr><td><span class="badge badge-fail">FAIL</span></td><td>P2PConnectionManager.spec.ts</td><td>5 failed / 其餘 passed</td></tr>
+</table>
+
+<h3>1.4 失敗的測試案例詳細</h3>
+<p>所有 5 個失敗案例都在 <code>P2PConnectionManager.spec.ts</code> 的 ICE candidate buffering 區塊：</p>
+
+<div class="issue critical">
+<p><strong>FAIL 1:</strong> ICE 先到、offer 後到 &rarr; ICE 先 buffer，offer 處理後 flush</p>
+<p><strong>FAIL 2:</strong> 多個 ICE 先到 &rarr; 全部 buffer，offer 後一次 flush</p>
+<p><strong>FAIL 3:</strong> ICE 先到、answer 後到（initiator 側）&rarr; ICE buffer &rarr; answer 處理後 flush</p>
+<p><strong>FAIL 4:</strong> offer 已先到 &rarr; 後續 ICE 直接 addIceCandidate，不走 buffer</p>
+<p><strong>FAIL 5:</strong> 已有 remoteDescription 時重複 answer 應忽略</p>
+<p style="margin-top:12px"><strong>根因分析：</strong>測試 mock 中的 <code>emitSignals()</code> 呼叫 snapshot callback 後，<code>handleSignal()</code> 內的非同步 <code>setRemoteDescription</code> / <code>addIceCandidate</code> 未在 assertion 前完成。這很可能是 source code 中 signal processing 的 async/await 鏈有微妙的 race condition，導致 mock 環境下 Promise 未被正確 resolve。</p>
+</div>
+
+<h3>1.5 Build 驗證</h3>
+<p><span class="badge badge-blocked">BLOCKED</span> <code>vite build</code> 無法執行 &mdash; <code>node_modules</code> 中的 esbuild 平台套件 (<code>@esbuild/aix-ppc64</code>) 與當前環境 (<code>linux-x64</code>) 不匹配。這是開發環境 / CI 設定問題，不影響原始碼品質。</p>
+
+<h3>1.6 設定檔問題</h3>
+<div class="issue medium">
+<p><strong>vitest.unit.config.mjs</strong> 第 1 行包含硬編碼的舊 session 路徑：</p>
+<pre>import { defineConfig } from 'file:///sessions/relaxed-admiring-hopper/...';</pre>
+<p>應改為：<code>import { defineConfig } from 'vitest/config';</code>（已於本次測試中修正）</p>
+</div>
+</div>
+
+<!-- ===== 2. SOURCE CODE REVIEW ===== -->
+<div class="section">
+<h2>2. 原始碼審查 &mdash; 發現的問題</h2>
+
+<div class="issue critical">
+<h3><span class="badge badge-critical">CRITICAL</span> 私鑰儲存在 localStorage</h3>
+<p><strong>檔案：</strong><code>src/core/mesh/IdentityManager.ts</code> (L100-152)</p>
+<p>Ed25519 私鑰直接以 Base64 存入 <code>localStorage</code>，任何 XSS 漏洞都能竊取並冒充使用者身份。</p>
+<p><strong>建議：</strong>改用 IndexedDB 搭配加密儲存，或使用 Web Crypto API 的 non-extractable keys。</p>
+</div>
+
+<div class="issue critical">
+<h3><span class="badge badge-critical">CRITICAL</span> P2P Signal 處理中的 Race Condition</h3>
+<p><strong>檔案：</strong><code>src/core/p2p/P2PConnectionManager.ts</code> (L147-192)</p>
+<p><code>remoteUid</code> 在每次 <code>handleSignal()</code> 時被覆蓋。若多個 peer 同時發送信號，remoteUid 會被最後一個覆蓋，導致 signaling 混亂。此問題也是單元測試失敗的根本原因之一。</p>
+</div>
+
+<div class="issue high">
+<h3><span class="badge badge-high">HIGH</span> Signal 無速率限制</h3>
+<p><strong>檔案：</strong><code>firestore.rules</code> (signals collection)</p>
+<p>任何已認證使用者都能無限制地在房間的 signals collection 中建立文件，可被利用進行 DoS 攻擊。</p>
+</div>
+
+<div class="issue high">
+<h3><span class="badge badge-high">HIGH</span> Gossip 訊息缺少新鮮度驗證</h3>
+<p><strong>檔案：</strong><code>src/core/mesh/SecurityManager.ts</code> (L51-88)</p>
+<p><code>verifyMessage</code> 只驗證密碼學簽章，不檢查訊息的時間戳。舊訊息可被重播 (replay attack)。</p>
+<p><strong>建議：</strong>加入 <code>if (Date.now() - message.timestamp > MAX_AGE) return false;</code></p>
+</div>
+
+<div class="issue high">
+<h3><span class="badge badge-high">HIGH</span> meshIdentities 缺少輸入驗證</h3>
+<p><strong>檔案：</strong><code>src/services/RoomService.ts</code> (L718-758) + <code>firestore.rules</code> (L62-69)</p>
+<p>userId 和 pubKey 在客戶端及 Firestore Rules 都只檢查 <code>!= null</code>，未驗證格式、長度、Base64 合法性。惡意使用者可注入超大或畸形的 pubKey 造成記憶體問題。</p>
+</div>
+
+<div class="issue medium">
+<h3><span class="badge badge-medium">MEDIUM</span> SharedLedgerEngine Fork 偵測 Race Condition</h3>
+<p><strong>檔案：</strong><code>src/core/ledger/SharedLedgerEngine.ts</code> (L75-87)</p>
+<p><code>detectFork()</code> 和後續的 <code>chain.find()</code> 之間可能被並發 <code>append()</code> 修改，導致分支資訊不正確。</p>
+</div>
+
+<div class="issue medium">
+<h3><span class="badge badge-medium">MEDIUM</span> MeshTopologyManager 無重試機制</h3>
+<p><strong>檔案：</strong><code>src/core/mesh/MeshTopologyManager.ts</code> (L73-78)</p>
+<p>鄰居連線失敗時只記錄 log，沒有重試或回退策略。在網路不穩定時可能導致 mesh 拓撲碎片化。</p>
+</div>
+
+<div class="issue medium">
+<h3><span class="badge badge-medium">MEDIUM</span> seenEntryHashes 清理可能遺漏</h3>
+<p><strong>檔案：</strong><code>src/core/mesh/SharedDataStream.ts</code> (L332-337)</p>
+<p>清理策略保留後半部 hash，但可能丟棄仍在 entries 陣列中的 hash，導致重複 entry 被接受。</p>
+</div>
+
+<div class="issue low">
+<h3><span class="badge badge-low">LOW</span> P2PManager 未 await initializeServices()</h3>
+<p><strong>檔案：</strong><code>src/core/p2p/P2PManager.ts</code> (L64-77)</p>
+<p><code>ondatachannel</code> callback 中呼叫 <code>initializeServices()</code> 但未 await，服務初始化失敗會被靜默忽略。</p>
+</div>
+
+<div class="issue low">
+<h3><span class="badge badge-low">LOW</span> Firestore 資料轉換型別不安全</h3>
+<p><strong>檔案：</strong><code>src/services/RoomService.ts</code> (L163-172)</p>
+<p><code>joinedAt</code> 使用 fallback chain <code>toMillis?.() || value || Date.now()</code>，若原始值異常會默默替換成當前時間，掩蓋資料完整性問題。</p>
+</div>
+</div>
+
+<!-- ===== 3. ANY TYPE USAGE ===== -->
+<div class="section">
+<h2>3. <code>any</code> 型別使用統計</h2>
+<p>全專案共 98 個 <code>@typescript-eslint/no-explicit-any</code> 警告，分布如下：</p>
+<table>
+<tr><th>檔案</th><th>數量</th><th>建議</th></tr>
+<tr><td><code>src/services/RoomService.ts</code></td><td>5</td><td>定義具體的 Firestore DocumentData 介面</td></tr>
+<tr><td><code>src/types/index.ts</code></td><td>4</td><td>使用 <code>unknown</code> 或泛型</td></tr>
+<tr><td><code>src/features/chat/ChatPage.tsx</code></td><td>3</td><td>定義 event handler 型別</td></tr>
+<tr><td><code>src/pages/DashboardPage.tsx</code></td><td>3</td><td>定義 error/event 型別</td></tr>
+<tr><td><code>src/services/IndexedDBService.ts</code></td><td>3</td><td>使用 Dexie 泛型</td></tr>
+<tr><td><code>src/core/p2p/P2PConnectionManager.ts</code></td><td>2</td><td>定義 signal payload 型別</td></tr>
+<tr><td><code>src/contexts/AuthContext.tsx</code></td><td>2</td><td>定義 Firebase error 型別</td></tr>
+<tr><td>測試檔案 (共計)</td><td>~70</td><td>測試中可接受，建議逐步改善</td></tr>
+</table>
+</div>
+
+<!-- ===== 4. TEST COVERAGE GAPS ===== -->
+<div class="section">
+<h2>4. 測試覆蓋率缺口</h2>
+<p>目前 coverage 設定僅覆蓋 8 個檔案。以下關鍵模組<strong>完全沒有</strong>納入覆蓋率報告：</p>
+<table>
+<tr><th>模組</th><th>風險等級</th><th>建議</th></tr>
+<tr><td><code>P2PConnectionManager.ts</code></td><td><span class="badge badge-critical">CRITICAL</span></td><td>既有測試失敗，需修復後加入 coverage</td></tr>
+<tr><td><code>MultiChannelBus.ts</code></td><td><span class="badge badge-high">HIGH</span></td><td>傳輸核心，需 coverage 追蹤</td></tr>
+<tr><td><code>MeshTopologyManager.ts</code></td><td><span class="badge badge-high">HIGH</span></td><td>拓撲管理，影響整體連線品質</td></tr>
+<tr><td><code>SecurityManager.ts</code></td><td><span class="badge badge-high">HIGH</span></td><td>安全關鍵模組</td></tr>
+<tr><td><code>IdentityManager.ts</code></td><td><span class="badge badge-high">HIGH</span></td><td>金鑰管理，安全關鍵</td></tr>
+<tr><td><code>ChainSyncService.ts</code></td><td><span class="badge badge-medium">MEDIUM</span></td><td>跨房間同步邏輯</td></tr>
+<tr><td><code>RoomRequestService.ts</code></td><td><span class="badge badge-medium">MEDIUM</span></td><td>合併 / 分裂請求處理</td></tr>
+<tr><td><code>P2PFileTransferService.ts</code></td><td><span class="badge badge-medium">MEDIUM</span></td><td>檔案傳輸功能</td></tr>
+</table>
+</div>
+
+<!-- ===== 5. VERDICT ===== -->
+<div class="section">
+<h2>5. 總結與建議</h2>
+
+<table>
+<tr><th>類別</th><th>結果</th><th>說明</th></tr>
+<tr><td>TypeScript 編譯</td><td><span class="badge badge-pass">PASS</span></td><td>零錯誤</td></tr>
+<tr><td>ESLint</td><td><span class="badge badge-fail">FAIL</span></td><td>9 errors 必須修正 (unused vars/imports)</td></tr>
+<tr><td>單元測試</td><td><span class="badge badge-fail">FAIL</span></td><td>5/245 失敗 (P2PConnectionManager ICE buffering)</td></tr>
+<tr><td>Build</td><td><span class="badge badge-blocked">BLOCKED</span></td><td>esbuild 平台不匹配 (環境問題)</td></tr>
+<tr><td>安全審查</td><td><span class="badge badge-fail">FAIL</span></td><td>2 Critical + 3 High 安全問題</td></tr>
+<tr><td>程式碼品質</td><td><span class="badge badge-medium">WARN</span></td><td>98 個 any 型別、error handling 不一致</td></tr>
+</table>
+
+<h3 style="margin-top: 24px;">優先修復清單</h3>
+<p><strong>P0 (立即)：</strong></p>
+<ul>
+<li>修復 P2PConnectionManager 的 ICE buffering race condition（同時修復 5 個失敗測試）</li>
+<li>將私鑰儲存從 localStorage 遷移到更安全的方案</li>
+<li>修正 <code>vitest.unit.config.mjs</code> 的硬編碼路徑（已於本次修正）</li>
+</ul>
+<p><strong>P1 (本週)：</strong></p>
+<ul>
+<li>Firestore signals collection 加入速率限制規則</li>
+<li>Gossip 訊息加入時間戳新鮮度驗證</li>
+<li>meshIdentities 輸入格式驗證</li>
+<li>修正 9 個 ESLint errors</li>
+</ul>
+<p><strong>P2 (下個 Sprint)：</strong></p>
+<ul>
+<li>擴大 coverage 設定涵蓋安全與傳輸模組</li>
+<li>逐步消除 <code>any</code> 型別警告</li>
+<li>MeshTopologyManager 加入重連重試機制</li>
+<li>SharedLedgerEngine fork 偵測加入同步保護</li>
+</ul>
+</div>
+
+</body>
+</html>

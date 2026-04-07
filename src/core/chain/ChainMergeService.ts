@@ -86,6 +86,7 @@ import type {
 } from '../../types';
 import type { SharedDataStream } from '../mesh/SharedDataStream';
 import type { IndexedDBService } from '../../services/IndexedDBService';
+import { logger } from '../../utils/logger';
 
 /** 所有 ChainMergeService 處理的 P2P 訊息型別 */
 export type ChainMergeMessage =
@@ -162,7 +163,7 @@ export class ChainMergeService {
       );
     }
 
-    console.log('[ChainMergeService] Merge marker written', {
+    logger.info('[ChainMergeService] Merge marker written', {
       roomId: this.roomId,
       sourceRoomId,
       markerIndex: marker.index,
@@ -187,21 +188,27 @@ export class ChainMergeService {
     operation: 'merge' | 'split'
   ): Promise<boolean> {
     if (entries.length === 0) {
-      console.warn('[ChainMergeService] adoptProvenanceChain: empty entries, skipping', {
+      logger.warn('[ChainMergeService] adoptProvenanceChain: empty entries, skipping', {
         roomId: this.roomId,
         sourceRoomId,
       });
       return false;
     }
 
-    // 基本驗證：index 連續性（不重算 hash，信任已通過 P2P 的條目）
+    // 驗證 index 連續性 + hash chain 連續性（#19）
     for (let i = 0; i < entries.length; i++) {
       if (entries[i]!.index !== i) {
-        console.warn('[ChainMergeService] adoptProvenanceChain: index discontinuity', {
-          roomId: this.roomId,
-          sourceRoomId,
-          expected: i,
-          got: entries[i]!.index,
+        logger.warn('[ChainMergeService] adoptProvenanceChain: index discontinuity', {
+          roomId: this.roomId, sourceRoomId, expected: i, got: entries[i]!.index,
+        });
+        return false;
+      }
+      // 驗證 hash 鏈連續性：每筆的 previousHash 必須等於前一筆的 entryHash
+      if (i > 0 && entries[i]!.previousHash !== entries[i - 1]!.entryHash) {
+        logger.warn('[ChainMergeService] adoptProvenanceChain: hash chain broken', {
+          roomId: this.roomId, sourceRoomId, brokenAt: i,
+          expected: entries[i - 1]!.entryHash.slice(0, 16),
+          got: entries[i]!.previousHash.slice(0, 16),
         });
         return false;
       }
@@ -209,7 +216,7 @@ export class ChainMergeService {
 
     await this.db.saveProvenanceEntries(entries, this.roomId, sourceRoomId, operation);
 
-    console.log('[ChainMergeService] Provenance adopted', {
+    logger.info('[ChainMergeService] Provenance adopted', {
       roomId: this.roomId,
       sourceRoomId,
       operation,
@@ -259,7 +266,7 @@ export class ChainMergeService {
       );
     }
 
-    console.log('[ChainMergeService] SplitFrom marker written', {
+    logger.info('[ChainMergeService] SplitFrom marker written', {
       roomId: this.roomId,
       sourceRoomId,
       markerIndex: marker.index,
@@ -290,7 +297,7 @@ export class ChainMergeService {
     // Marker 寫入後立即持久化到 DB
     await this.db.saveChainEntry(marker, this.roomId);
 
-    console.log('[ChainMergeService] SplitTo marker written', {
+    logger.info('[ChainMergeService] SplitTo marker written', {
       roomId: this.roomId,
       targetRoomId,
       markerIndex: marker.index,
@@ -332,7 +339,7 @@ export class ChainMergeService {
 
     this.sendFn(peerId, msg);
 
-    console.log('[ChainMergeService] Announced provenance to peer', {
+    logger.info('[ChainMergeService] Announced provenance to peer', {
       roomId: this.roomId,
       peerId,
       provenances: provenances.map((p) => p.sourceRoomId),
@@ -375,7 +382,7 @@ export class ChainMergeService {
         };
         this.sendFn(fromPeerId, request);
 
-        console.log('[ChainMergeService] Requesting provenance', {
+        logger.info('[ChainMergeService] Requesting provenance', {
           roomId: this.roomId,
           fromPeerId,
           sourceRoomId: summary.sourceRoomId,
@@ -397,7 +404,7 @@ export class ChainMergeService {
 
     if (!provenance || provenance.entries.length === 0) {
       // 我也沒有，無法回應
-      console.log('[ChainMergeService] Provenance request: not found locally', {
+      logger.info('[ChainMergeService] Provenance request: not found locally', {
         roomId: this.roomId,
         fromPeerId,
         sourceRoomId: msg.sourceRoomId,
@@ -414,7 +421,7 @@ export class ChainMergeService {
 
     this.sendFn(fromPeerId, response);
 
-    console.log('[ChainMergeService] Sent provenance to peer', {
+    logger.info('[ChainMergeService] Sent provenance to peer', {
       roomId: this.roomId,
       fromPeerId,
       sourceRoomId: msg.sourceRoomId,
@@ -437,7 +444,7 @@ export class ChainMergeService {
     );
 
     if (!ok) {
-      console.warn('[ChainMergeService] Failed to adopt provenance from response', {
+      logger.warn('[ChainMergeService] Failed to adopt provenance from response', {
         roomId: this.roomId,
         fromPeerId,
         sourceRoomId: msg.sourceRoomId,

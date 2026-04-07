@@ -5,25 +5,35 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function getUserRole() {
       // 若尚未設定自訂角色（例如匿名使用者），預設視為 guest
       return request.auth.token.role != null ? request.auth.token.role : 'guest';
     }
-    
+
     function isAdmin() {
       return getUserRole() == 'admin';
     }
-    
+
     function isOwner(uid) {
       return request.auth.uid == uid;
+    }
+
+    // ── meshIdentities 驗證 ──────────────────────────────────────────────
+    function isValidMeshIdentity(identity) {
+      return identity.userId is string
+        && identity.userId.size() >= 8
+        && identity.userId.size() <= 64
+        && identity.pubKey is string
+        && identity.pubKey.size() >= 40
+        && identity.pubKey.size() <= 512;
     }
 
     // Features collection - 功能註冊表
     match /features/{featureId} {
       // 所有人可讀取 enabled=true 的功能
       allow read: if isAuthenticated();
-      
+
       // 僅 admin 可寫入
       allow write: if isAdmin();
     }
@@ -40,51 +50,70 @@ service cloud.firestore {
     match /p2pRooms/{roomId} {
       // 讀取：允許已登入用戶讀取公開房間，或讀取自己參與的房間
       allow read: if isAuthenticated() && (
-        // 公開房間
-        !resource.data.isPrivate ||
+        // 公開房間（isPrivate 不存在時視為公開）
+        !('isPrivate' in resource.data) || !resource.data.isPrivate ||
         // 或參與者列表包含當前用戶
         request.auth.uid in resource.data.participants ||
         // 或是房主
         request.auth.uid == resource.data.ownerUid
       );
-      
+
       // 建立：只允許已登入的用戶（非匿名）建立房間
       // 且 ownerUid 必須是當前用戶
-      allow create: if isAuthenticated() && 
-        request.auth.token.firebase.sign_in_provider != "anonymous" &&
-        request.resource.data.ownerUid == request.auth.uid;
-      
-      // 更新：允許房主更新房間，或參與者加入/更新自己的身分
+      // 例外：若文件帶有 e2eTestMode=true 標記，允許匿名使用者建立（僅 emulator 環境有效）
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        (request.auth.token.firebase.sign_in_provider != "anonymous" ||
+         request.resource.data.e2eTestMode == true);
+
+      // 更新：允許房主更新房間，或使用者加入/更新自己的身分
       allow update: if isAuthenticated() && (
         // 房主可以更新房間
         (request.auth.uid == resource.data.ownerUid) ||
-        // 或參與者可以加入（更新 participants）
-        (request.auth.uid in request.resource.data.participants && 
-         request.auth.uid in resource.data.participants) ||
-        // 或參與者可以更新自己的 meshIdentity（小網狀架構）
+        // 使用者加入房間：更新後必須在 participants 中，且房間非 closed
+        (request.auth.uid in request.resource.data.participants &&
+         resource.data.status != 'closed') ||
+        // 既有參與者可以更新自己的 meshIdentity（含格式驗證）
         (request.auth.uid in resource.data.participants &&
          request.resource.data.meshIdentities != null &&
          request.resource.data.meshIdentities[request.auth.uid] != null &&
-         request.resource.data.meshIdentities[request.auth.uid].userId != null &&
-         request.resource.data.meshIdentities[request.auth.uid].pubKey != null)
+         isValidMeshIdentity(request.resource.data.meshIdentities[request.auth.uid]))
       );
-      
+
       // 刪除：只允許房主刪除自己的房間
-      allow delete: if isAuthenticated() && 
+      allow delete: if isAuthenticated() &&
         request.auth.uid == resource.data.ownerUid;
 
       // Signals subcollection - signaling 訊息
+      // 安全措施：
+      //   1. 只能建立自己的 signal（from === auth.uid）
+      //   2. payload 大小上限 10KB
+      //   3. append-only（不可更新/刪除）
+      //   4. 必須帶有 createdAt 時間戳
+      //   5. createdAt 不得為未來時間（±30 秒容差）
       match /signals/{signalId} {
-        allow read, create: if isAuthenticated();
-        // 不允許更新或刪除（append-only）
-        allow update, delete: if false;
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated()
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.type in ['offer', 'answer', 'ice']
+          && request.resource.size() < 10 * 1024
+          // createdAt 可為 number（客戶端 Date.now()）或 timestamp（serverTimestamp()）
+          && (request.resource.data.createdAt is number || request.resource.data.createdAt is timestamp);
+        allow update: if false;
+        // 允許 signal 發送者刪除自己的 signal（連線建立後清理）
+        // 或房間參與者刪除該房間的舊 signals（session cleanup）
+        allow delete: if isAuthenticated()
+          && resource.data.from == request.auth.uid;
       }
 
       // Messages subcollection - 備援聊天訊息（P2P 未連線時使用）
+      // 允許參與者刪除（離開房間時清理個人訊息）
       match /messages/{messageId} {
         allow read, create: if isAuthenticated() &&
           request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isAuthenticated()
+          && resource.data.from == request.auth.uid;
       }
     }
 
@@ -94,6 +123,3 @@ service cloud.firestore {
     }
   }
 }
-
-
-

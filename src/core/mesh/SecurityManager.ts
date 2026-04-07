@@ -6,6 +6,9 @@ import type { GossipMessage } from '../../types';
  * 負責訊息的簽名和驗證
  */
 export class SecurityManager {
+  /** 訊息最大有效時間（5 分鐘） */
+  private static readonly MAX_MESSAGE_AGE_MS = 5 * 60 * 1000;
+
   /**
    * 簽名訊息
    */
@@ -53,6 +56,16 @@ export class SecurityManager {
     publicKey: CryptoKey
   ): Promise<boolean> {
     try {
+      // 防止 replay attack：拒絕過期訊息
+      const age = Date.now() - message.timestamp;
+      if (age > SecurityManager.MAX_MESSAGE_AGE_MS || age < -30_000) {
+        console.warn('[SecurityManager] Message rejected: stale or future timestamp', {
+          senderId: message.senderId,
+          ageMs: age,
+        });
+        return false;
+      }
+
       const signature = base64ToArrayBuffer(message.signature);
       
       // 重新計算訊息 hash

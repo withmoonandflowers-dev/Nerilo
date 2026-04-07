@@ -1,33 +1,49 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { FeatureProvider } from './contexts/FeatureContext';
 import { ServicesProvider } from './contexts/ServicesContext';
-import LoginPage from './pages/LoginPage';
-import DashboardPage from './pages/DashboardPage';
-import WaitingRoomPage from './pages/WaitingRoomPage';
-import { featureRoutes } from './features/registry';
+import { ToastProvider } from './contexts/ToastContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { AppLoadingFallback } from './components/Skeleton/Skeleton';
+
+// Lazy-loaded pages — 每個頁面會被打包成獨立 chunk
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const WaitingRoomPage = lazy(() => import('./pages/WaitingRoomPage'));
+const ChatPage = lazy(() => import('./features/chat/ChatPage'));
+
+function LoadingFallback() {
+  return <AppLoadingFallback />;
+}
 
 function App() {
   return (
-    <AuthProvider>
-      <ServicesProvider>
-        <FeatureProvider>
-          <Router>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/waiting/:roomId" element={<WaitingRoomPage />} />
-              {featureRoutes.map(({ path, element }) => (
-                <Route key={path} path={path} element={element} />
-              ))}
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            </Routes>
-          </Router>
-        </FeatureProvider>
-      </ServicesProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ServicesProvider>
+          <FeatureProvider>
+            <ToastProvider>
+              <Router>
+                <a href="#main-content" className="skip-to-content">
+                  跳至主要內容
+                </a>
+                <Suspense fallback={<LoadingFallback />}>
+                  <Routes>
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="/waiting/:roomId" element={<WaitingRoomPage />} />
+                    <Route path="/chat/:roomId" element={<ChatPage />} />
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  </Routes>
+                </Suspense>
+              </Router>
+            </ToastProvider>
+          </FeatureProvider>
+        </ServicesProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
 export default App;
-

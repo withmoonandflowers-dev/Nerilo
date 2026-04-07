@@ -3,8 +3,8 @@ import type { P2PEnvelope } from '../../types';
 export interface ProtocolSchema {
   namespace: string;
   types: string[];
-  payloadSchema?: Record<string, any>;
-  validator?: (payload: any) => boolean;
+  payloadSchema?: Record<string, unknown>;
+  validator?: (payload: unknown) => boolean;
 }
 
 export type ProtocolHandler = (envelope: P2PEnvelope) => void | Promise<void>;

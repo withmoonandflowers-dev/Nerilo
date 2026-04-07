@@ -2,7 +2,7 @@
  * 星型拓撲 P2P 連線管理 Hook
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import { P2PManager } from '../../../core/p2p/P2PManager';
 import { ChatService } from '../ChatService';
 import type { IChatStorage } from '../../../ports';
@@ -33,6 +33,11 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
   /**
    * 初始化星型拓撲 P2P 連線
    */
+  // 使用 ref 儲存 callback，確保 ChatService listener 總是呼叫最新的版本
+  // （避免 React StrictMode re-mount 後 closure stale 問題）
+  const onMessageRef = useRef<((message: ChatMessage) => void) | null>(null);
+  const onStateChangeRef = useRef<((state: ConnectionState) => void) | null>(null);
+
   const initialize = useCallback(async (
     roomId: string,
     uid: string,
@@ -40,9 +45,18 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     onStateChange: (state: ConnectionState) => void,
     onMessage: (message: ChatMessage) => void
   ): Promise<void> => {
+    // 更新 ref，確保後續的 callback 呼叫使用最新的函式
+    onMessageRef.current = onMessage;
+    onStateChangeRef.current = onStateChange;
+
+    // 如果已有舊的連線，先清理再重建（支援 StrictMode re-mount）
     if (p2pManagerRef.current) {
-      console.log('[useStarTopology] Already initialized, skipping');
-      return;
+      console.log('[useStarTopology] Cleaning up previous instance before re-init');
+      if (stateCheckIntervalRef.current) clearInterval(stateCheckIntervalRef.current);
+      if (stateUnsubscribeRef.current) stateUnsubscribeRef.current();
+      p2pManagerRef.current.close();
+      p2pManagerRef.current = null;
+      chatServiceRef.current = null;
     }
 
     try {
@@ -57,50 +71,49 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       await p2pManager.initialize();
       p2pManagerRef.current = p2pManager;
 
-      // 監聽連線狀態
+      // 監聽連線狀態（透過 ref 呼叫，確保用最新的 callback）
       const connectionManager = p2pManager.getConnectionManager();
       const stateUnsubscribe = connectionManager.onStateChange((state) => {
         console.log('[useStarTopology] Connection state changed', { roomId, state });
         connectionStateRef.current = state;
-        onStateChange(state);
+        onStateChangeRef.current?.(state);
       });
 
       // 設置初始狀態為 connecting
       connectionStateRef.current = 'connecting';
-      onStateChange('connecting');
+      onStateChangeRef.current?.('connecting');
 
-      // 定期檢查連線狀態（作為備份機制，確保狀態正確更新）
+      // 定期檢查連線狀態（備份機制，只關注重大變化）
+      // 重要：只處理「最終態」(connected/failed/closed)，
+      // 忽略暫態 (new/connecting/disconnected) 以避免 connected↔connecting 震盪。
       const stateCheckInterval = setInterval(() => {
         const pc = connectionManager.getPeerConnection();
-        if (pc) {
-          const pcState = pc.connectionState;
-          let mappedState: ConnectionState;
-          
-          if (pcState === 'connected') {
-            mappedState = 'connected';
-          } else if (pcState === 'disconnected' || pcState === 'failed') {
-            mappedState = 'failed';
-          } else if (pcState === 'closed') {
-            mappedState = 'closed';
-          } else {
-            mappedState = 'connecting';
-          }
-          
-          // 如果狀態不同，更新狀態
-          if (connectionStateRef.current !== mappedState) {
-            console.log('[useStarTopology] State check detected change', {
-              roomId,
-              oldState: connectionStateRef.current,
-              newState: mappedState,
-              pcState,
-            });
-            connectionStateRef.current = mappedState;
-            onStateChange(mappedState);
-          }
-        }
-      }, 500); // 每 500ms 檢查一次（更頻繁）
+        if (!pc) return;
 
-      // 清理定時器（在 cleanup 時清理）
+        const pcState = pc.connectionState;
+        let mappedState: ConnectionState | null = null;
+
+        if (pcState === 'connected' && connectionStateRef.current !== 'connected') {
+          mappedState = 'connected';
+        } else if (pcState === 'failed' && connectionStateRef.current !== 'failed') {
+          mappedState = 'failed';
+        } else if (pcState === 'closed' && connectionStateRef.current !== 'closed') {
+          mappedState = 'closed';
+        }
+        // 不處理 'new'/'connecting'/'disconnected' → 避免 connected↔connecting 震盪
+
+        if (mappedState) {
+          console.log('[useStarTopology] State check detected change', {
+            roomId,
+            oldState: connectionStateRef.current,
+            newState: mappedState,
+            pcState,
+          });
+          connectionStateRef.current = mappedState;
+          onStateChangeRef.current?.(mappedState);
+        }
+      }, 2000); // 每 2 秒檢查一次（降頻避免不必要的 re-render）
+
       stateCheckIntervalRef.current = stateCheckInterval;
       stateUnsubscribeRef.current = stateUnsubscribe;
 
@@ -115,7 +128,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
           if (pc && pc.connectionState === 'connected') {
             console.log('[useStarTopology] ChannelBus ready and connection is connected', { roomId });
             connectionStateRef.current = 'connected';
-            onStateChange('connected');
+            onStateChangeRef.current?.('connected');
           }
 
           const deviceId = p2pManager.getDeviceId();
@@ -130,11 +143,17 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
 
           // 載入歷史訊息
           chatService.loadHistory().then((messages) => {
-            messages.forEach(onMessage);
+            messages.forEach(m => onMessageRef.current?.(m));
           });
 
-          // 監聽新訊息
-          chatService.onMessage(onMessage);
+          // 監聽新訊息（透過 ref 呼叫，確保 StrictMode re-mount 後仍用最新的 addMessage）
+          chatService.onMessage((msg) => {
+            console.log('[useStarTopology] onMessage wrapper called', {
+              messageId: msg.messageId,
+              hasRef: !!onMessageRef.current,
+            });
+            onMessageRef.current?.(msg);
+          });
         }
       }, 100);
 
@@ -143,7 +162,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     } catch (error) {
       console.error('[useStarTopology] Error initializing', error);
       connectionStateRef.current = 'failed';
-      onStateChange('failed');
+      onStateChangeRef.current?.('failed');
       throw error;
     }
   }, [chatStorage]);
@@ -156,6 +175,42 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       throw new Error('ChatService not initialized');
     }
     await chatServiceRef.current.sendMessage(content);
+  }, []);
+
+  /**
+   * 發送 typing 狀態
+   */
+  const sendTyping = useCallback(async (isTyping: boolean): Promise<void> => {
+    if (!chatServiceRef.current) return;
+    try {
+      await chatServiceRef.current.sendTyping(isTyping);
+    } catch {
+      // typing indicator is best-effort, ignore errors
+    }
+  }, []);
+
+  /**
+   * 監聽對方 typing 狀態
+   */
+  const onTyping = useCallback((listener: (data: { userId: string; isTyping: boolean }) => void): (() => void) => {
+    // Store listener in a ref-based approach so it works even if chatService isn't ready yet
+    const wrapper = (data: { userId: string; isTyping: boolean }) => listener(data);
+    // If chatService is already available, register immediately
+    if (chatServiceRef.current) {
+      return chatServiceRef.current.onTyping(wrapper);
+    }
+    // Otherwise, we'll need to register later - use an interval to check
+    let unsubscribe: (() => void) | null = null;
+    const interval = setInterval(() => {
+      if (chatServiceRef.current && !unsubscribe) {
+        unsubscribe = chatServiceRef.current.onTyping(wrapper);
+        clearInterval(interval);
+      }
+    }, 200);
+    return () => {
+      clearInterval(interval);
+      unsubscribe?.();
+    };
   }, []);
 
   /**
@@ -194,10 +249,14 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     };
   }, []);
 
-  return {
+  // useMemo ensures the returned object is the same reference between renders,
+  // preventing ChatPage's useEffect from re-running unnecessarily.
+  return useMemo(() => ({
     initialize,
     sendMessage,
+    sendTyping,
+    onTyping,
     cleanup,
     getState,
-  };
+  }), [initialize, sendMessage, sendTyping, onTyping, cleanup, getState]);
 }

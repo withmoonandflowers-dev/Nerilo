@@ -18,42 +18,44 @@ export const FeatureProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 無論 user 是否存在，都確保返回 cleanup function（#23）
+    let unsubscribe: (() => void) | null = null;
+
     if (!user) {
       setFeatures([]);
       setLoading(false);
-      return;
+    } else {
+      const featuresRef = collection(db, 'features');
+      const q = query(featuresRef, where('enabled', '==', true));
+
+      unsubscribe = onSnapshot(q, (snapshot) => {
+        const featureList: Feature[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          const feature: Feature = {
+            featureId: doc.id,
+            name: data.name,
+            description: data.description,
+            enabled: data.enabled,
+            requiredRoles: data.requiredRoles || [],
+            route: data.route,
+            icon: data.icon,
+            createdAt: data.createdAt?.toMillis() || Date.now(),
+            updatedAt: data.updatedAt?.toMillis() || Date.now(),
+          };
+
+          // RBAC 過濾：檢查使用者是否有權限
+          if (hasPermission(user.role, feature.requiredRoles)) {
+            featureList.push(feature);
+          }
+        });
+
+        setFeatures(featureList);
+        setLoading(false);
+      });
     }
 
-    const featuresRef = collection(db, 'features');
-    const q = query(featuresRef, where('enabled', '==', true));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const featureList: Feature[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const feature: Feature = {
-          featureId: doc.id,
-          name: data.name,
-          description: data.description,
-          enabled: data.enabled,
-          requiredRoles: data.requiredRoles || [],
-          route: data.route,
-          icon: data.icon,
-          createdAt: data.createdAt?.toMillis() || Date.now(),
-          updatedAt: data.updatedAt?.toMillis() || Date.now(),
-        };
-
-        // RBAC 過濾：檢查使用者是否有權限
-        if (hasPermission(user.role, feature.requiredRoles)) {
-          featureList.push(feature);
-        }
-      });
-
-      setFeatures(featureList);
-      setLoading(false);
-    });
-
-    return unsubscribe;
+    return () => { unsubscribe?.(); };
   }, [user]);
 
   const hasPermission = (userRole: UserRole, requiredRoles: UserRole[]): boolean => {
