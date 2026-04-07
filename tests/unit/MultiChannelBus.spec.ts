@@ -1,6 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock firebase dependencies used by FirestoreRelay (imported by MultiChannelBus)
+vi.mock('../../src/config/firebase', () => ({
+  db: {} as any,
+}));
+vi.mock('firebase/firestore', () => ({
+  collection: vi.fn(),
+  addDoc: vi.fn(),
+  query: vi.fn(),
+  where: vi.fn(),
+  onSnapshot: vi.fn().mockReturnValue(() => {}),
+  serverTimestamp: vi.fn(),
+  Timestamp: {
+    now: vi.fn().mockReturnValue({ toMillis: () => Date.now() }),
+    fromMillis: vi.fn((ms: number) => ({ toMillis: () => ms })),
+  },
+  getDocs: vi.fn().mockResolvedValue({ docs: [], empty: true }),
+  deleteDoc: vi.fn(),
+}));
+
 import { MultiChannelBus } from '../../src/core/transport/MultiChannelBus';
-import type { ChannelKind } from '../../src/types';
 
 function makeMockChannel(overrides: Partial<RTCDataChannel> = {}): RTCDataChannel {
   return {

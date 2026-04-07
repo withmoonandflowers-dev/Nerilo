@@ -27,6 +27,7 @@ function makeMockTopologyManager(neighborIds: string[] = []) {
   const neighbors = neighborIds.map(id => makeMockNeighbor(id));
   return {
     getNeighbors: vi.fn().mockReturnValue(neighbors),
+    getGossipConfig: vi.fn().mockReturnValue({ fanout: 2, ttl: 8 }),
   };
 }
 
