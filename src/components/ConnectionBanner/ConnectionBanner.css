@@ -1,0 +1,137 @@
+/* ── Connection Banner ── */
+.connection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.3s, color 0.3s;
+}
+
+.connection-banner-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.connection-banner-text {
+  white-space: nowrap;
+}
+
+.connection-banner-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.btn-reconnect {
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: inherit;
+  transition: background 0.15s;
+  min-height: 28px;
+}
+
+.btn-reconnect:hover {
+  background: rgba(255, 255, 255, 1);
+}
+
+/* State variants */
+.connection-banner.connected {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+
+.connection-banner.connecting {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.connection-banner.failed,
+.connection-banner.closed {
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+}
+
+.connection-banner.fallback {
+  background: var(--color-info-bg);
+  color: var(--color-info-text);
+}
+
+.connection-banner.idle {
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral-text);
+}
+
+/* Pulse animation for connecting */
+.connection-banner.connecting .connection-banner-icon {
+  animation: banner-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes banner-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Auto-hide connected state after animation */
+.connection-banner.connected.auto-hide {
+  animation: banner-fade-out 0.4s ease-out 2s forwards;
+}
+
+@keyframes banner-fade-out {
+  to {
+    max-height: 0;
+    padding: 0 16px;
+    opacity: 0;
+    overflow: hidden;
+  }
+}
+
+/* ── Simplified variant for WaitingRoom ── */
+.connection-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-badge);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.connection-indicator.waiting {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.connection-indicator.ready {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+
+/* ── Mobile ── */
+@media (max-width: 480px) {
+  .connection-banner {
+    font-size: 12px;
+    padding: 6px 12px;
+    gap: 6px;
+  }
+
+  .connection-banner-extra {
+    font-size: 11px;
+  }
+
+  .btn-reconnect {
+    font-size: 11px;
+    padding: 3px 10px;
+  }
+}
