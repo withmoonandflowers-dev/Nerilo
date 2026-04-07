@@ -19,32 +19,55 @@ import type {
   ChannelType,
   CommunityEvent,
   PermissionPolicy,
+  ReportReason,
+  ReportAction,
+  Report,
+  VoteDecision,
+  ReportResolution,
+  ProposalType,
+  Proposal,
+  ProposalResult,
 } from './types';
 import { RolePermissionManager } from './RolePermissionManager';
 import { MembershipService } from './MembershipService';
 import { ChannelRegistry } from './ChannelRegistry';
+import { ReportSystem, type ReportVotingConfig } from './ReportSystem';
+import { GovernanceVoting, type GovernanceConfig } from './GovernanceVoting';
+import { SocialReputation } from './SocialReputation';
+import type { PeerScoring } from '../relay/PeerScoring';
 
 export class CommunityManager {
   readonly communityInfo: CommunityInfo;
   readonly permissions: RolePermissionManager;
   readonly membership: MembershipService;
   readonly channels: ChannelRegistry;
+  readonly reports: ReportSystem;
+  readonly governance: GovernanceVoting;
+  readonly reputation: SocialReputation;
   private eventListeners = new Set<(event: CommunityEvent) => void>();
 
   private constructor(
     communityInfo: CommunityInfo,
     permissions: RolePermissionManager,
     membership: MembershipService,
-    channels: ChannelRegistry
+    channels: ChannelRegistry,
+    reports: ReportSystem,
+    governance: GovernanceVoting,
+    reputation: SocialReputation
   ) {
     this.communityInfo = communityInfo;
     this.permissions = permissions;
     this.membership = membership;
     this.channels = channels;
+    this.reports = reports;
+    this.governance = governance;
+    this.reputation = reputation;
 
     // Forward sub-component events
     this.membership.onEvent((e) => this.forwardEvent(e));
     this.channels.onEvent((e) => this.forwardEvent(e));
+    this.reports.onEvent((e) => this.forwardEvent(e));
+    this.governance.onEvent((e) => this.forwardEvent(e));
   }
 
   /**
@@ -59,6 +82,9 @@ export class CommunityManager {
       joinPolicy?: 'open' | 'invite-only';
       requiredVouches?: number;
       permissionOverrides?: Partial<PermissionPolicy>;
+      reportConfig?: Partial<ReportVotingConfig>;
+      governanceConfig?: Partial<GovernanceConfig>;
+      peerScoring?: PeerScoring;
     } = {}
   ): CommunityManager {
     const communityId = generateUUID();
@@ -76,6 +102,9 @@ export class CommunityManager {
     const permissions = new RolePermissionManager(info.permissionOverrides);
     const membership = new MembershipService(info, permissions);
     const channels = new ChannelRegistry(communityId, permissions);
+    const reports = new ReportSystem(communityId, permissions, membership, options.reportConfig);
+    const governance = new GovernanceVoting(communityId, permissions, membership, options.governanceConfig);
+    const reputation = new SocialReputation(reports, governance, options.peerScoring ?? null);
 
     // Add founder
     membership.addFounder(ownerId, ownerDisplayName);
@@ -83,7 +112,7 @@ export class CommunityManager {
     // Create default "general" channel
     channels.createChannel(ownerId, 'owner', 'general', 'text', 'General discussion');
 
-    return new CommunityManager(info, permissions, membership, channels);
+    return new CommunityManager(info, permissions, membership, channels, reports, governance, reputation);
   }
 
   // ── Convenience API (delegates to sub-services) ────────────────────────
@@ -211,6 +240,80 @@ export class CommunityManager {
       channelCount: this.getChannelCount(),
       joinPolicy: this.communityInfo.joinPolicy,
     };
+  }
+
+  // ── Report System ──────────────────────────────────────────────────────
+
+  /**
+   * File a report against a member.
+   */
+  fileReport(
+    reporterId: string,
+    targetId: string,
+    reason: ReportReason,
+    description: string,
+    evidence: string[] = []
+  ): Report {
+    return this.reports.fileReport(reporterId, targetId, reason, description, evidence);
+  }
+
+  /**
+   * Cast a moderation vote on a report.
+   */
+  castReportVote(
+    moderatorId: string,
+    reportId: string,
+    decision: VoteDecision,
+    proposedAction: ReportAction,
+    reason: string = ''
+  ): ReportResolution | null {
+    return this.reports.castVote(moderatorId, reportId, decision, proposedAction, reason);
+  }
+
+  // ── Governance ─────────────────────────────────────────────────────────
+
+  /**
+   * Create a governance proposal.
+   */
+  createProposal(
+    proposerId: string,
+    title: string,
+    description: string,
+    type: ProposalType,
+    payload: Record<string, unknown> = {}
+  ): Proposal {
+    return this.governance.createProposal(proposerId, title, description, type, payload);
+  }
+
+  /**
+   * Cast a governance vote.
+   */
+  castGovernanceVote(
+    voterId: string,
+    proposalId: string,
+    approve: boolean
+  ): ProposalResult | null {
+    return this.governance.castVote(voterId, proposalId, approve);
+  }
+
+  // ── Reputation ─────────────────────────────────────────────────────────
+
+  /**
+   * Get combined (network + social) reputation for a user.
+   */
+  getUserReputation(userId: string): {
+    networkScore: number;
+    socialScore: number;
+    combinedScore: number;
+  } {
+    return this.reputation.getCombinedScore(userId);
+  }
+
+  /**
+   * Connect PeerScoring for dual-layer reputation.
+   */
+  setPeerScoring(peerScoring: PeerScoring): void {
+    this.reputation.setPeerScoring(peerScoring);
   }
 
   // ── Events ─────────────────────────────────────────────────────────────

@@ -127,7 +127,13 @@ export type CommunityEventType =
   | 'channel:created'
   | 'channel:deleted'
   | 'channel:archived'
-  | 'community:info-updated';
+  | 'community:info-updated'
+  | 'report:created'
+  | 'report:vote-cast'
+  | 'report:resolved'
+  | 'proposal:created'
+  | 'proposal:vote-cast'
+  | 'proposal:resolved';
 
 export interface CommunityEvent {
   type: CommunityEventType;
@@ -136,4 +142,127 @@ export interface CommunityEvent {
   targetId?: string;
   data?: Record<string, unknown>;
   timestamp: number;
+}
+
+// ── Report System ─────────────────────────────────────────────────────────
+
+export type ReportReason =
+  | 'spam'
+  | 'harassment'
+  | 'hate-speech'
+  | 'inappropriate-content'
+  | 'impersonation'
+  | 'other';
+
+export type ReportStatus = 'pending' | 'under-review' | 'resolved' | 'dismissed';
+
+export type ReportAction = 'warn' | 'mute' | 'kick' | 'ban' | 'dismiss';
+
+export interface Report {
+  reportId: string;
+  communityId: string;
+  /** User being reported */
+  targetId: string;
+  /** User who filed the report */
+  reporterId: string;
+  reason: ReportReason;
+  description: string;
+  /** Evidence: message IDs, screenshots, etc. */
+  evidence: string[];
+  status: ReportStatus;
+  createdAt: number;
+  resolvedAt: number | null;
+  /** Final action taken (set on resolution) */
+  resolvedAction: ReportAction | null;
+}
+
+export type VoteDecision = 'approve' | 'reject';
+
+export interface ModeratorVote {
+  moderatorId: string;
+  reportId: string;
+  /** Proposed action if approving */
+  proposedAction: ReportAction;
+  decision: VoteDecision;
+  reason: string;
+  votedAt: number;
+}
+
+export interface ReportResolution {
+  reportId: string;
+  action: ReportAction;
+  /** Votes that led to this resolution */
+  votes: ModeratorVote[];
+  /** Total eligible voters at resolution time */
+  totalEligibleVoters: number;
+  resolvedAt: number;
+}
+
+// ── Governance Voting ─────────────────────────────────────────────────────
+
+export type ProposalType =
+  | 'rule-change'
+  | 'permission-change'
+  | 'role-assignment'
+  | 'channel-action'
+  | 'community-setting'
+  | 'custom';
+
+export type ProposalStatus = 'active' | 'passed' | 'rejected' | 'expired' | 'cancelled';
+
+export interface Proposal {
+  proposalId: string;
+  communityId: string;
+  /** Who created the proposal */
+  proposerId: string;
+  title: string;
+  description: string;
+  type: ProposalType;
+  /** Machine-readable payload for auto-execution */
+  payload: Record<string, unknown>;
+  status: ProposalStatus;
+  createdAt: number;
+  /** Voting deadline (epoch ms) */
+  expiresAt: number;
+  /** Minimum participation rate (0-1) required for quorum */
+  quorumThreshold: number;
+  /** Approval rate (0-1) required to pass (of those who voted) */
+  approvalThreshold: number;
+  /** Minimum role required to vote */
+  eligibleRole: CommunityRole;
+}
+
+export interface GovernanceVote {
+  voterId: string;
+  proposalId: string;
+  /** true = approve, false = reject */
+  approve: boolean;
+  votedAt: number;
+}
+
+export interface ProposalResult {
+  proposalId: string;
+  status: 'passed' | 'rejected' | 'expired';
+  approveCount: number;
+  rejectCount: number;
+  totalEligible: number;
+  quorumMet: boolean;
+  resolvedAt: number;
+}
+
+// ── Social Reputation ─────────────────────────────────────────────────────
+
+export interface SocialReputationScore {
+  userId: string;
+  /** Reports filed against this user (higher = worse) */
+  reportCount: number;
+  /** Reports confirmed (action taken) against this user */
+  confirmedReportCount: number;
+  /** Governance participation rate (proposals voted / eligible proposals) */
+  governanceParticipation: number;
+  /** Helpful votes received on reports filed by this user */
+  helpfulReportCount: number;
+  /** Composite social reputation (-100 to +100) */
+  socialScore: number;
+  lastUpdated: number;
 }

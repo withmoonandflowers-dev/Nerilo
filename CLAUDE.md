@@ -43,6 +43,7 @@ src/core/
 ├── relay/          # Dual-layer relay infrastructure (see below)
 ├── crypto/         # SenderKeyManager (E2EE), ECDH key exchange
 ├── incentive/      # Relay credit system (LocalCreditProvider)
+├── community/      # Governance, reports, roles, channels, reputation (see below)
 ├── chain/          # Append-only log sync & merge
 ├── clock/          # Hybrid Logical Clock (HLC)
 ├── ordering/       # Message ordering (HLC-based)
@@ -77,6 +78,26 @@ Dual-layer design: Sphinx-Lite onion routing + Kademlia DHT.
 3. Group encryption: AES-256-GCM sender key, encrypted per-member via ECDH
 4. Auto-rotation: After 100 messages or 1 hour (configurable)
 5. Forward secrecy: Previous epoch keys retained for in-flight message decryption
+
+### Community Layer (`src/core/community/`)
+
+Organizational structure on top of mesh/relay/crypto. A Community contains Channels (each backed by a MeshGossipManager room), Members with Roles, and governance primitives.
+
+| Component | Purpose |
+|---|---|
+| `CommunityManager` | Orchestrator — unified API coordinating all sub-services |
+| `RolePermissionManager` | RBAC enforcement (owner > admin > moderator > member > guest) |
+| `MembershipService` | Member lifecycle: join, leave, invite, kick, ban, role changes |
+| `ChannelRegistry` | Channel CRUD (text, announcement, voice), archive support |
+| `ReportSystem` | Decentralized report + multi-moderator voting (configurable threshold) |
+| `GovernanceVoting` | Community proposals with quorum + approval thresholds, ledger recording |
+| `SocialReputation` | Dual-layer reputation: Network (PeerScoring) + Social (reports, governance) |
+
+**Report Flow:** member files report → moderators vote → 3/5 (configurable) approve → action executed (warn/mute/kick/ban/dismiss)
+
+**Governance Flow:** admin creates proposal → members vote within deadline → quorum + approval threshold checked → passed/rejected/expired
+
+**Dual-Layer Reputation:** `combinedScore = networkScore * 0.5 + socialScore * 0.5` (configurable weights). Network score from PeerScoring, social score from report history + governance participation.
 
 ### Incentive System
 
