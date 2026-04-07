@@ -7,7 +7,7 @@
  * - 每個房間有一個 `inbox/{recipientUid}` 子集合
  * - 發送端偵測 P2P 連線失敗時，寫入 inbox
  * - 接收端上線時（加入房間 / 恢復前景）訂閱並消費 inbox
- * - 訊息帶 TTL（預設 24 小時），過期由 Cloud Function 清除
+ * - 訊息帶 TTL（預設 7 天），過期由 Cloud Function 清除
  * - 單則訊息上限 64KB（與 Firestore relay 一致）
  *
  * 資料結構：
@@ -45,7 +45,7 @@ export interface StoredMessage {
 }
 
 export interface StoreAndForwardConfig {
-  /** 訊息 TTL（毫秒），預設 24 小時 */
+  /** 訊息 TTL（毫秒），預設 7 天 */
   messageTtlMs?: number;
   /** 單則訊息最大 bytes，預設 64KB */
   maxPayloadBytes?: number;
@@ -57,7 +57,7 @@ type InboxHandler = (from: string, payload: string) => void;
 
 // ── 常數 ─────────────────────────────────────────────────────────────────────
 
-const DEFAULT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;         // 64 KB
 const DEFAULT_DRAIN_BATCH_SIZE = 100;
 
