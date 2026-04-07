@@ -51,8 +51,8 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="login-page">
-      <div className="login-container">
+    <div className="login-page" id="main-content">
+      <div className="login-container" role="main">
         <h1>Nerilo</h1>
         <p className="subtitle">P2P 即時互動平台</p>
 
@@ -81,7 +81,7 @@ const LoginPage: React.FC = () => {
             />
           </div>
 
-          {error && <div className="error-message">{error}</div>}
+          {error && <div className="error-message" role="alert">{error}</div>}
 
           <button type="submit" className="btn-primary" disabled={loading}>
             {loading ? '登入中...' : '登入'}
@@ -98,7 +98,7 @@ const LoginPage: React.FC = () => {
           onClick={handleGoogleLogin}
           disabled={loading}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24">
+          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
             <path
               fill="#4285F4"
               d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"

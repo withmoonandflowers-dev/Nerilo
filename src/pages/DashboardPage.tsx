@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFeatures } from '../contexts/FeatureContext';
 import { useServices } from '../contexts/ServicesContext';
+import { useToast } from '../contexts/ToastContext';
+import { SkeletonRoomCard, SkeletonFeatureCard } from '../components/Skeleton/Skeleton';
+import { ShareModal } from '../components/ShareModal/ShareModal';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
 import './DashboardPage.css';
@@ -18,7 +21,9 @@ const DashboardPage: React.FC = () => {
   const [newRoomName, setNewRoomName] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [shareRoomId, setShareRoomId] = useState<string | null>(null);
   const navigate = useNavigate();
+  const toast = useToast();
 
   const isGuest = user?.role === 'guest';
 
@@ -68,14 +73,14 @@ const DashboardPage: React.FC = () => {
     // 在測試環境中，允許 guest 用戶建立房間（用於 E2E 測試）
     const isTestEnv = import.meta.env.MODE === 'test' || 
                       (import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM as string | undefined) === 'true' ||
-                      (typeof window !== 'undefined' && (window as any).__PLAYWRIGHT_TEST__ === true);
+                      (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__PLAYWRIGHT_TEST__ === true);
     
     if (!isTestEnv && (user.role === 'guest' || !user.uid)) {
       console.warn('[Dashboard] Guest user attempted to create room', {
         uid: user.uid,
         role: user.role,
       });
-      alert('建立房間需要登入，請先登入您的帳號');
+      toast.warning('建立房間需要登入，請先登入您的帳號');
       navigate('/login');
       return;
     }
@@ -106,13 +111,14 @@ const DashboardPage: React.FC = () => {
       featureLog('dashboard', 'room_created', { roomId });
       console.log('[Dashboard] Room created successfully', { roomId });
       navigate(`/waiting/${roomId}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : '請稍後再試';
       console.error('[Dashboard] Failed to create room', {
         uid: user.uid,
-        error: error.message,
-        errorStack: error.stack,
+        error: errMsg,
+        errorStack: error instanceof Error ? error.stack : undefined,
       });
-      alert(`建立房間失敗：${error.message || '請稍後再試'}`);
+      toast.error(`建立房間失敗：${errMsg}`);
     } finally {
       setIsCreating(false);
       setShowCreateRoom(false);
@@ -134,7 +140,7 @@ const DashboardPage: React.FC = () => {
       const room = await roomService.getRoom(roomId);
       if (!room) {
         console.warn('[Dashboard] Room not found', { roomId });
-        alert('房間不存在');
+        toast.error('房間不存在');
         return;
       }
 
@@ -147,7 +153,7 @@ const DashboardPage: React.FC = () => {
       // 檢查房間狀態
       if (room.status === 'closed') {
         console.warn('[Dashboard] Room is closed', { roomId });
-        alert('房間已關閉');
+        toast.warning('房間已關閉');
         return;
       }
 
@@ -157,7 +163,7 @@ const DashboardPage: React.FC = () => {
       const updatedRoom = await roomService.getRoom(roomId);
       if (!updatedRoom) {
         console.warn('[Dashboard] Room not found after join', { roomId });
-        alert('房間不存在');
+        toast.error('房間不存在');
         return;
       }
 
@@ -177,12 +183,13 @@ const DashboardPage: React.FC = () => {
         console.log('[Dashboard] Navigating to chat page', { roomId });
         navigate(`/chat/${roomId}`);
       }
-    } catch (error: any) {
-      console.error('[Dashboard] Join room failed', { roomId, error: error.message });
-      if (error.message === '房間已關閉') {
-        alert('房間已關閉');
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : '';
+      console.error('[Dashboard] Join room failed', { roomId, error: errMsg });
+      if (errMsg === '房間已關閉') {
+        toast.warning('房間已關閉');
       } else {
-        alert('加入房間失敗，請稍後再試');
+        toast.error('加入房間失敗，請稍後再試');
       }
     }
   };
@@ -195,7 +202,7 @@ const DashboardPage: React.FC = () => {
           <div className="user-info">
             <span>{user?.displayName || user?.email}</span>
             <span className="role-badge">{user?.role}</span>
-            <button onClick={handleAuthButtonClick} className="btn-logout">
+            <button onClick={handleAuthButtonClick} className="btn-logout" aria-label={isGuest ? '登入帳號' : '登出帳號'}>
               {isGuest ? '登入' : '登出'}
             </button>
           </div>
@@ -203,20 +210,37 @@ const DashboardPage: React.FC = () => {
       </header>
 
       {authLoading && (
-        <div className="dashboard-loading">
-          <p>載入中...</p>
-        </div>
+        <main id="main-content" className="dashboard-main" aria-busy="true">
+          <section className="rooms-section" aria-label="我的房間">
+            <div className="section-header"><h2>我的房間</h2></div>
+            <div className="rooms-list">
+              <SkeletonRoomCard />
+              <SkeletonRoomCard />
+              <SkeletonRoomCard />
+            </div>
+          </section>
+          <section className="features-section">
+            <h2>功能</h2>
+            <div className="features-grid">
+              <SkeletonFeatureCard />
+              <SkeletonFeatureCard />
+              <SkeletonFeatureCard />
+            </div>
+          </section>
+        </main>
       )}
       {!authLoading && (
-      <main className="dashboard-main">
+      <main id="main-content" className="dashboard-main">
         {/* 房間區塊 */}
-        <section className="rooms-section">
+        <section className="rooms-section" aria-label="我的房間">
           <div className="section-header">
             <h2>我的房間</h2>
             {user && (
               <button
                 className="btn-primary"
                 onClick={() => setShowCreateRoom(!showCreateRoom)}
+                aria-expanded={showCreateRoom}
+                aria-label={showCreateRoom ? '取消建立房間' : '建立新房間'}
               >
                 {showCreateRoom ? '取消' : '+ 建立新房間'}
               </button>
@@ -231,7 +255,8 @@ const DashboardPage: React.FC = () => {
                   value={newRoomName}
                   onChange={(e) => setNewRoomName(e.target.value)}
                   className="room-name-input"
-                  onKeyPress={(e) => {
+                  aria-label="房間名稱"
+                  onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handleCreateRoom();
                     }
@@ -279,7 +304,11 @@ const DashboardPage: React.FC = () => {
                   <div
                     key={room.roomId}
                     className="room-card"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`進入房間 ${room.roomId.substring(0, 8)}，${room.participants.length} 位參與者`}
                     onClick={() => handleJoinRoom(room.roomId)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJoinRoom(room.roomId); } }}
                   >
                     <div className="room-info">
                       <h3>房間 {room.roomId.substring(0, 8)}...</h3>
@@ -288,7 +317,16 @@ const DashboardPage: React.FC = () => {
                         {new Date(room.createdAt).toLocaleDateString()}
                       </p>
                     </div>
-                    <button className="btn-join">進入</button>
+                    <div className="room-actions">
+                      <button
+                        className="btn-share-small"
+                        onClick={(e) => { e.stopPropagation(); setShareRoomId(room.roomId); }}
+                        aria-label={`分享房間 ${room.roomId.substring(0, 8)}`}
+                      >
+                        &#x1F4E4;
+                      </button>
+                      <button className="btn-join" aria-label={`進入房間 ${room.roomId.substring(0, 8)}`}>進入</button>
+                    </div>
                   </div>
                 ))
               )}
@@ -296,7 +334,7 @@ const DashboardPage: React.FC = () => {
           </section>
 
         {/* 公開房間區塊 */}
-        <section className="rooms-section">
+        <section className="rooms-section" aria-label="公開房間">
           <div className="section-header">
             <h2>公開房間</h2>
           </div>
@@ -311,7 +349,11 @@ const DashboardPage: React.FC = () => {
                 <div
                   key={room.roomId}
                   className="room-card"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`進入公開房間 ${room.roomId.substring(0, 8)}，房主 ${room.ownerName || room.ownerUid.substring(0, 6)}`}
                   onClick={() => handleJoinRoom(room.roomId)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJoinRoom(room.roomId); } }}
                 >
                   <div className="room-info">
                     <h3>房間 {room.roomId.substring(0, 8)}...</h3>
@@ -323,7 +365,7 @@ const DashboardPage: React.FC = () => {
                       {new Date(room.createdAt).toLocaleDateString()}
                     </p>
                   </div>
-                  <button className="btn-join">進入</button>
+                  <button className="btn-join" aria-label={`進入房間 ${room.roomId.substring(0, 8)}`}>進入</button>
                 </div>
               ))
             )}
@@ -333,13 +375,14 @@ const DashboardPage: React.FC = () => {
         {/* 功能區塊 */}
         <section className="features-section">
           <h2>功能</h2>
-          <div className="search-section">
+          <div className="search-section" role="search">
             <input
               type="text"
               placeholder="搜尋功能..."
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               className="search-input"
+              aria-label="搜尋功能"
             />
           </div>
 
@@ -348,9 +391,13 @@ const DashboardPage: React.FC = () => {
               <div
                 key={feature.featureId}
                 className="feature-card"
+                role="button"
+                tabIndex={0}
+                aria-label={`${feature.name}: ${feature.description}`}
                 onClick={() => handleFeatureClick(feature.route)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleFeatureClick(feature.route); } }}
               >
-                {feature.icon && <div className="feature-icon">{feature.icon}</div>}
+                {feature.icon && <div className="feature-icon" aria-hidden="true">{feature.icon}</div>}
                 <h3>{feature.name}</h3>
                 <p>{feature.description}</p>
               </div>
@@ -364,6 +411,14 @@ const DashboardPage: React.FC = () => {
           )}
         </section>
       </main>
+      )}
+
+      {shareRoomId && (
+        <ShareModal
+          roomId={shareRoomId}
+          isOpen={true}
+          onClose={() => setShareRoomId(null)}
+        />
       )}
     </div>
   );
