@@ -1,4 +1,5 @@
 import type { P2PEnvelope } from '../../types';
+import { logger } from '../../utils/logger';
 
 export interface ChannelMessage {
   envelope: P2PEnvelope;
@@ -21,23 +22,23 @@ export class P2PChannelBus {
 
   private setupDataChannel(): void {
     if (!this.dataChannel) {
-      console.warn('[P2PChannelBus] setupDataChannel: DataChannel is null');
+      logger.warn('[P2PChannelBus] setupDataChannel: DataChannel is null');
       return;
     }
 
-    console.log('[P2PChannelBus] setupDataChannel', {
+    logger.info('[P2PChannelBus] setupDataChannel', {
       label: this.dataChannel.label,
       readyState: this.dataChannel.readyState,
     });
 
     this.dataChannel.onmessage = (event) => {
       try {
-        console.log('[P2PChannelBus] onmessage received', {
+        logger.info('[P2PChannelBus] onmessage received', {
           dataLength: event.data?.length || 0,
           readyState: this.dataChannel?.readyState,
         });
         const envelope = JSON.parse(event.data) as P2PEnvelope;
-        console.log('[P2PChannelBus] Message parsed', {
+        logger.info('[P2PChannelBus] Message parsed', {
           envelopeId: envelope.id,
           ns: envelope.ns,
           type: envelope.type,
@@ -45,7 +46,7 @@ export class P2PChannelBus {
         });
         this.handleMessage(envelope);
       } catch (error) {
-        console.error('[P2PChannelBus] Error parsing message', {
+        logger.error('[P2PChannelBus] Error parsing message', {
           error,
           data: event.data,
         });
@@ -54,7 +55,7 @@ export class P2PChannelBus {
     };
 
     this.dataChannel.onerror = (error) => {
-      console.error('[P2PChannelBus] DataChannel error', {
+      logger.error('[P2PChannelBus] DataChannel error', {
         error,
         readyState: this.dataChannel?.readyState,
       });
@@ -62,13 +63,13 @@ export class P2PChannelBus {
     };
 
     this.dataChannel.onclose = () => {
-      console.log('[P2PChannelBus] DataChannel closed', {
+      logger.info('[P2PChannelBus] DataChannel closed', {
         label: this.dataChannel?.label,
       });
     };
 
     this.dataChannel.onopen = () => {
-      console.log('[P2PChannelBus] DataChannel opened', {
+      logger.info('[P2PChannelBus] DataChannel opened', {
         label: this.dataChannel?.label,
         readyState: this.dataChannel?.readyState,
       });
@@ -78,7 +79,7 @@ export class P2PChannelBus {
     // 設定緩衝區低水位標記
     this.dataChannel.bufferedAmountLowThreshold = this.bufferedAmountLowThreshold;
     this.dataChannel.onbufferedamountlow = () => {
-      console.log('[P2PChannelBus] Buffered amount low', {
+      logger.info('[P2PChannelBus] Buffered amount low', {
         bufferedAmount: this.dataChannel?.bufferedAmount,
       });
       this.processQueue();
@@ -86,7 +87,7 @@ export class P2PChannelBus {
   }
 
   private async handleMessage(envelope: P2PEnvelope): Promise<void> {
-    console.log('[P2PChannelBus] handleMessage called', {
+    logger.info('[P2PChannelBus] handleMessage called', {
       envelopeId: envelope.id,
       ns: envelope.ns,
       type: envelope.type,
@@ -95,7 +96,7 @@ export class P2PChannelBus {
 
     // 驗證基本欄位
     if (!this.validateEnvelope(envelope)) {
-      console.error('[P2PChannelBus] Invalid envelope', {
+      logger.error('[P2PChannelBus] Invalid envelope', {
         envelopeId: envelope.id,
         envelope,
       });
@@ -109,7 +110,7 @@ export class P2PChannelBus {
 
     const allHandlersToCall = new Set([...handlers, ...allHandlers]);
 
-    console.log('[P2PChannelBus] Dispatching to handlers', {
+    logger.info('[P2PChannelBus] Dispatching to handlers', {
       envelopeId: envelope.id,
       ns: envelope.ns,
       handlerCount: allHandlersToCall.size,
@@ -120,13 +121,13 @@ export class P2PChannelBus {
     for (const handler of allHandlersToCall) {
       try {
         await handler(envelope);
-        console.log('[P2PChannelBus] Handler executed successfully', {
+        logger.info('[P2PChannelBus] Handler executed successfully', {
           envelopeId: envelope.id,
           ns: envelope.ns,
           type: envelope.type,
         });
       } catch (error) {
-        console.error('[P2PChannelBus] Error in handler', {
+        logger.error('[P2PChannelBus] Error in handler', {
           envelopeId: envelope.id,
           ns: envelope.ns,
           type: envelope.type,
@@ -150,7 +151,7 @@ export class P2PChannelBus {
 
   send(envelope: P2PEnvelope): Promise<void> {
     return new Promise((resolve, reject) => {
-      console.log('[P2PChannelBus] send called', {
+      logger.info('[P2PChannelBus] send called', {
         envelopeId: envelope.id,
         ns: envelope.ns,
         type: envelope.type,
@@ -159,7 +160,7 @@ export class P2PChannelBus {
       });
 
       if (!this.dataChannel) {
-        console.error('[P2PChannelBus] send failed: DataChannel not available', {
+        logger.error('[P2PChannelBus] send failed: DataChannel not available', {
           envelopeId: envelope.id,
         });
         reject(new Error('DataChannel not available'));
@@ -167,7 +168,7 @@ export class P2PChannelBus {
       }
 
       if (this.dataChannel.readyState !== 'open') {
-        console.warn('[P2PChannelBus] send: DataChannel not open, queuing message', {
+        logger.warn('[P2PChannelBus] send: DataChannel not open, queuing message', {
           envelopeId: envelope.id,
           readyState: this.dataChannel.readyState,
           queueLength: this.sendQueue.length,
@@ -184,7 +185,7 @@ export class P2PChannelBus {
         if (this.dataChannel.bufferedAmount > this.bufferedAmountLowThreshold) {
           // 緩衝區已滿，加入佇列
           this.sendQueue.push(message);
-          console.log('[P2PChannelBus] Message queued (buffer full)', {
+          logger.info('[P2PChannelBus] Message queued (buffer full)', {
             envelopeId: envelope.id,
             queueLength: this.sendQueue.length,
             bufferedAmount: this.dataChannel.bufferedAmount,
@@ -193,7 +194,7 @@ export class P2PChannelBus {
           resolve();
         } else {
           this.dataChannel.send(message);
-          console.log('[P2PChannelBus] Message sent immediately', {
+          logger.info('[P2PChannelBus] Message sent immediately', {
             envelopeId: envelope.id,
             messageLength: message.length,
             bufferedAmount: this.dataChannel.bufferedAmount,
@@ -201,7 +202,7 @@ export class P2PChannelBus {
           resolve();
         }
       } catch (error) {
-        console.error('[P2PChannelBus] Error sending message', {
+        logger.error('[P2PChannelBus] Error sending message', {
           envelopeId: envelope.id,
           error,
         });
@@ -223,7 +224,7 @@ export class P2PChannelBus {
         try {
           this.dataChannel.send(message);
         } catch (error) {
-          console.error('Error sending queued message:', error);
+          logger.error('Error sending queued message:', error);
           // 重新加入佇列前端
           this.sendQueue.unshift(message);
           break;

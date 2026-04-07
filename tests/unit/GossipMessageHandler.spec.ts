@@ -27,6 +27,7 @@ function makeMockTopologyManager(neighborIds: string[] = []) {
   const neighbors = neighborIds.map(id => makeMockNeighbor(id));
   return {
     getNeighbors: vi.fn().mockReturnValue(neighbors),
+    getGossipConfig: vi.fn().mockReturnValue({ fanout: 2, ttl: 8 }),
   };
 }
 
@@ -36,6 +37,8 @@ function makeMockIdentityManager() {
   return {
     exportPublicKey: vi.fn().mockResolvedValue('mock-pub-key-base64'),
     getPrivateKey: vi.fn().mockReturnValue({} as CryptoKey),
+    // deriveUserId：預設回傳 'sender-abc' 以匹配 makeMessage 的 senderId
+    deriveUserId: vi.fn().mockResolvedValue('sender-abc'),
   };
 }
 

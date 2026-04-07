@@ -43,8 +43,8 @@ describe('decideArchitecture', () => {
     });
   });
 
-  describe('Mesh 拓撲', () => {
-    it('3 人時切換為 mesh', () => {
+  describe('Mesh 拓撲（3+ 人自動啟用）', () => {
+    it('3 人時自動使用 mesh（全鏈式 P2P gossip relay）', () => {
       const room = makeRoom({ participants: ['u1', 'u2', 'u3'] });
       const result = decideArchitecture(room);
       expect(result.type).toBe('mesh');

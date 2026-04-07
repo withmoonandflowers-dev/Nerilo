@@ -1,8 +1,8 @@
 import type { FeatureModule, Envelope, FeatureContext } from '../../types';
+import type { IndexedDBService } from '../../services/IndexedDBService';
 
 export class FeatureRegistry {
   private modules = new Map<string, FeatureModule>();
-  private ctx: FeatureContext | null = null;
 
   register(module: FeatureModule): void {
     if (this.modules.has(module.name)) {
@@ -32,7 +32,6 @@ export class FeatureRegistry {
   }
 
   async setupAll(ctx: FeatureContext): Promise<void> {
-    this.ctx = ctx;
     for (const module of this.modules.values()) {
       await module.setup(ctx);
     }
@@ -42,7 +41,6 @@ export class FeatureRegistry {
     for (const module of this.modules.values()) {
       await module.teardown();
     }
-    this.ctx = null;
   }
 
   async dispatch(env: Envelope): Promise<void> {
@@ -87,5 +85,52 @@ export class FeatureRegistry {
       }
     }
     return Array.from(ns);
+  }
+
+  // ── Store Factory ─────────────────────────────────────────────────────────
+
+  /**
+   * 建立一個與 IndexedDB 綁定的 FeatureContext.store。
+   *
+   * 使用方式：
+   * ```ts
+   * const ctx: FeatureContext = {
+   *   selfId,
+   *   roomId,
+   *   send,
+   *   broadcast,
+   *   appendLedger,
+   *   store: FeatureRegistry.createStore(roomId, indexedDBService),
+   *   logger,
+   * };
+   * await registry.setupAll(ctx);
+   * ```
+   *
+   * key 命名慣例：建議加上 feature 前綴，例如 `chat:draft` 避免衝突。
+   *
+   * @param roomId  目前房間 ID（自動作為 namespace 隔離不同房間的資料）
+   * @param db      IndexedDBService 實例（通常使用全域 `indexedDBService` singleton）
+   */
+  static createStore(roomId: string, db: IndexedDBService): FeatureContext['store'] {
+    return {
+      get: (key: string) => db.getFeatureState(roomId, key),
+      set: (key: string, value: unknown) => db.setFeatureState(roomId, key, value),
+      delete: (key: string) => db.deleteFeatureState(roomId, key),
+    };
+  }
+
+  /**
+   * 便利方法：setupAll 的擴充版本。
+   * 自動從 IndexedDB 注入 store，呼叫端不需要手動建立 store 物件。
+   *
+   * @param baseCtx  除 store 以外的 FeatureContext 欄位
+   * @param db       IndexedDBService 實例
+   */
+  async setupAllWithStore(
+    baseCtx: Omit<FeatureContext, 'store'>,
+    db: IndexedDBService
+  ): Promise<void> {
+    const store = FeatureRegistry.createStore(baseCtx.roomId, db);
+    await this.setupAll({ ...baseCtx, store });
   }
 }

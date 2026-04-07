@@ -58,26 +58,29 @@ export class P2PMediaService {
   }
 
   async startLocalMedia(options: MediaOptions): Promise<MediaStream> {
+    // 先取得 stream，再嘗試 addTrack；若 addTrack 失敗則 stop tracks 避免 camera LED 常亮
+    const stream = await navigator.mediaDevices.getUserMedia(options);
+
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia(options);
-      
-      // 將 tracks 加入到 peer connection
-      this.localStream.getTracks().forEach(track => {
-        this.peerConnection.addTrack(track, this.localStream!);
+      stream.getTracks().forEach(track => {
+        this.peerConnection.addTrack(track, stream);
       });
-
-      this.mediaState.audioEnabled = options.audio;
-      this.mediaState.videoEnabled = !!options.video;
-      this.notifyStateListeners();
-
-      // 通知遠端媒體已準備
-      await this.sendMediaReady();
-
-      return this.localStream;
     } catch (error) {
-      console.error('Error starting local media:', error);
+      // addTrack 失敗 → 釋放所有 tracks，避免資源洩漏
+      stream.getTracks().forEach(t => t.stop());
+      console.error('Error adding tracks to peer connection:', error);
       throw error;
     }
+
+    this.localStream = stream;
+    this.mediaState.audioEnabled = options.audio;
+    this.mediaState.videoEnabled = !!options.video;
+    this.notifyStateListeners();
+
+    // 通知遠端媒體已準備
+    await this.sendMediaReady();
+
+    return this.localStream;
   }
 
   stopLocalMedia(): void {

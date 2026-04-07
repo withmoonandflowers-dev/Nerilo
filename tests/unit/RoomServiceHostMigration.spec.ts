@@ -17,6 +17,23 @@ const mockGetDocFromServer = vi.fn();
 const mockGetDocs = vi.fn().mockResolvedValue({ docs: [] });
 const mockSetDoc = vi.fn().mockResolvedValue(undefined);
 
+/**
+ * Mock runTransaction：
+ * 呼叫 callback 時傳入一個假 transaction 物件，記錄 .get / .update 呼叫
+ */
+const mockTransactionGet = vi.fn();
+const mockTransactionUpdate = vi.fn();
+const mockRunTransaction = vi.fn(async (_db: unknown, cb: (t: unknown) => Promise<unknown>) => {
+  const transaction = {
+    get: mockTransactionGet,
+    update: mockTransactionUpdate,
+  };
+  return cb(transaction);
+});
+
+/** Mock increment()：回傳一個帶有 __increment 標記的哨兵物件，方便斷言 */
+const mockIncrement = vi.fn((n: number) => ({ __type: 'FieldValue.increment', operand: n }));
+
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(() => 'mock-collection'),
   doc: vi.fn((_db: unknown, _col: string, id: string) => ({ id, path: `p2pRooms/${id}` })),
@@ -26,6 +43,8 @@ vi.mock('firebase/firestore', () => ({
   getDocs: (...args: unknown[]) => mockGetDocs(...args),
   updateDoc: (...args: unknown[]) => mockUpdateDoc(...args),
   deleteDoc: (...args: unknown[]) => mockDeleteDoc(...args),
+  runTransaction: (...args: unknown[]) => mockRunTransaction(...args),
+  increment: (n: number) => mockIncrement(n),
   onSnapshot: vi.fn(() => vi.fn()),
   query: vi.fn((...args: unknown[]) => args),
   where: vi.fn((...args: unknown[]) => args),
@@ -75,45 +94,54 @@ describe('RoomService - Host Migration', () => {
   });
 
   describe('ownerLeaveRoom', () => {
-    it('sets status=migrating and increments hostMigrationEpoch', async () => {
+    it('uses transaction and sets status=open with new owner when remaining participants', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom();
+      // getRoom() 內部用 getDoc
       mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      // transaction.get() 回傳
+      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
 
-      await RoomService.ownerLeaveRoom('room-1', 'owner-1');
+      const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
-      // First updateDoc call: set status=migrating and increment epoch
-      expect(mockUpdateDoc).toHaveBeenCalledWith(
+      // 應使用 runTransaction
+      expect(mockRunTransaction).toHaveBeenCalled();
+      // transaction.update 應被呼叫，設定 status='open' 和新 ownerUid
+      expect(mockTransactionUpdate).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
-          status: 'migrating',
+          status: 'open',
+          ownerUid: 'member-2',
           hostMigrationEpoch: 1,
         })
       );
+      expect(result.remainingParticipants).toContain('member-2');
+      expect(result.remainingParticipants).toContain('member-3');
+      expect(result.newOwnerUid).toBe('member-2');
     });
 
     it('sets status=closed when no remaining participants (does NOT delete document)', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
-      const room = makeRoom({ participants: ['owner-1'] }); // only owner
+      const room = makeRoom({ participants: ['owner-1'] });
       mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
       expect(result.remainingParticipants).toHaveLength(0);
       expect(mockDeleteDoc).not.toHaveBeenCalled();
-
-      // Should have called updateDoc with status=closed
-      const allCalls = mockUpdateDoc.mock.calls;
-      const closedCall = allCalls.find((call) =>
-        call[1] && typeof call[1] === 'object' && (call[1] as any).status === 'closed'
+      // transaction.update 應包含 status='closed'
+      expect(mockTransactionUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 'closed' })
       );
-      expect(closedCall).toBeDefined();
     });
 
     it('closed room document is NOT deleted from Firestore', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom({ participants: ['owner-1'] });
       mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
@@ -124,18 +152,13 @@ describe('RoomService - Host Migration', () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom();
       mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
       expect(result.remainingParticipants).toContain('member-2');
       expect(result.remainingParticipants).toContain('member-3');
-
-      // Should update room with new ownerUid and status=open
-      const openCall = mockUpdateDoc.mock.calls.find((call) =>
-        call[1] && typeof call[1] === 'object' && (call[1] as any).status === 'open'
-      );
-      expect(openCall).toBeDefined();
-      expect((openCall![1] as any).ownerUid).toBeDefined();
+      expect(result.newOwnerUid).toBeDefined();
     });
 
     it('throws when non-owner calls ownerLeaveRoom', async () => {
@@ -160,23 +183,25 @@ describe('RoomService - Host Migration', () => {
       expect(result.remainingParticipants).toHaveLength(0);
     });
 
-    it('hostMigrationEpoch increments on migration', async () => {
+    it('hostMigrationEpoch increments atomically in transaction', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom({ hostMigrationEpoch: 5 });
       mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
-      const migratingCall = mockUpdateDoc.mock.calls.find((call) =>
-        call[1] && typeof call[1] === 'object' && (call[1] as any).status === 'migrating'
+      expect(mockTransactionUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ hostMigrationEpoch: 6 })
       );
-      expect((migratingCall![1] as any).hostMigrationEpoch).toBe(6);
     });
 
     it('uses promoteNewHostFn when provided and handles new room creation', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom();
       mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       const promoteNewHostFn = vi.fn().mockResolvedValue('new-room-id');
 
@@ -185,11 +210,11 @@ describe('RoomService - Host Migration', () => {
       expect(promoteNewHostFn).toHaveBeenCalled();
       expect(result.remainingParticipants).toHaveLength(2);
 
-      // Room should be closed (not have new owner set directly)
-      const closedCall = mockUpdateDoc.mock.calls.find((call) =>
-        call[1] && typeof call[1] === 'object' && (call[1] as any).status === 'closed'
+      // 在 transaction 之後，room 應被 closed（via updateDoc，非 transaction）
+      expect(mockUpdateDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 'closed' })
       );
-      expect(closedCall).toBeDefined();
     });
   });
 
@@ -205,31 +230,24 @@ describe('RoomService - Host Migration', () => {
   });
 
   describe('incrementVersion', () => {
-    it('increments room version by 1', async () => {
+    it('uses atomic increment(1) instead of read-then-write', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
-      const room = makeRoom({ version: 3 });
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       await RoomService.incrementVersion('room-1');
 
       expect(mockUpdateDoc).toHaveBeenCalledWith(
         expect.anything(),
-        { version: 4 }
+        { version: expect.objectContaining({ __type: 'FieldValue.increment', operand: 1 }) }
       );
     });
 
-    it('starts from 0 if no version set', async () => {
+    it('does not require reading the room first', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
-      const room = makeRoom();
-      delete (room as Partial<P2PRoom>).version;
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
 
       await RoomService.incrementVersion('room-1');
 
-      expect(mockUpdateDoc).toHaveBeenCalledWith(
-        expect.anything(),
-        { version: 1 }
-      );
+      // 原子操作不需要先 getDoc
+      expect(mockGetDoc).not.toHaveBeenCalled();
     });
   });
 });
