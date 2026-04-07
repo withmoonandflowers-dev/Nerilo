@@ -79,6 +79,17 @@ Dual-layer design: Sphinx-Lite onion routing + Kademlia DHT.
 4. Auto-rotation: After 100 messages or 1 hour (configurable)
 5. Forward secrecy: Previous epoch keys retained for in-flight message decryption
 
+### Adaptive Key Distribution (`src/core/crypto/`)
+
+| Group Size | Strategy | Module | Key Rotation Cost |
+|---|---|---|---|
+| <50 members | SenderKey | `SenderKeyManager` | O(N) ECDH per rotation |
+| >=50 members | TreeKEM | `TreeKEMManager` | O(log N) ECDH per rotation |
+
+`GroupKeyManager` auto-selects strategy based on group size with hysteresis (switch up at threshold, switch down at threshold-10).
+
+**TreeKEM design:** Left-balanced binary tree where members are leaves. Key rotation regenerates the leaf-to-root path and encrypts each path secret to its co-path sibling — O(log N) ECDH operations instead of O(N). Tree rebuilds on member add/remove.
+
 ### Community Layer (`src/core/community/`)
 
 Organizational structure on top of mesh/relay/crypto. A Community contains Channels (each backed by a MeshGossipManager room), Members with Roles, and governance primitives.
