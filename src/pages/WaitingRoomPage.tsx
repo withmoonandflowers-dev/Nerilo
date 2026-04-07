@@ -2,8 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useServices } from '../contexts/ServicesContext';
+import { useToast } from '../contexts/ToastContext';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
+import { ConnectionIndicator } from '../components/ConnectionBanner/ConnectionBanner';
+import { Skeleton } from '../components/Skeleton/Skeleton';
+import { ShareModal } from '../components/ShareModal/ShareModal';
 import './WaitingRoomPage.css';
 
 const WaitingRoomPage: React.FC = () => {
@@ -11,9 +15,11 @@ const WaitingRoomPage: React.FC = () => {
   const { user } = useAuth();
   const { roomService } = useServices();
   const navigate = useNavigate();
+  const toast = useToast();
   const [room, setRoom] = useState<P2PRoom | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
   const [isTimeout, setIsTimeout] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // 監聽房間狀態變化
   useEffect(() => {
@@ -142,21 +148,7 @@ const WaitingRoomPage: React.FC = () => {
     }
   };
 
-  const handleCopyLink = () => {
-    const url = `${window.location.origin}/chat/${roomId}`;
-    navigator.clipboard.writeText(url).then(() => {
-      alert('連結已複製到剪貼簿！');
-    }).catch(() => {
-      // 降級方案
-      const textArea = document.createElement('textarea');
-      textArea.value = url;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      alert('連結已複製到剪貼簿！');
-    });
-  };
+  const handleOpenShare = () => setShowShareModal(true);
 
   const formatTime = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -168,7 +160,17 @@ const WaitingRoomPage: React.FC = () => {
   if (!room || !user) {
     return (
       <div className="waiting-room-page">
-        <div className="loading">載入中...</div>
+        <div className="waiting-room-container" aria-busy="true">
+          <div className="waiting-room-header">
+            <Skeleton variant="title" width="60%" height={28} />
+            <Skeleton variant="text" width="40%" height={16} />
+          </div>
+          <div className="waiting-room-content" style={{ gap: 20 }}>
+            <Skeleton width="100%" height={80} />
+            <Skeleton width="100%" height={60} />
+            <Skeleton variant="button" width="50%" height={44} />
+          </div>
+        </div>
       </div>
     );
   }
@@ -177,11 +179,12 @@ const WaitingRoomPage: React.FC = () => {
   const participantCount = room.participants.length;
 
   return (
-    <div className="waiting-room-page">
-      <div className="waiting-room-container">
+    <div className="waiting-room-page" id="main-content">
+      <div className="waiting-room-container" role="main" aria-label="等待連線">
         <div className="waiting-room-header">
           <h1>等待連線</h1>
           <p className="room-id">房間 ID: {roomId?.substring(0, 8)}...</p>
+          <ConnectionIndicator participantCount={participantCount} />
         </div>
 
         <div className="waiting-room-content">
@@ -199,7 +202,7 @@ const WaitingRoomPage: React.FC = () => {
               <div className="waiting-status">
                 <div className="status-icon">⏳</div>
                 <h2>等待其他人加入...</h2>
-                <p className="participant-count">
+                <p className="participant-count" aria-live="polite">
                   目前參與者: {participantCount} 人
                 </p>
               </div>
@@ -207,21 +210,27 @@ const WaitingRoomPage: React.FC = () => {
               {room.waitingTimeout && room.waitingStartedAt && (
                 <div className="timer">
                   <div className="timer-label">剩餘時間</div>
-                  <div className="timer-value">{formatTime(timeRemaining)}</div>
+                  <div className="timer-value" aria-live="polite" aria-label={`剩餘時間 ${formatTime(timeRemaining)}`}>{formatTime(timeRemaining)}</div>
                 </div>
               )}
 
               <div className="share-section">
                 <h3>分享房間連結</h3>
                 <div className="share-buttons">
-                  <button onClick={handleCopyLink} className="btn-secondary">
-                    📋 複製連結
+                  <button onClick={handleOpenShare} className="btn-secondary">
+                    &#x1F4E4; 分享房間
                   </button>
                 </div>
                 <p className="share-hint">
-                  將連結分享給其他人，讓他們加入這個房間
+                  複製連結、掃描 QR Code 或使用其他方式邀請好友
                 </p>
               </div>
+
+              <ShareModal
+                roomId={roomId || ''}
+                isOpen={showShareModal}
+                onClose={() => setShowShareModal(false)}
+              />
 
               {participantCount >= 2 && room.status === 'waiting' && (
                 <div className="ready-message">
@@ -242,7 +251,7 @@ const WaitingRoomPage: React.FC = () => {
                           navigate(`/chat/${roomId}`);
                         } catch (error) {
                           console.error('[WaitingRoomPage] Failed to activate room', error);
-                          alert('啟動房間失敗，請稍後再試');
+                          toast.error('啟動房間失敗，請稍後再試');
                         }
                       }
                     }}
@@ -255,7 +264,7 @@ const WaitingRoomPage: React.FC = () => {
               )}
 
               <div className="action-buttons">
-                <button onClick={handleCancel} className="btn-cancel">
+                <button onClick={handleCancel} className="btn-cancel" aria-label={isOwner ? '取消並關閉房間' : '離開房間'}>
                   {isOwner ? '取消房間' : '離開'}
                 </button>
               </div>
