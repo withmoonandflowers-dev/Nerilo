@@ -5,6 +5,8 @@ import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import type { MeshConnection } from './MeshConnection';
 import { TimeBucketedCache } from './TimeBucketedCache';
+import type { PeerScoring } from '../relay/PeerScoring';
+import { logger } from '../../utils/logger';
 
 /**
  * Gossip 訊息處理器
@@ -24,7 +26,8 @@ export class GossipMessageHandler {
     private userId: string,
     private identityManager: IdentityManager,
     private securityManager: SecurityManager,
-    private topologyManager: MeshTopologyManager
+    private topologyManager: MeshTopologyManager,
+    private peerScoring: PeerScoring | null = null
   ) {}
 
   /**
@@ -69,7 +72,7 @@ export class GossipMessageHandler {
       try {
         await neighbor.send(signedMessage);
       } catch (error) {
-        console.warn('[GossipMessageHandler] Failed to send to neighbor', {
+        logger.warn('[GossipMessageHandler] Failed to send to neighbor', {
           roomId: this.roomId,
           neighborId: neighbor.getId(),
           error,
@@ -92,22 +95,29 @@ export class GossipMessageHandler {
     message: GossipMessage,
     fromNeighbor: string
   ): Promise<void> {
+    // 灰名單檢查：跳過低信譽 peer 的訊息
+    if (this.peerScoring?.isGraylisted(fromNeighbor)) {
+      return;
+    }
+
     // 檢查是否已見過
     const messageId = await getMessageId(message);
     if (this.seenMessageIds.has(messageId)) {
+      this.peerScoring?.recordDuplicate(fromNeighbor);
       return; // 已處理過
     }
-    
+
     // 驗證簽名
     const publicKey = await this.securityManager.importPublicKey(message.pubKey);
     const isValid = await this.securityManager.verifyMessage(message, publicKey);
 
     if (!isValid) {
-      console.warn('[GossipMessageHandler] Invalid signature', {
+      logger.warn('[GossipMessageHandler] Invalid signature', {
         roomId: this.roomId,
         messageId,
         senderId: message.senderId,
       });
+      this.peerScoring?.recordInvalidMessage(fromNeighbor);
       return; // 簽名無效
     }
 
@@ -115,18 +125,19 @@ export class GossipMessageHandler {
     if (this.identityManager) {
       const derivedId = await this.identityManager.deriveUserId(publicKey);
       if (derivedId !== message.senderId) {
-        console.warn('[GossipMessageHandler] Sender identity mismatch (possible spoofing)', {
+        logger.warn('[GossipMessageHandler] Sender identity mismatch (possible spoofing)', {
           roomId: this.roomId,
           claimed: message.senderId,
           derived: derivedId,
         });
+        this.peerScoring?.recordInvalidMessage(fromNeighbor);
         return;
       }
     }
 
     // 檢查 TTL 型別驗證 (#39)
     if (typeof message.ttl !== 'number' || !Number.isFinite(message.ttl)) {
-      console.warn('[GossipMessageHandler] Invalid TTL type', {
+      logger.warn('[GossipMessageHandler] Invalid TTL type', {
         roomId: this.roomId,
         senderId: message.senderId,
         ttl: message.ttl,
@@ -136,7 +147,7 @@ export class GossipMessageHandler {
 
     // 檢查序列號
     if (!this.checkSequence(message.senderId, message.seq)) {
-      console.warn('[GossipMessageHandler] Invalid sequence', {
+      logger.warn('[GossipMessageHandler] Invalid sequence', {
         roomId: this.roomId,
         messageId,
         senderId: message.senderId,
@@ -152,6 +163,9 @@ export class GossipMessageHandler {
     
     // 記錄已見過
     this.seenMessageIds.add(messageId);
+
+    // 記錄有效訊息投遞（提升 peer 信譽）
+    this.peerScoring?.recordDelivery(fromNeighbor);
 
     // 顯示訊息
     this.notifyMessageListeners(message);
@@ -178,7 +192,7 @@ export class GossipMessageHandler {
       try {
         await neighbor.send(message);
       } catch (error) {
-        console.warn('[GossipMessageHandler] Failed to forward message', {
+        logger.warn('[GossipMessageHandler] Failed to forward message', {
           roomId: this.roomId,
           neighborId: neighbor.getId(),
           error,
@@ -202,7 +216,7 @@ export class GossipMessageHandler {
     
     if (seq > lastSeq + MAX_SEQ_GAP) {
       // 序列號跳躍太大，可能是攻擊
-      console.warn('[GossipMessageHandler] Large sequence gap', {
+      logger.warn('[GossipMessageHandler] Large sequence gap', {
         roomId: this.roomId,
         senderId,
         lastSeq,
@@ -261,7 +275,7 @@ export class GossipMessageHandler {
       try {
         listener(message);
       } catch (error) {
-        console.error('[GossipMessageHandler] Error in message listener', {
+        logger.error('[GossipMessageHandler] Error in message listener', {
           roomId: this.roomId,
           error,
         });

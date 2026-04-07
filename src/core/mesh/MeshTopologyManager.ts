@@ -2,6 +2,7 @@ import { MeshConnection } from './MeshConnection';
 import { RoomService } from '../../services/RoomService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { logger } from '../../utils/logger';
 import { AdaptiveTopologyManager, type TopologyStrategy, type GossipConfig } from './AdaptiveTopologyManager';
 
 /**
@@ -41,7 +42,7 @@ export class MeshTopologyManager {
    * 初始化（建立初始鄰居連線）
    */
   async initialize(): Promise<void> {
-    console.log('[MeshTopologyManager] Initializing', {
+    logger.info('[MeshTopologyManager] Initializing', {
       roomId: this.roomId,
       localUserId: this.localUserId,
       localFirebaseUid: this.localFirebaseUid,
@@ -54,14 +55,14 @@ export class MeshTopologyManager {
     // 同時做一次初始讀取：如果此時已有其他節點，立即連線。
     const initialCandidates = await this.discoverNodes();
     if (initialCandidates.length > 0) {
-      console.log('[MeshTopologyManager] Initial candidates found', {
+      logger.info('[MeshTopologyManager] Initial candidates found', {
         roomId: this.roomId,
         count: initialCandidates.length,
       });
       const maxNeighbors = Math.min(this.k, initialCandidates.length);
       const selected = await this.selectNeighbors(initialCandidates, maxNeighbors);
       this.connectToNeighbors(selected).catch(error => {
-        console.error('[MeshTopologyManager] Error connecting to initial neighbors', { error });
+        logger.error('[MeshTopologyManager] Error connecting to initial neighbors', { error });
       });
     }
 
@@ -73,7 +74,7 @@ export class MeshTopologyManager {
       this.rotationStartTimeout = null;
       if (this.neighbors.size > 0) {
         this.startRotation();
-        console.log('[MeshTopologyManager] Rotation started', {
+        logger.info('[MeshTopologyManager] Rotation started', {
           roomId: this.roomId,
           neighborCount: this.neighbors.size,
         });
@@ -110,18 +111,18 @@ export class MeshTopologyManager {
       }
 
       if (newCandidates.length > 0 && this.neighbors.size < this.k) {
-        console.log('[MeshTopologyManager] Reactive discovery: new candidates found', {
+        logger.info('[MeshTopologyManager] Reactive discovery: new candidates found', {
           roomId: this.roomId,
           newCandidates,
           currentNeighbors: this.neighbors.size,
         });
         const toConnect = newCandidates.slice(0, this.k - this.neighbors.size);
         this.connectToNeighbors(toConnect).catch(error => {
-          console.error('[MeshTopologyManager] Reactive connect error', { error });
+          logger.error('[MeshTopologyManager] Reactive connect error', { error });
         });
       }
     }, (error) => {
-      console.warn('[MeshTopologyManager] Reactive discovery error', { error });
+      logger.warn('[MeshTopologyManager] Reactive discovery error', { error });
     });
   }
 
@@ -146,7 +147,7 @@ export class MeshTopologyManager {
       // ── 防止資源洩漏：若已有連線物件，先關閉它 ──
       const existing = this.neighbors.get(userId);
       if (existing) {
-        console.log('[MeshTopologyManager] Closing existing connection before reconnect', {
+        logger.info('[MeshTopologyManager] Closing existing connection before reconnect', {
           roomId: this.roomId,
           remoteUserId: userId,
         });
@@ -159,7 +160,7 @@ export class MeshTopologyManager {
       const localFirebaseUid = this.localFirebaseUid;
 
       if (!remoteFirebaseUid) {
-        console.log('[MeshTopologyManager] Remote Firebase UID not found, scheduling retry', {
+        logger.info('[MeshTopologyManager] Remote Firebase UID not found, scheduling retry', {
           roomId: this.roomId,
           remoteUserId: userId,
         });
@@ -177,7 +178,7 @@ export class MeshTopologyManager {
 
       this.neighbors.set(userId, connection);
 
-      console.log('[MeshTopologyManager] Initiating connection to neighbor', {
+      logger.info('[MeshTopologyManager] Initiating connection to neighbor', {
         roomId: this.roomId,
         remoteUserId: userId,
         remoteFirebaseUid,
@@ -189,13 +190,13 @@ export class MeshTopologyManager {
         .then(() => {
           // 連線成功，重設重試計數
           this.reconnectAttempts.delete(userId);
-          console.log('[MeshTopologyManager] Connection ready', {
+          logger.info('[MeshTopologyManager] Connection ready', {
             roomId: this.roomId,
             remoteUserId: userId,
           });
         })
         .catch(async (error) => {
-          console.warn('[MeshTopologyManager] Connection not ready, closing and scheduling retry', {
+          logger.warn('[MeshTopologyManager] Connection not ready, closing and scheduling retry', {
             roomId: this.roomId,
             remoteUserId: userId,
             error,
@@ -209,7 +210,7 @@ export class MeshTopologyManager {
           this.scheduleReconnect(userId);
         });
     } catch (error) {
-      console.warn('[MeshTopologyManager] Failed to connect to neighbor, scheduling retry', {
+      logger.warn('[MeshTopologyManager] Failed to connect to neighbor, scheduling retry', {
         roomId: this.roomId,
         remoteUserId: userId,
         error,
@@ -224,7 +225,7 @@ export class MeshTopologyManager {
   private scheduleReconnect(userId: string): void {
     const attempts = this.reconnectAttempts.get(userId) ?? 0;
     if (attempts >= MeshTopologyManager.MAX_RECONNECT_ATTEMPTS) {
-      console.warn('[MeshTopologyManager] Max reconnect attempts reached, giving up', {
+      logger.warn('[MeshTopologyManager] Max reconnect attempts reached, giving up', {
         roomId: this.roomId,
         remoteUserId: userId,
         attempts,
@@ -241,7 +242,7 @@ export class MeshTopologyManager {
 
     this.reconnectAttempts.set(userId, attempts + 1);
 
-    console.log('[MeshTopologyManager] Scheduling reconnect', {
+    logger.info('[MeshTopologyManager] Scheduling reconnect', {
       roomId: this.roomId,
       remoteUserId: userId,
       attempt: attempts + 1,
@@ -284,7 +285,7 @@ export class MeshTopologyManager {
    * 處理鄰居斷線：先嘗試重連同一 peer，若失敗再補連其他 peer
    */
   async handleNeighborDisconnected(neighborId: string): Promise<void> {
-    console.log('[MeshTopologyManager] Neighbor disconnected', {
+    logger.info('[MeshTopologyManager] Neighbor disconnected', {
       roomId: this.roomId,
       neighborId,
     });
@@ -367,14 +368,14 @@ export class MeshTopologyManager {
         } else if (room.participants.length >= 2) {
           // 如果還沒有 meshIdentities，但已經有參與者，等待一下
           // 其他參與者可能還在註冊身分
-          console.log('[MeshTopologyManager] No meshIdentities yet, participants may still be registering', {
+          logger.info('[MeshTopologyManager] No meshIdentities yet, participants may still be registering', {
             roomId: this.roomId,
             participants: room.participants.length,
           });
         }
       }
     } catch (error) {
-      console.warn('[MeshTopologyManager] Failed to get room from Firestore', { error });
+      logger.warn('[MeshTopologyManager] Failed to get room from Firestore', { error });
     }
     
     // 方法 2：從現有鄰居獲取他們的鄰居列表（簡化版，暫時不實作）
@@ -428,7 +429,7 @@ export class MeshTopologyManager {
     this.currentGossipConfig = evaluation.gossipConfig;
 
     if (oldStrategy !== evaluation.strategy || oldK !== this.k) {
-      console.log('[MeshTopologyManager] Topology updated', {
+      logger.info('[MeshTopologyManager] Topology updated', {
         roomId: this.roomId,
         participantCount,
         strategy: evaluation.strategy,
@@ -439,7 +440,7 @@ export class MeshTopologyManager {
       // Adjust neighbor count if needed
       if (this.k > oldK) {
         this.fillNeighbors().catch((err) => {
-          console.warn('[MeshTopologyManager] fillNeighbors after upgrade failed', err);
+          logger.warn('[MeshTopologyManager] fillNeighbors after upgrade failed', err);
         });
       }
       // Downgrade: gradually reduce connections (handled by rotation)
@@ -484,7 +485,7 @@ export class MeshTopologyManager {
 
     const closePromises = Array.from(this.neighbors.values()).map(neighbor =>
       neighbor.close().catch(error => {
-        console.error('[MeshTopologyManager] Error closing neighbor', { error });
+        logger.error('[MeshTopologyManager] Error closing neighbor', { error });
       })
     );
 

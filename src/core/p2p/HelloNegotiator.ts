@@ -33,6 +33,7 @@
  */
 
 import type { Envelope, ChannelKind } from '../../types';
+import { logger } from '../../utils/logger';
 
 // ── HelloPayload ──────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ export class HelloNegotiator {
     if (this.timeoutId === null) {
       this.timeoutId = setTimeout(() => {
         if (!this.acknowledged) {
-          console.warn('[HelloNegotiator] HELLO timeout — peer did not respond within', {
+          logger.warn('[HelloNegotiator] HELLO timeout — peer did not respond within', {
             roomId: this.roomId,
             timeoutMs: this.timeoutMs,
           });
@@ -128,7 +129,7 @@ export class HelloNegotiator {
       }, this.timeoutMs);
     }
 
-    console.log('[HelloNegotiator] HELLO sent', {
+    logger.info('[HelloNegotiator] HELLO sent', {
       roomId: this.roomId,
       selfId: this.selfId,
       features: this.selfCapabilities.features,
@@ -188,7 +189,7 @@ export class HelloNegotiator {
 
   private handleHello(env: Envelope): boolean {
     if (!this.validateHelloPayload(env.payload)) {
-      console.warn('[HelloNegotiator] Invalid HELLO payload, ignored', {
+      logger.warn('[HelloNegotiator] Invalid HELLO payload, ignored', {
         roomId: this.roomId, from: env.from,
       });
       return true; // 已消費此訊息，但不處理
@@ -211,7 +212,7 @@ export class HelloNegotiator {
 
     this.sendFn(ack);
 
-    console.log('[HelloNegotiator] HELLO received, sent HELLO_ACK', {
+    logger.info('[HelloNegotiator] HELLO received, sent HELLO_ACK', {
       roomId: this.roomId,
       from: env.from,
       remoteFeatures: this.remoteHello.features,
@@ -225,7 +226,7 @@ export class HelloNegotiator {
     if (this.remoteHello === null) {
       // 可能我們在等 HELLO，對方先送 HELLO_ACK（正常情況不會發生，防禦性處理）
       if (!this.validateHelloPayload(env.payload)) {
-        console.warn('[HelloNegotiator] Invalid HELLO_ACK payload, ignored', {
+        logger.warn('[HelloNegotiator] Invalid HELLO_ACK payload, ignored', {
           roomId: this.roomId, from: env.from,
         });
         return true;
@@ -233,7 +234,7 @@ export class HelloNegotiator {
       this.remoteHello = env.payload as HelloPayload;
     }
 
-    console.log('[HelloNegotiator] HELLO_ACK received', {
+    logger.info('[HelloNegotiator] HELLO_ACK received', {
       roomId: this.roomId,
       from: env.from,
     });
@@ -266,7 +267,7 @@ export class HelloNegotiator {
       remote: this.remoteHello,
     };
 
-    console.log('[HelloNegotiator] Negotiation complete', {
+    logger.info('[HelloNegotiator] Negotiation complete', {
       roomId: this.roomId,
       negotiatedFeatures: negotiated.features,
       protocolVersion: negotiated.protocolVersion,

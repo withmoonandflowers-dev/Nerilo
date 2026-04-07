@@ -52,6 +52,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
+import { logger } from '../utils/logger';
 import type { RoomMergeRequest, RoomSplitPlan } from '../types';
 import { RoomService } from './RoomService';
 
@@ -155,7 +156,7 @@ export class RoomRequestService {
       pendingMergeRequestId: requestId,
     });
 
-    console.log('[RoomRequestService] Merge request created', {
+    logger.info('[RoomRequestService] Merge request created', {
       requestId,
       sourceRoomId,
       targetRoomId,
@@ -233,7 +234,7 @@ export class RoomRequestService {
       status: 'completed',
     });
 
-    console.log('[RoomRequestService] Merge accepted (Firestore done)', {
+    logger.info('[RoomRequestService] Merge accepted (Firestore done)', {
       requestId,
       sourceRoomId: request.sourceRoomId,
       targetRoomId: request.targetRoomId,
@@ -274,7 +275,7 @@ export class RoomRequestService {
       }),
     ]);
 
-    console.log('[RoomRequestService] Merge rejected', { requestId });
+    logger.info('[RoomRequestService] Merge rejected', { requestId });
   }
 
   /**
@@ -394,7 +395,7 @@ export class RoomRequestService {
       pendingSplitPlanId: planId,
     });
 
-    console.log('[RoomRequestService] Split plan created', {
+    logger.info('[RoomRequestService] Split plan created', {
       planId,
       sourceRoomId,
       newRoomOwnerUid,
@@ -465,7 +466,7 @@ export class RoomRequestService {
       newRoomId,
     });
 
-    console.log('[RoomRequestService] Split plan accepted (Firestore done)', {
+    logger.info('[RoomRequestService] Split plan accepted (Firestore done)', {
       planId,
       sourceRoomId: plan.sourceRoomId,
       newRoomId,
@@ -508,7 +509,7 @@ export class RoomRequestService {
       updateDoc(doc(db, 'p2pRooms', plan.sourceRoomId), { pendingSplitPlanId: null }),
     ]);
 
-    console.log('[RoomRequestService] Split plan cancelled', { planId });
+    logger.info('[RoomRequestService] Split plan cancelled', { planId });
   }
 
   /**
@@ -590,7 +591,7 @@ export class RoomRequestService {
     }
 
     if (noRoomCandidates.length === 0) {
-      console.log('[RoomRequestService] promoteNewHost: all remaining members own rooms, skipping');
+      logger.info('[RoomRequestService] promoteNewHost: all remaining members own rooms, skipping');
       return null;
     }
 
@@ -599,7 +600,7 @@ export class RoomRequestService {
 
     if (promotedOwnerUid !== callerUid) {
       // 不是我負責建立，等待他人建立
-      console.log('[RoomRequestService] promoteNewHost: not my turn to create', {
+      logger.info('[RoomRequestService] promoteNewHost: not my turn to create', {
         promotedOwnerUid,
         callerUid,
       });
@@ -614,7 +615,7 @@ export class RoomRequestService {
       remainingParticipants
     );
 
-    console.log('[RoomRequestService] promoteNewHost: new room created', {
+    logger.info('[RoomRequestService] promoteNewHost: new room created', {
       newRoomId,
       promotedOwnerUid,
       participants: remainingParticipants,

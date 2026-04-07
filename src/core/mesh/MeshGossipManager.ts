@@ -5,6 +5,9 @@ import { GossipMessageHandler } from './GossipMessageHandler';
 import { HeartbeatService } from './HeartbeatService';
 import { RoomService } from '../../services/RoomService';
 import { auth } from '../../config/firebase';
+import { RelayManager } from '../relay/RelayManager';
+import { PeerScoring } from '../relay/PeerScoring';
+import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
 
 /**
@@ -17,6 +20,8 @@ export class MeshGossipManager {
   private topologyManager: MeshTopologyManager | null = null;
   private messageHandler: GossipMessageHandler | null = null;
   private heartbeatService: HeartbeatService | null = null;
+  private relayManager: RelayManager | null = null;
+  private peerScoring: PeerScoring | null = null;
   private initialized = false;
   private neighborCheckInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -30,11 +35,11 @@ export class MeshGossipManager {
    */
   async initialize(): Promise<void> {
     if (this.initialized) {
-      console.warn('[MeshGossipManager] Already initialized');
+      logger.warn('[MeshGossipManager] Already initialized');
       return;
     }
 
-    console.log('[MeshGossipManager] Initializing', { roomId: this.roomId });
+    logger.info('[MeshGossipManager] Initializing', { roomId: this.roomId });
 
     try {
       // 1. 建立身分
@@ -49,7 +54,7 @@ export class MeshGossipManager {
       }
 
       await RoomService.updateMeshIdentity(this.roomId, firebaseUid, userId, pubKey);
-      console.log('[MeshGossipManager] Identity registered', {
+      logger.info('[MeshGossipManager] Identity registered', {
         roomId: this.roomId,
         firebaseUid,
         userId,
@@ -62,19 +67,28 @@ export class MeshGossipManager {
         firebaseUid
       );
 
-      // 4. 初始化訊息處理器
+      // 4. 初始化 PeerScoring & RelayManager
+      this.peerScoring = new PeerScoring();
+      this.relayManager = new RelayManager({
+        localNodeId: userId,
+        roomId: this.roomId,
+      });
+      await this.relayManager.initialize();
+
+      // 5. 初始化訊息處理器（注入 PeerScoring）
       this.messageHandler = new GossipMessageHandler(
         this.roomId,
         userId,
         this.identityManager,
         this.securityManager,
-        this.topologyManager
+        this.topologyManager,
+        this.peerScoring
       );
 
       // 5. 初始化心跳服務
       this.heartbeatService = new HeartbeatService(userId);
       this.heartbeatService.onUnreachable((peerId) => {
-        console.warn('[MeshGossipManager] Peer unreachable, triggering neighbor replacement', {
+        logger.warn('[MeshGossipManager] Peer unreachable, triggering neighbor replacement', {
           roomId: this.roomId, peerId,
         });
         this.topologyManager?.handleNeighborDisconnected(peerId);
@@ -96,13 +110,13 @@ export class MeshGossipManager {
       }
 
       this.initialized = true;
-      console.log('[MeshGossipManager] Initialization completed', {
+      logger.info('[MeshGossipManager] Initialization completed', {
         roomId: this.roomId,
         userId,
         neighborCount: this.topologyManager?.getNeighborCount() || 0,
       });
     } catch (error) {
-      console.error('[MeshGossipManager] Initialization failed', {
+      logger.error('[MeshGossipManager] Initialization failed', {
         roomId: this.roomId,
         error,
       });
@@ -116,22 +130,48 @@ export class MeshGossipManager {
   private setupNeighborMessageHandlers(): void {
     if (!this.topologyManager || !this.messageHandler) return;
 
+    /** 已註冊到 RelayManager 的 peer 集合 */
+    const registeredRelayPeers = new Set<string>();
+
     // 每 2 秒掃描鄰居列表，為新加入的鄰居設置訊息監聽
     // （MeshConnection.onMessage 內部去重，多次設置不會重複觸發）
     this.neighborCheckInterval = setInterval(() => {
       if (!this.topologyManager || !this.messageHandler) return;
 
       const neighbors = this.topologyManager.getNeighbors();
+      const currentIds = new Set<string>();
+
       neighbors.forEach(neighbor => {
+        const peerId = neighbor.getId();
+        currentIds.add(peerId);
+
+        // 註冊新鄰居到 RelayManager
+        if (this.relayManager && !registeredRelayPeers.has(peerId)) {
+          this.relayManager.registerPeer(peerId);
+          registeredRelayPeers.add(peerId);
+        }
+
         neighbor.onMessage(async (message: GossipMessage) => {
+          // 處理 relay 封包
+          const raw = message as unknown as Record<string, unknown>;
+          if (raw.type === 'relay:forward') {
+            await this.relayManager?.handleRelayPacket(peerId, JSON.stringify(raw));
+            return;
+          }
+
           if (this.messageHandler) {
-            await this.messageHandler.handleReceivedMessage(
-              message,
-              neighbor.getId()
-            );
+            await this.messageHandler.handleReceivedMessage(message, peerId);
           }
         });
       });
+
+      // 取消註冊已離開的鄰居
+      for (const peerId of registeredRelayPeers) {
+        if (!currentIds.has(peerId)) {
+          this.relayManager?.unregisterPeer(peerId);
+          registeredRelayPeers.delete(peerId);
+        }
+      }
     }, 2000);
   }
 
@@ -202,12 +242,27 @@ export class MeshGossipManager {
       this.heartbeatService.stop();
       this.heartbeatService = null;
     }
+    if (this.relayManager) {
+      this.relayManager.shutdown();
+      this.relayManager = null;
+    }
+    if (this.peerScoring) {
+      this.peerScoring.destroy();
+      this.peerScoring = null;
+    }
     if (this.topologyManager) {
       await this.topologyManager.cleanup();
     }
     this.topologyManager = null;
     this.messageHandler = null;
     this.initialized = false;
-    console.log('[MeshGossipManager] Cleaned up', { roomId: this.roomId });
+    logger.info('[MeshGossipManager] Cleaned up', { roomId: this.roomId });
+  }
+
+  /**
+   * 取得 RelayManager 實例（供 ChatService 等外部模組使用）
+   */
+  getRelayManager(): RelayManager | null {
+    return this.relayManager;
   }
 }

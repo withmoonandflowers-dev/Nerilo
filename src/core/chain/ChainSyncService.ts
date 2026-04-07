@@ -2,6 +2,7 @@ import type { LedgerEntry } from '../../types';
 import type { ChainMergeMessage } from './ChainMergeService';
 import { SharedDataStream } from '../mesh/SharedDataStream';
 import { indexedDBService } from '../../services/IndexedDBService';
+import { logger } from '../../utils/logger';
 
 // ── P2P 主鏈同步訊息格式 ─────────────────────────────────────────────────────
 
@@ -123,12 +124,12 @@ export class ChainSyncService {
     if (savedEntries.length > 0) {
       const ok = await this.stream.resetFromEntries(savedEntries);
       if (ok) {
-        console.log('[ChainSyncService] Restored chain from IndexedDB', {
+        logger.info('[ChainSyncService] Restored chain from IndexedDB', {
           roomId: this.roomId,
           entries: savedEntries.length,
         });
       } else {
-        console.warn('[ChainSyncService] Local chain validation failed, clearing IndexedDB', {
+        logger.warn('[ChainSyncService] Local chain validation failed, clearing IndexedDB', {
           roomId: this.roomId,
         });
         await indexedDBService.clearChainEntries(this.roomId);
@@ -140,7 +141,7 @@ export class ChainSyncService {
       try {
         await indexedDBService.saveChainEntry(entry, this.roomId);
       } catch (err) {
-        console.error('[ChainSyncService] Failed to persist chain entry', {
+        logger.error('[ChainSyncService] Failed to persist chain entry', {
           roomId: this.roomId,
           index: entry.index,
           error: err,
@@ -148,7 +149,7 @@ export class ChainSyncService {
       }
     });
 
-    console.log('[ChainSyncService] Initialized', {
+    logger.info('[ChainSyncService] Initialized', {
       roomId: this.roomId,
       localChainLength: this.stream.getEntries().length,
     });
@@ -181,7 +182,7 @@ export class ChainSyncService {
     this.stopAntiEntropy();
 
     if (!this.broadcastFn) {
-      console.warn('[ChainSyncService] startAntiEntropy: no broadcastFn provided, skipping', {
+      logger.warn('[ChainSyncService] startAntiEntropy: no broadcastFn provided, skipping', {
         roomId: this.roomId,
       });
       return;
@@ -193,7 +194,7 @@ export class ChainSyncService {
       this.broadcastTipAnnounce();
     }, intervalMs);
 
-    console.log('[ChainSyncService] Anti-entropy started', {
+    logger.info('[ChainSyncService] Anti-entropy started', {
       roomId: this.roomId,
       intervalMs,
     });
@@ -225,7 +226,7 @@ export class ChainSyncService {
 
     this.broadcastFn(msg);
 
-    console.log('[ChainSyncService] TIP_ANNOUNCE broadcast', {
+    logger.info('[ChainSyncService] TIP_ANNOUNCE broadcast', {
       roomId: this.roomId,
       height: msg.height,
       tipHash: msg.tipHash.slice(0, 16) + '…',
@@ -242,7 +243,7 @@ export class ChainSyncService {
       lastKnownIndex: lastEntry ? lastEntry.index : -1,
     };
 
-    console.log('[ChainSyncService] Requesting chain from peer', {
+    logger.info('[ChainSyncService] Requesting chain from peer', {
       roomId: this.roomId,
       targetPeerId,
       lastKnownIndex: request.lastKnownIndex,
@@ -274,14 +275,14 @@ export class ChainSyncService {
         if (this.mergeService) {
           await this.mergeService.handleMessage(fromPeerId, message as ChainMergeMessage);
         } else {
-          console.log('[ChainSyncService] Received provenance message but no mergeService set', {
+          logger.info('[ChainSyncService] Received provenance message but no mergeService set', {
             roomId: this.roomId,
             type: message.type,
           });
         }
         break;
       default:
-        console.warn('[ChainSyncService] Unknown message type', {
+        logger.warn('[ChainSyncService] Unknown message type', {
           roomId: this.roomId,
           type: (message as ChainSyncMessage).type,
         });
@@ -297,7 +298,7 @@ export class ChainSyncService {
 
     // 若對方高度更高，或高度相同但 tip 不一致，請求補齊
     if (msg.height > localHeight || (msg.height === localHeight && msg.tipHash !== localTipHash)) {
-      console.log('[ChainSyncService] TIP_ANNOUNCE: peer is ahead, requesting chain', {
+      logger.info('[ChainSyncService] TIP_ANNOUNCE: peer is ahead, requesting chain', {
         roomId: this.roomId,
         fromPeerId,
         peerHeight: msg.height,
@@ -332,7 +333,7 @@ export class ChainSyncService {
       entries: entriesToSend,
     };
 
-    console.log('[ChainSyncService] Sending chain to peer', {
+    logger.info('[ChainSyncService] Sending chain to peer', {
       roomId: this.roomId,
       fromPeerId,
       entriesCount: response.entries.length,
@@ -359,7 +360,7 @@ export class ChainSyncService {
       let valid = true;
       for (const entry of response.entries) {
         if (entry.previousHash !== expectedPrev) {
-          console.warn('[ChainSyncService] Incremental sync: hash chain broken', {
+          logger.warn('[ChainSyncService] Incremental sync: hash chain broken', {
             roomId: this.roomId, fromPeerId, entryIndex: entry.index,
           });
           valid = false;
@@ -373,7 +374,7 @@ export class ChainSyncService {
       for (const entry of response.entries) {
         const ok = await this.stream.handleReceivedEntry(entry);
         if (!ok) {
-          console.warn('[ChainSyncService] Incremental entry rejected after pre-validation', {
+          logger.warn('[ChainSyncService] Incremental entry rejected after pre-validation', {
             roomId: this.roomId, fromPeerId, entryIndex: entry.index,
           });
           break;
@@ -383,7 +384,7 @@ export class ChainSyncService {
       // 完整鏈：resetFromEntries 整體驗證（原子替換）
       const ok = await this.stream.resetFromEntries(response.entries);
       if (!ok) {
-        console.warn('[ChainSyncService] resetFromEntries failed (invalid remote chain)', {
+        logger.warn('[ChainSyncService] resetFromEntries failed (invalid remote chain)', {
           roomId: this.roomId,
           fromPeerId,
           entriesCount: response.entries.length,
@@ -397,7 +398,7 @@ export class ChainSyncService {
       try {
         await indexedDBService.saveChainEntry(entry, this.roomId);
       } catch (err) {
-        console.warn('[ChainSyncService] Persist error (may be duplicate)', {
+        logger.warn('[ChainSyncService] Persist error (may be duplicate)', {
           roomId: this.roomId,
           index: entry.index,
           error: err,
@@ -405,7 +406,7 @@ export class ChainSyncService {
       }
     }
 
-    console.log('[ChainSyncService] Chain synced from peer', {
+    logger.info('[ChainSyncService] Chain synced from peer', {
       roomId: this.roomId,
       fromPeerId,
       newLength: this.stream.getEntries().length,
@@ -430,7 +431,7 @@ export class ChainSyncService {
 
     if (clearChain) {
       await indexedDBService.clearChainEntries(this.roomId);
-      console.log('[ChainSyncService] Main chain cleared on dispose', {
+      logger.info('[ChainSyncService] Main chain cleared on dispose', {
         roomId: this.roomId,
       });
     }

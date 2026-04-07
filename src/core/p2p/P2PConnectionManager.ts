@@ -11,6 +11,7 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { logger } from '../../utils/logger';
 import type { ConnectionState, Signal } from '../../types';
 import { getIceServerProvider } from './IceServerProvider';
 
@@ -55,14 +56,14 @@ export class P2PConnectionManager {
 
   async initialize(): Promise<void> {
     try {
-      console.log('[P2PConnectionManager] initialize called', {
+      logger.info('[P2PConnectionManager] initialize called', {
         roomId: this.roomId,
         localUid: this.localUid,
       });
 
       // 清理上一次的 RTCPeerConnection（防止資源洩漏）
       if (this.pc) {
-        console.warn('[P2PConnectionManager] Closing stale RTCPeerConnection before re-init', {
+        logger.warn('[P2PConnectionManager] Closing stale RTCPeerConnection before re-init', {
           roomId: this.roomId,
         });
         this.pc.close();
@@ -71,7 +72,7 @@ export class P2PConnectionManager {
 
       // 取得 ICE servers（可選：從 Cloud Functions）
       this.iceServers = await this.getIceServers();
-      console.log('[P2PConnectionManager] ICE servers obtained', {
+      logger.info('[P2PConnectionManager] ICE servers obtained', {
         roomId: this.roomId,
         serverCount: this.iceServers?.length || 0,
       });
@@ -81,7 +82,7 @@ export class P2PConnectionManager {
         iceServers: this.iceServers,
       });
 
-      console.log('[P2PConnectionManager] RTCPeerConnection created', {
+      logger.info('[P2PConnectionManager] RTCPeerConnection created', {
         roomId: this.roomId,
         connectionState: this.pc?.connectionState,
         signalingState: this.pc?.signalingState,
@@ -91,12 +92,12 @@ export class P2PConnectionManager {
       this.setupSignalingListeners();
       
       this.setState('connecting');
-      console.log('[P2PConnectionManager] initialize completed', {
+      logger.info('[P2PConnectionManager] initialize completed', {
         roomId: this.roomId,
         state: this.state,
       });
     } catch (error) {
-      console.error('[P2PConnectionManager] initialize error', {
+      logger.error('[P2PConnectionManager] initialize error', {
         roomId: this.roomId,
         localUid: this.localUid,
         error,
@@ -118,7 +119,7 @@ export class P2PConnectionManager {
       const provider = getIceServerProvider();
       return await provider.getIceServers();
     } catch (err) {
-      console.warn('[P2PConnectionManager] IceServerProvider failed, using default STUN', err);
+      logger.warn('[P2PConnectionManager] IceServerProvider failed, using default STUN', err);
       return [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
@@ -162,7 +163,7 @@ export class P2PConnectionManager {
 
     this.pc.oniceconnectionstatechange = () => {
       if (!this.pc) return;
-      console.log('ICE connection state:', this.pc.iceConnectionState);
+      logger.info('ICE connection state:', this.pc.iceConnectionState);
     };
   }
 
@@ -171,7 +172,7 @@ export class P2PConnectionManager {
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
 
-    console.log('[P2PConnectionManager] setupSignalingListeners', { roomId: this.roomId });
+    logger.info('[P2PConnectionManager] setupSignalingListeners', { roomId: this.roomId });
 
     const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
     // 只訂閱「本次 session 之後」建立的 signals，忽略舊 session 殘留。
@@ -185,7 +186,7 @@ export class P2PConnectionManager {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      console.log('[P2PConnectionManager] Signal snapshot received', {
+      logger.info('[P2PConnectionManager] Signal snapshot received', {
         roomId: this.roomId,
         changeCount: snapshot.docChanges().length,
       });
@@ -200,7 +201,7 @@ export class P2PConnectionManager {
           }
           this.processedSignalIds.add(signal.signalId);
 
-          console.log('[P2PConnectionManager] Processing signal', {
+          logger.info('[P2PConnectionManager] Processing signal', {
             roomId: this.roomId,
             signalId: signal.signalId,
             type: signal.type,
@@ -212,7 +213,7 @@ export class P2PConnectionManager {
           this.signalMutex = this.signalMutex
             .then(() => this.handleSignal(signal))
             .catch((err) => {
-              console.error('[P2PConnectionManager] Signal mutex error', {
+              logger.error('[P2PConnectionManager] Signal mutex error', {
                 roomId: this.roomId,
                 signalId: signal.signalId,
                 err,
@@ -223,12 +224,12 @@ export class P2PConnectionManager {
     });
 
     this.signalUnsubscribers.push(unsubscribe);
-    console.log('[P2PConnectionManager] Signaling listener setup completed', { roomId: this.roomId });
+    logger.info('[P2PConnectionManager] Signaling listener setup completed', { roomId: this.roomId });
   }
 
   private async handleSignal(signal: Signal): Promise<void> {
     if (!this.pc) {
-      console.warn('[P2PConnectionManager] handleSignal: PeerConnection not available', {
+      logger.warn('[P2PConnectionManager] handleSignal: PeerConnection not available', {
         roomId: this.roomId,
         signalType: signal.type,
         from: signal.from,
@@ -249,7 +250,7 @@ export class P2PConnectionManager {
     }
 
     if (signal.from === this.localUid) {
-      console.debug('[P2PConnectionManager] handleSignal: Ignoring signal from self', {
+      logger.debug('[P2PConnectionManager] handleSignal: Ignoring signal from self', {
         roomId: this.roomId,
         signalType: signal.type,
       });
@@ -263,7 +264,7 @@ export class P2PConnectionManager {
 
     this.remoteUid = signal.from;
 
-    console.log('[P2PConnectionManager] handleSignal', {
+    logger.info('[P2PConnectionManager] handleSignal', {
       roomId: this.roomId,
       signalType: signal.type,
       from: signal.from,
@@ -277,7 +278,7 @@ export class P2PConnectionManager {
         case 'offer': {
           // 只有在 signalingState 為 'stable' 時才接受新的 offer，避免重複協商產生錯誤
           if (this.pc.signalingState !== 'stable') {
-            console.debug(
+            logger.debug(
               '[P2PConnectionManager] Ignore offer in state',
               this.pc.signalingState
             );
@@ -295,13 +296,13 @@ export class P2PConnectionManager {
         case 'answer': {
           // 若已經有 remoteDescription，就忽略重複的 answer
           if (this.pc.remoteDescription) {
-            console.debug('[P2PConnectionManager] Ignore duplicate answer');
+            logger.debug('[P2PConnectionManager] Ignore duplicate answer');
             return;
           }
           // 只有在 signalingState 為 'have-local-offer' 時才能設置 answer
           // 這表示已經設置了本地 offer，正在等待遠端的 answer
           if (this.pc.signalingState !== 'have-local-offer') {
-            console.debug(
+            logger.debug(
               '[P2PConnectionManager] Ignore answer in state',
               this.pc.signalingState,
               '- expected have-local-offer'
@@ -310,7 +311,7 @@ export class P2PConnectionManager {
           }
           // 確保已經設置了本地描述（offer）
           if (!this.pc.localDescription) {
-            console.debug('[P2PConnectionManager] Ignore answer - no local description set');
+            logger.debug('[P2PConnectionManager] Ignore answer - no local description set');
             return;
           }
           await this.pc.setRemoteDescription(new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit));
@@ -330,7 +331,7 @@ export class P2PConnectionManager {
             // Buffer early ICE candidates; they will be flushed after setRemoteDescription.
             // This happens when Firestore returns signals newest-first (desc order),
             // causing ICE to arrive before the offer/answer is processed.
-            console.debug(
+            logger.debug(
               '[P2PConnectionManager] Buffering ICE candidate (remoteDescription not set yet)',
               { buffered: this.pendingIceCandidates.length + 1 }
             );
@@ -342,14 +343,14 @@ export class P2PConnectionManager {
         }
       }
     } catch (error) {
-      console.error('Error handling signal:', error);
+      logger.error('Error handling signal:', error);
     }
   }
 
   /** Apply all buffered ICE candidates that arrived before remoteDescription was set. */
   private async flushPendingIceCandidates(): Promise<void> {
     if (this.pendingIceCandidates.length === 0) return;
-    console.log('[P2PConnectionManager] Flushing buffered ICE candidates', {
+    logger.info('[P2PConnectionManager] Flushing buffered ICE candidates', {
       roomId: this.roomId,
       count: this.pendingIceCandidates.length,
     });
@@ -358,7 +359,7 @@ export class P2PConnectionManager {
       try {
         await this.pc!.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
-        console.warn('[P2PConnectionManager] Failed to add buffered ICE candidate', err);
+        logger.warn('[P2PConnectionManager] Failed to add buffered ICE candidate', err);
       }
     }
   }
@@ -366,7 +367,7 @@ export class P2PConnectionManager {
   async createOffer(): Promise<void> {
     if (!this.pc) throw new Error('PeerConnection not initialized');
 
-    console.log('[P2PConnectionManager] createOffer called', {
+    logger.info('[P2PConnectionManager] createOffer called', {
       roomId: this.roomId,
       localUid: this.localUid,
       signalingState: this.pc.signalingState,
@@ -374,22 +375,22 @@ export class P2PConnectionManager {
 
     try {
       const offer = await this.pc.createOffer();
-      console.log('[P2PConnectionManager] Offer created', {
+      logger.info('[P2PConnectionManager] Offer created', {
         roomId: this.roomId,
         offerType: offer.type,
         sdpLength: offer.sdp?.length || 0,
       });
       
       await this.pc.setLocalDescription(offer);
-      console.log('[P2PConnectionManager] Local description set', {
+      logger.info('[P2PConnectionManager] Local description set', {
         roomId: this.roomId,
         signalingState: this.pc.signalingState,
       });
       
       await this.sendSignal('offer', offer);
-      console.log('[P2PConnectionManager] Offer signal sent', { roomId: this.roomId });
+      logger.info('[P2PConnectionManager] Offer signal sent', { roomId: this.roomId });
     } catch (error) {
-      console.error('[P2PConnectionManager] Error creating offer', {
+      logger.error('[P2PConnectionManager] Error creating offer', {
         roomId: this.roomId,
         error,
       });
@@ -417,7 +418,7 @@ export class P2PConnectionManager {
       };
     }
 
-    console.log('[P2PConnectionManager] sendSignal', {
+    logger.info('[P2PConnectionManager] sendSignal', {
       roomId: this.roomId,
       from: this.localUid,
       to: this.remoteUid,
@@ -478,13 +479,13 @@ export class P2PConnectionManager {
       const deletions = snapshot.docs.map(d => deleteDoc(d.ref));
       await Promise.allSettled(deletions);
 
-      console.log('[P2PConnectionManager] Cleaned up old signals', {
+      logger.info('[P2PConnectionManager] Cleaned up old signals', {
         roomId: this.roomId,
         deletedCount: snapshot.size,
       });
     } catch (err) {
       // 清理失敗不影響功能，只記 log
-      console.warn('[P2PConnectionManager] Failed to cleanup old signals', err);
+      logger.warn('[P2PConnectionManager] Failed to cleanup old signals', err);
     }
   }
 
@@ -506,12 +507,12 @@ export class P2PConnectionManager {
       const deletions = snapshot.docs.map(d => deleteDoc(d.ref));
       await Promise.allSettled(deletions);
 
-      console.log('[P2PConnectionManager] Cleaned up session signals on close', {
+      logger.info('[P2PConnectionManager] Cleaned up session signals on close', {
         roomId: this.roomId,
         deletedCount: snapshot.size,
       });
     } catch (err) {
-      console.warn('[P2PConnectionManager] Failed to cleanup session signals', err);
+      logger.warn('[P2PConnectionManager] Failed to cleanup session signals', err);
     }
   }
 

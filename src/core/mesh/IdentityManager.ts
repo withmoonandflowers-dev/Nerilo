@@ -1,4 +1,5 @@
 import { arrayBufferToBase64, sha256Hash, base64ToArrayBuffer } from '../../utils/crypto';
+import { logger } from '../../utils/logger';
 
 const IDB_NAME = 'nerilo_identity';
 const IDB_STORE = 'keypairs';
@@ -69,14 +70,14 @@ export class IdentityManager {
     if (savedKeyPair) {
       this.keyPair = savedKeyPair;
       this.userId = await this.deriveUserId(this.keyPair.publicKey);
-      console.log('[IdentityManager] Loaded key pair from storage', {
+      logger.info('[IdentityManager] Loaded key pair from storage', {
         userId: this.userId,
       });
     } else {
       this.keyPair = await this.generateKeyPair();
       this.userId = await this.deriveUserId(this.keyPair.publicKey);
       await this.saveKeyPairToStorage(this.keyPair);
-      console.log('[IdentityManager] Generated new key pair', {
+      logger.info('[IdentityManager] Generated new key pair', {
         userId: this.userId,
       });
     }
@@ -172,7 +173,7 @@ export class IdentityManager {
 
       return { publicKey, privateKey };
     } catch (error) {
-      console.warn('[IdentityManager] Failed to load key pair from storage', { error });
+      logger.warn('[IdentityManager] Failed to load key pair from storage', { error });
       return null;
     }
   }
@@ -194,9 +195,9 @@ export class IdentityManager {
       await idbPut(db, IDB_KEY, stored);
       db.close();
 
-      console.log('[IdentityManager] Saved key pair to IndexedDB');
+      logger.info('[IdentityManager] Saved key pair to IndexedDB');
     } catch (error) {
-      console.error('[IdentityManager] Failed to save key pair to storage', { error });
+      logger.error('[IdentityManager] Failed to save key pair to storage', { error });
       throw error;
     }
   }
@@ -212,7 +213,7 @@ export class IdentityManager {
 
       if (!savedPubKey || !savedPrivKey) return null;
 
-      console.log('[IdentityManager] Migrating keys from localStorage to IndexedDB');
+      logger.info('[IdentityManager] Migrating keys from localStorage to IndexedDB');
 
       const publicKey = await crypto.subtle.importKey(
         'spki',
@@ -247,10 +248,10 @@ export class IdentityManager {
       localStorage.removeItem(`${LEGACY_KEY}_public`);
       localStorage.removeItem(`${LEGACY_KEY}_private`);
 
-      console.log('[IdentityManager] Migration complete, localStorage keys removed');
+      logger.info('[IdentityManager] Migration complete, localStorage keys removed');
       return keyPair;
     } catch (error) {
-      console.warn('[IdentityManager] localStorage migration failed', { error });
+      logger.warn('[IdentityManager] localStorage migration failed', { error });
       return null;
     }
   }

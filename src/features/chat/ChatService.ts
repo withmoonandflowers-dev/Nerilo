@@ -11,6 +11,7 @@ import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 import { HybridLogicalClock } from '../../core/clock/HybridLogicalClock';
 import type { SenderKeyManager, EncryptedPayload } from '../../core/crypto/SenderKeyManager';
+import { logger } from '../../utils/logger';
 
 // ── E2EE 相關型別 ──────────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ export class ChatService {
     };
 
     await this.channelBus.send(envelope);
-    console.log('[ChatService][E2EE] ECDH public key broadcasted');
+    logger.info('[ChatService][E2EE] ECDH public key broadcasted');
   }
 
   // ── 訊息發送 ──────────────────────────────────────────────────────────
@@ -152,6 +153,12 @@ export class ChatService {
           senderKeyEpoch: encrypted.senderKeyEpoch,
         },
       };
+
+      // 檢查是否需要自動輪換 sender key
+      const rotation = await this.senderKeyManager.checkAutoRotation();
+      if (rotation) {
+        await this.broadcastSenderKeyDistribution(rotation);
+      }
     } else {
       // 明文模式（向下相容）
       envelopePayload = message;
@@ -311,7 +318,7 @@ export class ChatService {
           hlc: encPayload.hlc,
         };
       } catch (err) {
-        console.error('[ChatService][E2EE] Failed to decrypt message', {
+        logger.error('[ChatService][E2EE] Failed to decrypt message', {
           from: encPayload.from,
           epoch: encPayload.encrypted?.senderKeyEpoch,
           error: err,
@@ -394,7 +401,7 @@ export class ChatService {
     this.peerECDHKeys.set(peerUid, peerECDHKey);
     this.pendingKeyExchangePeers.delete(peerUid);
 
-    console.log('[ChatService][E2EE] Received ECDH public key', { peerUid });
+    logger.info('[ChatService][E2EE] Received ECDH public key', { peerUid });
 
     // 回覆自己的 ECDH 公鑰（對方也需要）
     await this.initiateKeyExchange();
@@ -430,7 +437,7 @@ export class ChatService {
 
     this.e2eeReady = true;
 
-    console.log('[ChatService][E2EE] Received sender key', {
+    logger.info('[ChatService][E2EE] Received sender key', {
       from: payload.senderId,
       epoch: payload.epoch,
     });
@@ -453,6 +460,9 @@ export class ChatService {
     const members = Array.from(this.peerECDHKeys.entries()).map(
       ([peerId, publicKey]) => ({ peerId, publicKey })
     );
+
+    // 更新 auto-rotation 用的成員快取
+    this.senderKeyManager.updateMembers(members);
 
     const distribution = await this.senderKeyManager.distributeSenderKey(members);
 
@@ -481,9 +491,66 @@ export class ChatService {
     await this.channelBus.send(distEnvelope);
     this.e2eeReady = true;
 
-    console.log('[ChatService][E2EE] Sender key distributed', {
+    logger.info('[ChatService][E2EE] Sender key distributed', {
       epoch: distribution.epoch,
       recipientCount: members.length,
+    });
+  }
+
+  /**
+   * 處理 peer 離開：從成員列表移除並強制輪換 sender key
+   */
+  async handlePeerDeparture(peerUid: string): Promise<void> {
+    if (!this.senderKeyManager) return;
+
+    this.peerECDHKeys.delete(peerUid);
+
+    if (this.peerECDHKeys.size === 0) return;
+
+    const remainingMembers = Array.from(this.peerECDHKeys.entries()).map(
+      ([peerId, publicKey]) => ({ peerId, publicKey })
+    );
+
+    const rotation = await this.senderKeyManager.forceRotation(remainingMembers);
+    if (rotation) {
+      await this.broadcastSenderKeyDistribution(rotation);
+    }
+  }
+
+  /**
+   * 廣播 sender key 分發訊息（auto-rotation / force rotation 共用）
+   */
+  private async broadcastSenderKeyDistribution(
+    distribution: import('../../core/crypto/SenderKeyManager').SenderKeyDistribution
+  ): Promise<void> {
+    if (!this.senderKeyManager) return;
+
+    const myECDHPub = this.senderKeyManager.getECDHPublicKey()!;
+    const exported = await crypto.subtle.exportKey('spki', myECDHPub);
+    const base64Pub = bufferToBase64(exported);
+
+    const payload: SenderKeyDistPayload = {
+      senderId: this.localUid,
+      epoch: distribution.epoch,
+      ecdhPublicKey: base64Pub,
+      encryptedKeys: distribution.encryptedKeys,
+    };
+
+    const distEnvelope: P2PEnvelope = {
+      v: 1,
+      ns: 'chat',
+      type: 'SENDER_KEY_DIST',
+      id: generateUUID(),
+      ts: Date.now(),
+      from: `${this.localUid}/${this.deviceId}`,
+      payload,
+    };
+
+    await this.channelBus.send(distEnvelope);
+
+    logger.info('[ChatService][E2EE] Sender key rotated & distributed', {
+      epoch: distribution.epoch,
+      recipientCount: Object.keys(distribution.encryptedKeys).length,
     });
   }
 
