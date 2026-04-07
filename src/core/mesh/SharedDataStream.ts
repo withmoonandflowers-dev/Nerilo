@@ -1,4 +1,5 @@
 import { computePayloadHash, computeEntryHash, isPlainObject, isHex64 } from '../../utils/crypto';
+import { logger } from '../../utils/logger';
 import type { LedgerEntry, SharedStreamPayload, SharedStreamConfig } from '../../types';
 
 const DEFAULT_GENESIS_PREVIOUS_HASH = '0';
@@ -74,7 +75,7 @@ export class SharedDataStream {
    */
   freeze(): void {
     this.frozen = true;
-    console.log('[SharedDataStream] Frozen — local appends blocked', { roomId: this.config.roomId });
+    logger.info('[SharedDataStream] Frozen — local appends blocked', { roomId: this.config.roomId });
   }
 
   /**
@@ -83,7 +84,7 @@ export class SharedDataStream {
    */
   unfreeze(): void {
     this.frozen = false;
-    console.log('[SharedDataStream] Unfrozen — local appends resumed', { roomId: this.config.roomId });
+    logger.info('[SharedDataStream] Unfrozen — local appends resumed', { roomId: this.config.roomId });
   }
 
   /** 目前是否處於凍結狀態 */
@@ -183,7 +184,7 @@ export class SharedDataStream {
       try {
         this.onBroadcast(entry);
       } catch (err) {
-        console.warn('[SharedDataStream] Broadcast handler error', { roomId: this.config.roomId, error: err });
+        logger.warn('[SharedDataStream] Broadcast handler error', { roomId: this.config.roomId, error: err });
       }
     }
 
@@ -228,7 +229,7 @@ export class SharedDataStream {
    */
   async handleReceivedEntry(entry: LedgerEntry): Promise<boolean> {
     if (!this.validateEntryShape(entry)) {
-      console.warn('[SharedDataStream] Invalid entry shape', { roomId: this.config.roomId, index: entry?.index });
+      logger.warn('[SharedDataStream] Invalid entry shape', { roomId: this.config.roomId, index: entry?.index });
       return false;
     }
     if (this.entries.length >= this.config.maxEntries) {
@@ -247,7 +248,7 @@ export class SharedDataStream {
       creatorId: entry.creatorId,
     });
     if (expectedHash !== entry.entryHash) {
-      console.warn('[SharedDataStream] Invalid entryHash', { roomId: this.config.roomId, index: entry.index });
+      logger.warn('[SharedDataStream] Invalid entryHash', { roomId: this.config.roomId, index: entry.index });
       return false;
     }
 
@@ -256,7 +257,7 @@ export class SharedDataStream {
     const expectedPrevious = last ? last.entryHash : (this.config.genesisPreviousHash ?? DEFAULT_GENESIS_PREVIOUS_HASH);
     if (entry.previousHash !== expectedPrevious) {
       // 可選：若 index 大於本地長度，可先緩存待補齊前序條目（本實作先拒絕）
-      console.warn('[SharedDataStream] Chain mismatch (previousHash)', {
+      logger.warn('[SharedDataStream] Chain mismatch (previousHash)', {
         roomId: this.config.roomId,
         index: entry.index,
         expectedPrevious: expectedPrevious.slice(0, 16),
@@ -267,7 +268,7 @@ export class SharedDataStream {
 
     // 驗證 index 連續
     if (entry.index !== this.entries.length) {
-      console.warn('[SharedDataStream] Index mismatch', {
+      logger.warn('[SharedDataStream] Index mismatch', {
         roomId: this.config.roomId,
         expected: this.entries.length,
         got: entry.index,
@@ -280,7 +281,7 @@ export class SharedDataStream {
     try {
       payloadHash = await computePayloadHash(entry.payload as Record<string, unknown>, this.config.maxPayloadSize);
     } catch (err) {
-      console.warn('[SharedDataStream] Payload hash error (e.g. oversized)', {
+      logger.warn('[SharedDataStream] Payload hash error (e.g. oversized)', {
         roomId: this.config.roomId,
         index: entry.index,
         error: err,
@@ -288,7 +289,7 @@ export class SharedDataStream {
       return false;
     }
     if (payloadHash !== entry.payloadHash) {
-      console.warn('[SharedDataStream] Invalid payloadHash', { roomId: this.config.roomId, index: entry.index });
+      logger.warn('[SharedDataStream] Invalid payloadHash', { roomId: this.config.roomId, index: entry.index });
       return false;
     }
 
@@ -324,7 +325,7 @@ export class SharedDataStream {
       try {
         fn(entry);
       } catch (err) {
-        console.error('[SharedDataStream] Listener error', { roomId: this.config.roomId, error: err });
+        logger.error('[SharedDataStream] Listener error', { roomId: this.config.roomId, error: err });
       }
     });
   }
@@ -347,7 +348,7 @@ export class SharedDataStream {
   async resetFromEntries(remoteEntries: LedgerEntry[]): Promise<boolean> {
     // Freeze guard — 與 append() 一致，凍結期間拒絕重設，防止惡意 peer 繞過 merge 保護
     if (this.frozen) {
-      console.warn('[SharedDataStream] resetFromEntries blocked: stream is frozen during merge/split', {
+      logger.warn('[SharedDataStream] resetFromEntries blocked: stream is frozen during merge/split', {
         roomId: this.config.roomId,
       });
       return false;
@@ -356,7 +357,7 @@ export class SharedDataStream {
       return false;
     }
     if (remoteEntries.length > SharedDataStream.MAX_RESET_ENTRIES) {
-      console.warn('[SharedDataStream] resetFromEntries: too many entries', {
+      logger.warn('[SharedDataStream] resetFromEntries: too many entries', {
         roomId: this.config.roomId,
         count: remoteEntries.length,
         max: SharedDataStream.MAX_RESET_ENTRIES,
