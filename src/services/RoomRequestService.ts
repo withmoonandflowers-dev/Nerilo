@@ -52,6 +52,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
+import { logger } from '../utils/logger';
 import type { RoomMergeRequest, RoomSplitPlan } from '../types';
 import { RoomService } from './RoomService';
 
@@ -60,32 +61,45 @@ const SPLIT_EXPIRE_MS  = 5 * 60 * 1000; // 5 分鐘
 
 // ── 內部 Firestore 文件轉換 ─────────────────────────────────────────────────
 
-function docToMergeRequest(id: string, data: any): RoomMergeRequest {
+/** Firestore Timestamp 類型的最小介面 */
+interface FirestoreTimestampLike {
+  toMillis(): number;
+}
+
+/** 將可能為 Firestore Timestamp 或 number 的值轉換為 number */
+function toMillis(value: unknown): number {
+  if (value && typeof value === 'object' && 'toMillis' in value) {
+    return (value as FirestoreTimestampLike).toMillis();
+  }
+  return typeof value === 'number' ? value : Date.now();
+}
+
+function docToMergeRequest(id: string, data: Record<string, unknown>): RoomMergeRequest {
   return {
     requestId: id,
     type: 'merge',
-    status: data.status,
-    sourceRoomId: data.sourceRoomId,
-    sourceOwnerUid: data.sourceOwnerUid,
-    targetRoomId: data.targetRoomId,
-    targetOwnerUid: data.targetOwnerUid,
-    createdAt: data.createdAt?.toMillis?.() ?? data.createdAt ?? Date.now(),
-    expiresAt: data.expiresAt?.toMillis?.() ?? data.expiresAt ?? Date.now(),
+    status: data.status as RoomMergeRequest['status'],
+    sourceRoomId: data.sourceRoomId as string,
+    sourceOwnerUid: data.sourceOwnerUid as string,
+    targetRoomId: data.targetRoomId as string,
+    targetOwnerUid: data.targetOwnerUid as string,
+    createdAt: toMillis(data.createdAt),
+    expiresAt: toMillis(data.expiresAt),
   };
 }
 
-function docToSplitPlan(id: string, data: any): RoomSplitPlan {
+function docToSplitPlan(id: string, data: Record<string, unknown>): RoomSplitPlan {
   return {
     planId: id,
     type: 'split',
-    status: data.status,
-    sourceRoomId: data.sourceRoomId,
-    sourceOwnerUid: data.sourceOwnerUid,
-    newRoomOwnerUid: data.newRoomOwnerUid,
-    participantsToSplit: data.participantsToSplit ?? [],
-    newRoomId: data.newRoomId,
-    createdAt: data.createdAt?.toMillis?.() ?? data.createdAt ?? Date.now(),
-    expiresAt: data.expiresAt?.toMillis?.() ?? data.expiresAt ?? Date.now(),
+    status: data.status as RoomSplitPlan['status'],
+    sourceRoomId: data.sourceRoomId as string,
+    sourceOwnerUid: data.sourceOwnerUid as string,
+    newRoomOwnerUid: data.newRoomOwnerUid as string,
+    participantsToSplit: (data.participantsToSplit as string[]) ?? [],
+    newRoomId: data.newRoomId as string | undefined,
+    createdAt: toMillis(data.createdAt),
+    expiresAt: toMillis(data.expiresAt),
   };
 }
 
@@ -142,7 +156,7 @@ export class RoomRequestService {
       pendingMergeRequestId: requestId,
     });
 
-    console.log('[RoomRequestService] Merge request created', {
+    logger.info('[RoomRequestService] Merge request created', {
       requestId,
       sourceRoomId,
       targetRoomId,
@@ -220,7 +234,7 @@ export class RoomRequestService {
       status: 'completed',
     });
 
-    console.log('[RoomRequestService] Merge accepted (Firestore done)', {
+    logger.info('[RoomRequestService] Merge accepted (Firestore done)', {
       requestId,
       sourceRoomId: request.sourceRoomId,
       targetRoomId: request.targetRoomId,
@@ -261,7 +275,7 @@ export class RoomRequestService {
       }),
     ]);
 
-    console.log('[RoomRequestService] Merge rejected', { requestId });
+    logger.info('[RoomRequestService] Merge rejected', { requestId });
   }
 
   /**
@@ -381,7 +395,7 @@ export class RoomRequestService {
       pendingSplitPlanId: planId,
     });
 
-    console.log('[RoomRequestService] Split plan created', {
+    logger.info('[RoomRequestService] Split plan created', {
       planId,
       sourceRoomId,
       newRoomOwnerUid,
@@ -452,7 +466,7 @@ export class RoomRequestService {
       newRoomId,
     });
 
-    console.log('[RoomRequestService] Split plan accepted (Firestore done)', {
+    logger.info('[RoomRequestService] Split plan accepted (Firestore done)', {
       planId,
       sourceRoomId: plan.sourceRoomId,
       newRoomId,
@@ -495,7 +509,7 @@ export class RoomRequestService {
       updateDoc(doc(db, 'p2pRooms', plan.sourceRoomId), { pendingSplitPlanId: null }),
     ]);
 
-    console.log('[RoomRequestService] Split plan cancelled', { planId });
+    logger.info('[RoomRequestService] Split plan cancelled', { planId });
   }
 
   /**
@@ -577,7 +591,7 @@ export class RoomRequestService {
     }
 
     if (noRoomCandidates.length === 0) {
-      console.log('[RoomRequestService] promoteNewHost: all remaining members own rooms, skipping');
+      logger.info('[RoomRequestService] promoteNewHost: all remaining members own rooms, skipping');
       return null;
     }
 
@@ -586,7 +600,7 @@ export class RoomRequestService {
 
     if (promotedOwnerUid !== callerUid) {
       // 不是我負責建立，等待他人建立
-      console.log('[RoomRequestService] promoteNewHost: not my turn to create', {
+      logger.info('[RoomRequestService] promoteNewHost: not my turn to create', {
         promotedOwnerUid,
         callerUid,
       });
@@ -601,7 +615,7 @@ export class RoomRequestService {
       remainingParticipants
     );
 
-    console.log('[RoomRequestService] promoteNewHost: new room created', {
+    logger.info('[RoomRequestService] promoteNewHost: new room created', {
       newRoomId,
       promotedOwnerUid,
       participants: remainingParticipants,

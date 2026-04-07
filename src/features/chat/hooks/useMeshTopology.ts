@@ -2,7 +2,7 @@
  * Mesh 拓撲 P2P 連線管理 Hook
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import { MeshChatService } from '../MeshChatService';
 import type { IChatStorage } from '../../../ports';
 import type { ChatMessage, ConnectionState } from '../../../types';
@@ -26,6 +26,10 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
   const connectionStateRef = useRef<ConnectionState>('idle');
   const stateCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 使用 ref 儲存 callback，避免 StrictMode re-mount 後 closure stale
+  const onMessageRef = useRef<((message: ChatMessage) => void) | null>(null);
+  const onStateChangeRef = useRef<((state: ConnectionState) => void) | null>(null);
+
   /**
    * 初始化 Mesh 拓撲 P2P 連線
    */
@@ -35,9 +39,16 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
     onStateChange: (state: ConnectionState) => void,
     onMessage: (message: ChatMessage) => void
   ): Promise<void> => {
+    // 更新 ref，確保後續的 callback 呼叫使用最新的函式
+    onMessageRef.current = onMessage;
+    onStateChangeRef.current = onStateChange;
+
+    // 如果已有舊的連線，先清理再重建（支援 StrictMode re-mount）
     if (meshChatServiceRef.current) {
-      console.log('[useMeshTopology] Already initialized, skipping');
-      return;
+      console.log('[useMeshTopology] Cleaning up previous instance before re-init');
+      if (stateCheckIntervalRef.current) clearInterval(stateCheckIntervalRef.current);
+      meshChatServiceRef.current.cleanup();
+      meshChatServiceRef.current = null;
     }
 
     try {
@@ -50,8 +61,7 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
       await meshChatService.initialize();
       meshChatServiceRef.current = meshChatService;
 
-      // 監聽連線狀態（持續監聽，因為 Mesh 連線可能需要時間）
-      // 只在狀態實際改變時才呼叫 onStateChange，避免不必要的 re-render
+      // 監聯連線狀態（透過 ref 呼叫，確保用最新的 callback）
       stateCheckIntervalRef.current = setInterval(() => {
         if (!meshChatServiceRef.current) {
           if (stateCheckIntervalRef.current) {
@@ -68,23 +78,23 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
             to: state,
           });
           connectionStateRef.current = state;
-          onStateChange(state);
+          onStateChangeRef.current?.(state);
         }
-      }, 2000); // 每 2 秒檢查一次
+      }, 2000);
 
       // 載入歷史訊息
       meshChatService.loadHistory().then((messages) => {
-        messages.forEach(onMessage);
+        messages.forEach(m => onMessageRef.current?.(m));
       }).catch((err) => {
         console.warn('[useMeshTopology] Failed to load history', err);
       });
 
-      // 監聽新訊息
-      meshChatService.onMessage(onMessage);
+      // 監聽新訊息（透過 ref，確保 StrictMode re-mount 後仍用最新的 addMessage）
+      meshChatService.onMessage((msg) => onMessageRef.current?.(msg));
     } catch (error) {
       console.error('[useMeshTopology] Error initializing', error);
       connectionStateRef.current = 'failed';
-      onStateChange('failed');
+      onStateChangeRef.current?.('failed');
       throw error;
     }
   }, [chatStorage]);
@@ -125,10 +135,10 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
     };
   }, []);
 
-  return {
+  return useMemo(() => ({
     initialize,
     sendMessage,
     cleanup,
     getState,
-  };
+  }), [initialize, sendMessage, cleanup, getState]);
 }

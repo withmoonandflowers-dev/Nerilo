@@ -43,7 +43,7 @@ function setMessagesList(state: MessagesState, newMessages: ChatMessage[]): Mess
   return { messages: newMessages, seenIds: newIds };
 }
 
-function clearMessages(_state: MessagesState): MessagesState {
+function clearMessages(_state: MessagesState): MessagesState { // eslint-disable-line @typescript-eslint/no-unused-vars
   return initState();
 }
 

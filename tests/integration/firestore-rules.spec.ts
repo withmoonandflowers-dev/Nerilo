@@ -28,7 +28,6 @@ import {
   clearEmulatorData,
   createTestUser,
   adminDb,
-  TEST_PROJECT_ID,
 } from './helpers/admin-client';
 import {
   signInWithToken,
@@ -40,24 +39,28 @@ import {
 // ── Emulator 可用性檢查 ───────────────────────────────────────────────────
 
 async function isEmulatorRunning(): Promise<boolean> {
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:4000/`,
-      { signal: AbortSignal.timeout(2000) }
-    );
-    return res.ok || res.status === 404; // 只要 HTTP 可達即可
-  } catch {
-    try {
-      // UI 可能未啟用，直接試 Firestore emulator 的 healthz
-      const res2 = await fetch(
-        `http://127.0.0.1:8080/`,
-        { signal: AbortSignal.timeout(2000) }
-      );
-      return res2.ok || res2.status === 404;
-    } catch {
-      return false;
-    }
-  }
+  // 若 emulator-env.ts setupFile 已設定 FIRESTORE_EMULATOR_HOST，
+  // 直接使用 Node http 模組探測（避免 Vitest worker_threads + Node 24 的 fetch 相容問題）
+  const host = process.env['FIRESTORE_EMULATOR_HOST'];
+  if (!host) return false;
+
+  const [hostname, portStr] = host.split(':');
+  const port = Number(portStr);
+
+  const http = await import('node:http');
+  return new Promise<boolean>((resolve) => {
+    console.log(`[isEmulatorRunning] Checking http://${hostname}:${port}/`);
+    const req = http.get({ hostname, port, path: '/', timeout: 3000 }, (res) => {
+      console.log(`[isEmulatorRunning] Response status: ${res.statusCode}`);
+      resolve(true);
+      res.resume();
+    });
+    req.on('error', (err) => {
+      console.log(`[isEmulatorRunning] Error: ${(err as NodeJS.ErrnoException).code || err.message}`);
+      resolve(false);
+    });
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
 }
 
 // ── Helper：斷言操作被拒絕 ─────────────────────────────────────────────────
@@ -86,13 +89,19 @@ const ROOM_ID = 'test-room-001';
 
 // ── 全域 setup / teardown ────────────────────────────────────────────────
 
-let emulatorAvailable = false;
+// 同步檢查環境變數：setupFiles (emulator-env.ts) 在測試收集前已執行
+// 若 FIRESTORE_EMULATOR_HOST 已設定，假設 emulator 可用
+// 實際連線失敗會在各測試中拋錯而非靜默 skip
+let emulatorAvailable = !!process.env['FIRESTORE_EMULATOR_HOST'];
 
 beforeAll(async () => {
-  emulatorAvailable = await isEmulatorRunning();
+  if (emulatorAvailable) {
+    // 再用 HTTP 探測確認（若失敗則降級）
+    emulatorAvailable = await isEmulatorRunning();
+  }
   if (!emulatorAvailable) {
     console.warn(
-      '\n⚠  Firebase Emulator 未偵測到（127.0.0.1:8080）。\n' +
+      '\n⚠  Firebase Emulator 未偵測到（' + (process.env['FIRESTORE_EMULATOR_HOST'] || '未設定') + '）。\n' +
       '   整合測試將全部 skip。\n' +
       '   啟動方式：firebase emulators:start --only auth,firestore\n'
     );
