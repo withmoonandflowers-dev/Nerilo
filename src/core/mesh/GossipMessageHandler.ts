@@ -4,6 +4,7 @@ import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import type { MeshConnection } from './MeshConnection';
+import { TimeBucketedCache } from './TimeBucketedCache';
 
 /**
  * Gossip 訊息處理器
@@ -11,11 +12,11 @@ import type { MeshConnection } from './MeshConnection';
  */
 export class GossipMessageHandler {
   private seq = 0;
-  private seenMessageIds: Set<string> = new Set();
+  /** Time-bucketed 去重快取（取代無上限的 Set，避免記憶體洩漏） */
+  private seenMessageIds = new TimeBucketedCache(60_000, 10);
   private lastSeenSeq: Map<string, number> = new Map();
   private sendRateLimiter: Map<string, number[]> = new Map();
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
-  private readonly MAX_SEEN_SIZE = 10000;
   private readonly MAX_MESSAGES_PER_SECOND = 10;
 
   constructor(
@@ -38,6 +39,9 @@ export class GossipMessageHandler {
     // seq += 1
     this.seq++;
     
+    // 從拓撲管理器讀取動態 gossip 設定
+    const gossipConfig = this.topologyManager.getGossipConfig();
+
     // 建立訊息
     const message: Omit<GossipMessage, 'signature'> = {
       roomId: this.roomId,
@@ -46,20 +50,20 @@ export class GossipMessageHandler {
       seq: this.seq,
       timestamp: Date.now(),
       content,
-      ttl: 8,
+      ttl: gossipConfig.ttl,
     };
-    
+
     // 簽名
     const signature = await this.securityManager.signMessage(
       message,
       this.identityManager.getPrivateKey()
     );
-    
+
     const signedMessage: GossipMessage = { ...message, signature };
-    
-    // 傳給隨機選的 2 個鄰居
+
+    // 傳給隨機選的鄰居（fanout 由 AdaptiveTopologyManager 決定）
     const neighbors = this.topologyManager.getNeighbors();
-    const selected = this.selectRandomNeighbors(neighbors, 2);
+    const selected = this.selectRandomNeighbors(neighbors, gossipConfig.fanout);
     
     for (const neighbor of selected) {
       try {
@@ -76,10 +80,7 @@ export class GossipMessageHandler {
     // 記錄已發送
     const messageId = await getMessageId(signedMessage);
     this.seenMessageIds.add(messageId);
-    
-    // 清理舊的訊息 ID
-    this.cleanupSeenIds();
-    
+
     // 通知本地監聽器
     this.notifyMessageListeners(signedMessage);
   }
@@ -151,10 +152,7 @@ export class GossipMessageHandler {
     
     // 記錄已見過
     this.seenMessageIds.add(messageId);
-    
-    // 清理舊的訊息 ID
-    this.cleanupSeenIds();
-    
+
     // 顯示訊息
     this.notifyMessageListeners(message);
 
@@ -170,10 +168,11 @@ export class GossipMessageHandler {
     message: GossipMessage,
     excludeNeighbor: string
   ): Promise<void> {
+    const gossipConfig = this.topologyManager.getGossipConfig();
     const neighbors = this.topologyManager.getNeighbors()
       .filter(n => n.getId() !== excludeNeighbor);
-    
-    const selected = this.selectRandomNeighbors(neighbors, 2);
+
+    const selected = this.selectRandomNeighbors(neighbors, gossipConfig.fanout);
     
     for (const neighbor of selected) {
       try {
@@ -231,18 +230,6 @@ export class GossipMessageHandler {
     recent.push(now);
     this.sendRateLimiter.set(senderId, recent);
     return true;
-  }
-
-  /**
-   * 清理舊的訊息 ID
-   */
-  private cleanupSeenIds(): void {
-    if (this.seenMessageIds.size > this.MAX_SEEN_SIZE) {
-      // 簡單策略：清空一半
-      const idsArray = Array.from(this.seenMessageIds);
-      const toKeep = idsArray.slice(0, this.MAX_SEEN_SIZE / 2);
-      this.seenMessageIds = new Set(toKeep);
-    }
   }
 
   /**

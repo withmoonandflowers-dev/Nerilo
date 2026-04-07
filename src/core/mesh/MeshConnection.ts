@@ -21,12 +21,17 @@ export class MeshConnection {
     isInitiator: boolean
   ) {
     this.meshUserId = meshUserId;
-    
+
+    // channelLabel 必須兩端一致：用排序後的 UID 組合確保對稱
+    // 否則 A 的 "mesh-B" ≠ B 的 "mesh-A"，signal 會被 channelLabel 過濾掉
+    const sortedUids = [localFirebaseUid, remoteFirebaseUid].sort();
+    const symmetricLabel = `mesh-${sortedUids[0]}-${sortedUids[1]}`;
+
     // 使用 Firebase UID 進行 signaling（因為 P2PConnectionManager 依賴它）
     this.p2pManager = new P2PManager(
       roomId,
       localFirebaseUid,
-      `mesh-${remoteFirebaseUid}`,
+      symmetricLabel,
       isInitiator
     );
     
