@@ -1,6 +1,7 @@
 import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
+import { logger } from '../utils/logger';
 import type { P2PRoom, RoomStatus, RoomCapability } from '../types';
 
 /** Firestore meshIdentity 文件的原始欄位型別（joinedAt 可能為 Timestamp） */
@@ -48,9 +49,9 @@ export class RoomService {
     if (requireAuth && !isTestEnv) {
       // 注意：這裡無法直接檢查是否為匿名用戶，需要在調用端檢查
       // 但我們可以在 Firestore 規則中加強驗證
-      console.log('[RoomService] createRoom - auth check passed', { ownerUid });
+      logger.info('[RoomService] createRoom - auth check passed', { ownerUid });
     } else if (isTestEnv) {
-      console.log('[RoomService] createRoom - test mode, allowing guest user', { ownerUid });
+      logger.info('[RoomService] createRoom - test mode, allowing guest user', { ownerUid });
     }
 
     // 先關閉同一用戶的所有房間（包括 waiting、open、closed 狀態）
@@ -61,7 +62,7 @@ export class RoomService {
     const now = Date.now();
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] createRoom', {
+      logger.info('[RoomService] createRoom', {
         roomId,
         ownerUid,
         ownerName,
@@ -111,7 +112,7 @@ export class RoomService {
    * 這確保用戶建立新房間時，舊房間都被清理
    */
   static async closeAllUserRooms(ownerUid: string): Promise<void> {
-    console.log('[RoomService] closeAllUserRooms called', { ownerUid });
+    logger.info('[RoomService] closeAllUserRooms called', { ownerUid });
     
     const roomsRef = collection(db, 'p2pRooms');
     // 查詢該用戶的所有房間（不限狀態）
@@ -126,7 +127,7 @@ export class RoomService {
       data: docSnapshot.data(),
     }));
 
-    console.log('[RoomService] closeAllUserRooms - found rooms', {
+    logger.info('[RoomService] closeAllUserRooms - found rooms', {
       ownerUid,
       totalRooms: allRooms.length,
       rooms: allRooms.map(r => ({ 
@@ -152,9 +153,9 @@ export class RoomService {
         .map((r, i) => r.status === 'rejected' ? allRooms[i]?.roomId : null)
         .filter(Boolean);
       if (failed.length > 0) {
-        console.error('[RoomService] Failed to close some rooms', { ownerUid, failed });
+        logger.error('[RoomService] Failed to close some rooms', { ownerUid, failed });
       }
-      console.log('[RoomService] Closed rooms for user', {
+      logger.info('[RoomService] Closed rooms for user', {
         ownerUid, total: batch.length, failed: failed.length,
       });
     }
@@ -211,7 +212,7 @@ export class RoomService {
     };
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] getRoom', result);
+      logger.info('[RoomService] getRoom', result);
     }
 
     return result;
@@ -227,7 +228,7 @@ export class RoomService {
    * - 自動激活：waiting 房間滿 2 人時自動轉為 open
    */
   static async joinRoom(roomId: string, uid: string): Promise<void> {
-    console.log('[RoomService] joinRoom called', { roomId, uid });
+    logger.info('[RoomService] joinRoom called', { roomId, uid });
 
     // Firebase SDK on the REST transport does not auto-retry 'failed-precondition'
     // (which is what Firestore returns when the updateTime precondition on a write
@@ -245,7 +246,7 @@ export class RoomService {
         const isRetryable = code === 'failed-precondition' || code === 'aborted';
         if (isRetryable && attempt < MAX_ATTEMPTS) {
           const delayMs = 150 * attempt;
-          console.warn('[RoomService] joinRoom transaction conflict, retrying', {
+          logger.warn('[RoomService] joinRoom transaction conflict, retrying', {
             roomId, uid, attempt, code, delayMs,
           });
           await new Promise(r => setTimeout(r, delayMs));
@@ -269,7 +270,7 @@ export class RoomService {
       const roomSnap = await transaction.get(roomDocRef);
 
       if (!roomSnap.exists()) {
-        console.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
+        logger.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
         throw new Error('房間不存在');
       }
 
@@ -277,14 +278,14 @@ export class RoomService {
 
       // 拒絕加入已關閉或遷移中的房間（提供清晰的狀態錯誤碼）
       if (roomData.status === 'closed') {
-        console.warn('[RoomService] joinRoom failed: Room is closed', { roomId, uid });
+        logger.warn('[RoomService] joinRoom failed: Room is closed', { roomId, uid });
         throw Object.assign(
           new Error('房間已關閉，請返回房間列表'),
           { code: 'room-closed', roomStatus: 'closed' }
         );
       }
       if (roomData.status === 'migrating') {
-        console.warn('[RoomService] joinRoom failed: Room is migrating', { roomId, uid });
+        logger.warn('[RoomService] joinRoom failed: Room is migrating', { roomId, uid });
         throw Object.assign(
           new Error('房間正在遷移主機中，請稍後重試'),
           { code: 'room-migrating', roomStatus: 'migrating' }
@@ -295,7 +296,7 @@ export class RoomService {
 
       // 若已在房間內，不做任何修改（Transaction 仍需 commit 但無寫入）
       if (participants.includes(uid)) {
-        console.log('[RoomService] joinRoom - already a participant, no-op', { roomId, uid });
+        logger.info('[RoomService] joinRoom - already a participant, no-op', { roomId, uid });
         return;
       }
 
@@ -319,7 +320,7 @@ export class RoomService {
 
       transaction.update(roomDocRef, updateData);
 
-      console.log('[RoomService] joinRoom - transaction committed', {
+      logger.info('[RoomService] joinRoom - transaction committed', {
         roomId,
         uid,
         newStatus: shouldActivate ? 'open' : roomData.status,
@@ -369,7 +370,7 @@ export class RoomService {
    * 避免 React StrictMode cleanup 與 joinRoom 並發寫入時發生衝突。
    */
   static async leaveRoom(roomId: string, uid: string): Promise<void> {
-    console.log('[RoomService] leaveRoom called', { roomId, uid });
+    logger.info('[RoomService] leaveRoom called', { roomId, uid });
 
     const MAX_ATTEMPTS = 4;
     let lastError: unknown;
@@ -390,7 +391,7 @@ export class RoomService {
 
           // 若用戶本來就不在房間內，不需要寫入（避免空 commit 觸發 precondition）
           if (newParticipants.length === participants.length) {
-            console.log('[RoomService] leaveRoom - uid not in participants, no-op', { roomId, uid });
+            logger.info('[RoomService] leaveRoom - uid not in participants, no-op', { roomId, uid });
             return;
           }
 
@@ -411,7 +412,7 @@ export class RoomService {
         const isRetryable = code === 'failed-precondition' || code === 'aborted';
         if (isRetryable && attempt < MAX_ATTEMPTS) {
           const delayMs = 150 * attempt;
-          console.warn('[RoomService] leaveRoom transaction conflict, retrying', {
+          logger.warn('[RoomService] leaveRoom transaction conflict, retrying', {
             roomId, uid, attempt, code, delayMs,
           });
           await new Promise(r => setTimeout(r, delayMs));
@@ -420,14 +421,14 @@ export class RoomService {
         }
         // Non-retryable or exhausted attempts: log but don't throw
         // leaveRoom is best-effort; we don't want to break navigation on failure
-        console.error('[RoomService] leaveRoom failed (non-retryable or exhausted)', {
+        logger.error('[RoomService] leaveRoom failed (non-retryable or exhausted)', {
           roomId, uid, attempt, err,
         });
         return;
       }
     }
     // Exhausted retries — log but swallow to avoid breaking navigation
-    console.error('[RoomService] leaveRoom exhausted retries', { roomId, uid, lastError });
+    logger.error('[RoomService] leaveRoom exhausted retries', { roomId, uid, lastError });
   }
 
   /**
@@ -476,7 +477,7 @@ export class RoomService {
     await deleteDoc(doc(db, 'p2pRooms', roomId));
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] deleteRoom: room + subcollections removed from Firebase', {
+      logger.info('[RoomService] deleteRoom: room + subcollections removed from Firebase', {
         roomId,
         ownerUid,
         participants: room.participants,
@@ -505,10 +506,10 @@ export class RoomService {
         await Promise.allSettled(batch);
 
         if (DEBUG_ROOMS) {
-          console.log(`[RoomService] Deleted ${snapshot.size} docs from ${sub}`, { roomId });
+          logger.info(`[RoomService] Deleted ${snapshot.size} docs from ${sub}`, { roomId });
         }
       } catch (err) {
-        console.warn(`[RoomService] Failed to cleanup subcollection ${sub}`, { roomId, err });
+        logger.warn(`[RoomService] Failed to cleanup subcollection ${sub}`, { roomId, err });
       }
     }
   }
@@ -564,7 +565,7 @@ export class RoomService {
           lineageRootRoomId: data.lineageRootRoomId ?? roomId,
         });
 
-        console.log('[RoomService] ownerLeaveRoom: no remaining, room closed (atomic)', {
+        logger.info('[RoomService] ownerLeaveRoom: no remaining, room closed (atomic)', {
           roomId, ownerUid,
         });
         return { remainingParticipants: [] as string[] };
@@ -581,7 +582,7 @@ export class RoomService {
         lineageRootRoomId: data.lineageRootRoomId ?? roomId,
       });
 
-      console.log('[RoomService] ownerLeaveRoom: host migrated (atomic)', {
+      logger.info('[RoomService] ownerLeaveRoom: host migrated (atomic)', {
         roomId, oldOwnerUid: ownerUid, newOwnerUid, newEpoch, remainingParticipants,
       });
       return { remainingParticipants, newOwnerUid };
@@ -601,7 +602,7 @@ export class RoomService {
           status: 'closed',
         });
 
-        console.log('[RoomService] ownerLeaveRoom: new room promoted', {
+        logger.info('[RoomService] ownerLeaveRoom: new room promoted', {
           roomId, newRoomId,
         });
       }
@@ -616,7 +617,7 @@ export class RoomService {
   static async updateRoomStatus(roomId: string, status: RoomStatus): Promise<void> {
     await updateDoc(doc(db, 'p2pRooms', roomId), { status });
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] updateRoomStatus', { roomId, status });
+      logger.info('[RoomService] updateRoomStatus', { roomId, status });
     }
   }
 
@@ -629,7 +630,7 @@ export class RoomService {
       version: increment(1),
     });
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] incrementVersion (atomic)', { roomId });
+      logger.info('[RoomService] incrementVersion (atomic)', { roomId });
     }
   }
 
@@ -641,7 +642,7 @@ export class RoomService {
       capabilityHint: capability,
     });
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] setCapabilityHint', { roomId, capability });
+      logger.info('[RoomService] setCapabilityHint', { roomId, capability });
     }
   }
 
@@ -676,7 +677,7 @@ export class RoomService {
         });
       });
       if (DEBUG_ROOMS) {
-        console.log('[RoomService] subscribeUserRooms snapshot', {
+        logger.info('[RoomService] subscribeUserRooms snapshot', {
           uid,
           count: rooms.length,
           rooms,
@@ -762,7 +763,7 @@ export class RoomService {
       // 只在前端過濾出非 private 的房間
       const publicRooms = rooms.filter((room) => !room.isPrivate);
       if (DEBUG_ROOMS) {
-        console.log('[RoomService] subscribePublicRooms snapshot', {
+        logger.info('[RoomService] subscribePublicRooms snapshot', {
           count: publicRooms.length,
           rooms: publicRooms,
         });
@@ -822,7 +823,7 @@ export class RoomService {
     });
     
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] Updated mesh identity', {
+      logger.info('[RoomService] Updated mesh identity', {
         roomId,
         firebaseUid,
         userId,
