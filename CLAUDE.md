@@ -47,7 +47,7 @@ src/core/
 ├── chain/          # Append-only log sync & merge
 ├── clock/          # Hybrid Logical Clock (HLC)
 ├── ordering/       # Message ordering (HLC-based)
-├── transport/      # Multi-channel bus, store-and-forward, lifecycle
+├── transport/      # Multi-channel bus, store-and-forward, DHT storage
 ├── ledger/         # Shared ledger engine
 └── metrics/        # Performance metrics
 ```
@@ -114,6 +114,20 @@ Organizational structure on top of mesh/relay/crypto. A Community contains Chann
 
 Phase 1: `LocalCreditProvider` (local credit tracking with `IIncentiveProvider` interface)
 Phase 2: Blockchain-backed provider (future, same interface)
+
+### DHT Persistent Storage (`src/core/transport/`)
+
+Decentralized offline message delivery using Kademlia DHT instead of Firestore.
+
+| Component | Purpose |
+|---|---|
+| `DHTStorage` | In-memory message store with TTL, dedup, per-recipient limits, and DHT protocol handling |
+| `DHTStoreAndForward` | Coordinator: finds K closest nodes via KademliaRouter, replicates messages, merges responses |
+| `StoreAndForward` | Firestore-backed fallback (original, used when DHT has insufficient nodes) |
+
+**Storage strategy:** Messages stored on K=8 closest nodes (XOR distance to recipient). On retrieval, query all K nodes, dedup responses, deliver to recipient. Falls back to Firestore when DHT overlay has <3 nodes.
+
+**Protocol messages:** `DHT_STORE`, `DHT_RETRIEVE`, `DHT_RESPONSE`, `DHT_DELETE` — sent via P2PChannelBus or gossip layer.
 
 ## Conventions
 
