@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import type { ConnectionState, Signal } from '../../types';
+import { getIceServerProvider } from './IceServerProvider';
 
 export interface IceServers {
   urls: string | string[];
@@ -106,17 +107,23 @@ export class P2PConnectionManager {
   }
 
   private async getIceServers(): Promise<RTCConfiguration['iceServers']> {
-    const defaultServers: RTCConfiguration['iceServers'] = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-    ];
-
-    // 開發 / 個人專案階段：直接使用公開 STUN，不呼叫 Cloud Functions。
-    // 這樣可以避免：
-    // - 本機 CORS 問題
-    // - 專案尚未升級到 Blaze 導致的 Functions 失敗
-    // 未來若要整合 Twilio TURN，再改回呼叫 Cloud Functions 即可。
-    return defaultServers;
+    // 使用 IceServerProvider 統一管理 STUN/TURN 配置
+    // 支援靜態配置（環境變數）和動態取得（Cloud Function）
+    // 設定方式：
+    //   VITE_TURN_URLS=turn:your-server.com:3478 （靜態 TURN）
+    //   VITE_TURN_USERNAME=user
+    //   VITE_TURN_CREDENTIAL=pass
+    //   VITE_TURN_CREDENTIAL_ENDPOINT=https://... （動態 TURN）
+    try {
+      const provider = getIceServerProvider();
+      return await provider.getIceServers();
+    } catch (err) {
+      console.warn('[P2PConnectionManager] IceServerProvider failed, using default STUN', err);
+      return [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ];
+    }
   }
 
   private setupPeerConnectionHandlers(): void {

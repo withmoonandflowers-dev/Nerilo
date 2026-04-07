@@ -2,6 +2,7 @@ import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import { GossipMessageHandler } from './GossipMessageHandler';
+import { HeartbeatService } from './HeartbeatService';
 import { RoomService } from '../../services/RoomService';
 import { auth } from '../../config/firebase';
 import type { GossipMessage } from '../../types';
@@ -15,6 +16,7 @@ export class MeshGossipManager {
   private securityManager: SecurityManager;
   private topologyManager: MeshTopologyManager | null = null;
   private messageHandler: GossipMessageHandler | null = null;
+  private heartbeatService: HeartbeatService | null = null;
   private initialized = false;
   private neighborCheckInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -69,10 +71,26 @@ export class MeshGossipManager {
         this.topologyManager
       );
 
-      // 5. 初始化拓撲（建立鄰居連線）
+      // 5. 初始化心跳服務
+      this.heartbeatService = new HeartbeatService(userId);
+      this.heartbeatService.onUnreachable((peerId) => {
+        console.warn('[MeshGossipManager] Peer unreachable, triggering neighbor replacement', {
+          roomId: this.roomId, peerId,
+        });
+        this.topologyManager?.handleNeighborDisconnected(peerId);
+      });
+
+      // 6. 初始化拓撲（建立鄰居連線）
       if (this.topologyManager) {
         await this.topologyManager.initialize();
-        
+
+        // 啟動心跳
+        this.heartbeatService.start(() =>
+          this.topologyManager
+            ? this.topologyManager.getNeighbors().map(n => n.getId())
+            : []
+        );
+
         // 設置鄰居連線的訊息監聽（在連線建立後）
         this.setupNeighborMessageHandlers();
       }
@@ -179,6 +197,10 @@ export class MeshGossipManager {
     if (this.neighborCheckInterval) {
       clearInterval(this.neighborCheckInterval);
       this.neighborCheckInterval = null;
+    }
+    if (this.heartbeatService) {
+      this.heartbeatService.stop();
+      this.heartbeatService = null;
     }
     if (this.topologyManager) {
       await this.topologyManager.cleanup();

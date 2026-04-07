@@ -2,14 +2,19 @@ import { MeshConnection } from './MeshConnection';
 import { RoomService } from '../../services/RoomService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { AdaptiveTopologyManager, type TopologyStrategy, type GossipConfig } from './AdaptiveTopologyManager';
 
 /**
  * Mesh 拓撲管理器
  * 負責管理鄰居連線、節點發現和連線旋轉
+ * 使用 AdaptiveTopologyManager 根據參與者人數動態調整拓撲策略
  */
 export class MeshTopologyManager {
   private neighbors: Map<string, MeshConnection> = new Map();
-  private readonly k = 6; // 目標鄰居數量
+  private k = 6; // 目標鄰居數量（由 AdaptiveTopologyManager 動態調整）
+  private adaptiveTopology = new AdaptiveTopologyManager();
+  private currentStrategy: TopologyStrategy = 'full-mesh';
+  private currentGossipConfig: GossipConfig = { fanout: 5, ttl: 1 };
   private rotationInterval: ReturnType<typeof setInterval> | null = null;
   private rotationStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private identityMap: Map<string, string> = new Map(); // firebaseUid -> userId
@@ -407,6 +412,48 @@ export class MeshTopologyManager {
    */
   getNeighborCount(): number {
     return this.neighbors.size;
+  }
+
+  /**
+   * 根據參與者人數更新拓撲策略。
+   * 由 MeshGossipManager 在參與者變動時呼叫。
+   */
+  updateParticipantCount(participantCount: number): void {
+    const evaluation = this.adaptiveTopology.evaluateTopology(participantCount);
+    const oldK = this.k;
+    const oldStrategy = this.currentStrategy;
+
+    this.k = evaluation.targetNeighborCount;
+    this.currentStrategy = evaluation.strategy;
+    this.currentGossipConfig = evaluation.gossipConfig;
+
+    if (oldStrategy !== evaluation.strategy || oldK !== this.k) {
+      console.log('[MeshTopologyManager] Topology updated', {
+        roomId: this.roomId,
+        participantCount,
+        strategy: evaluation.strategy,
+        k: this.k,
+        gossipConfig: evaluation.gossipConfig,
+      });
+
+      // Adjust neighbor count if needed
+      if (this.k > oldK) {
+        this.fillNeighbors().catch((err) => {
+          console.warn('[MeshTopologyManager] fillNeighbors after upgrade failed', err);
+        });
+      }
+      // Downgrade: gradually reduce connections (handled by rotation)
+    }
+  }
+
+  /** Current topology strategy */
+  getStrategy(): TopologyStrategy {
+    return this.currentStrategy;
+  }
+
+  /** Current gossip configuration (fanout + ttl) */
+  getGossipConfig(): GossipConfig {
+    return this.currentGossipConfig;
   }
 
   /**
