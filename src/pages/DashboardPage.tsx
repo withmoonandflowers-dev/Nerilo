@@ -8,6 +8,7 @@ import { SkeletonRoomCard, SkeletonFeatureCard } from '../components/Skeleton/Sk
 import { ShareModal } from '../components/ShareModal/ShareModal';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
+import { logger } from '@/utils/logger';
 import './DashboardPage.css';
 
 const DashboardPage: React.FC = () => {
@@ -33,7 +34,7 @@ const DashboardPage: React.FC = () => {
     if (!user) return;
 
     const unsubscribe = roomService.subscribeUserRooms(user.uid, (roomList) => {
-      console.log('[Dashboard] subscribeUserRooms for uid', user.uid, roomList);
+      logger.info('[Dashboard] subscribeUserRooms for uid', user.uid, roomList);
       setRooms(roomList);
     });
 
@@ -43,7 +44,7 @@ const DashboardPage: React.FC = () => {
   // 監聽所有公開房間（供訪客與一般使用者瀏覽）
   useEffect(() => {
     const unsubscribe = roomService.subscribePublicRooms((roomList) => {
-      console.log('[Dashboard] subscribePublicRooms', roomList);
+      logger.info('[Dashboard] subscribePublicRooms', roomList);
       setPublicRooms(roomList);
     });
     return unsubscribe;
@@ -76,7 +77,7 @@ const DashboardPage: React.FC = () => {
                       (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__PLAYWRIGHT_TEST__ === true);
     
     if (!isTestEnv && (user.role === 'guest' || !user.uid)) {
-      console.warn('[Dashboard] Guest user attempted to create room', {
+      logger.warn('[Dashboard] Guest user attempted to create room', {
         uid: user.uid,
         role: user.role,
       });
@@ -91,7 +92,7 @@ const DashboardPage: React.FC = () => {
     try {
       // 目前房間名稱為選填，暫存於前端（未寫入 Firestore）
       const ownerName = user.displayName || user.email || '使用者';
-      console.log('[Dashboard] Creating room', {
+      logger.info('[Dashboard] Creating room', {
         uid: user.uid,
         role: user.role,
         ownerName,
@@ -109,11 +110,11 @@ const DashboardPage: React.FC = () => {
       );
       
       featureLog('dashboard', 'room_created', { roomId });
-      console.log('[Dashboard] Room created successfully', { roomId });
+      logger.info('[Dashboard] Room created successfully', { roomId });
       navigate(`/waiting/${roomId}`);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : '請稍後再試';
-      console.error('[Dashboard] Failed to create room', {
+      logger.error('[Dashboard] Failed to create room', {
         uid: user.uid,
         error: errMsg,
         errorStack: error instanceof Error ? error.stack : undefined,
@@ -134,17 +135,17 @@ const DashboardPage: React.FC = () => {
 
     try {
       featureLog('dashboard', 'join_room_clicked', { roomId, uid: user.uid });
-      console.log('[Dashboard] handleJoinRoom called', { roomId, uid: user.uid });
+      logger.info('[Dashboard] handleJoinRoom called', { roomId, uid: user.uid });
 
       // 先取得房間資訊，判斷狀態
       const room = await roomService.getRoom(roomId);
       if (!room) {
-        console.warn('[Dashboard] Room not found', { roomId });
+        logger.warn('[Dashboard] Room not found', { roomId });
         toast.error('房間不存在');
         return;
       }
 
-      console.log('[Dashboard] Room found', {
+      logger.info('[Dashboard] Room found', {
         roomId,
         status: room.status,
         participants: room.participants.length,
@@ -152,7 +153,7 @@ const DashboardPage: React.FC = () => {
 
       // 檢查房間狀態
       if (room.status === 'closed') {
-        console.warn('[Dashboard] Room is closed', { roomId });
+        logger.warn('[Dashboard] Room is closed', { roomId });
         toast.warning('房間已關閉');
         return;
       }
@@ -162,12 +163,12 @@ const DashboardPage: React.FC = () => {
 
       const updatedRoom = await roomService.getRoom(roomId);
       if (!updatedRoom) {
-        console.warn('[Dashboard] Room not found after join', { roomId });
+        logger.warn('[Dashboard] Room not found after join', { roomId });
         toast.error('房間不存在');
         return;
       }
 
-      console.log('[Dashboard] Room after join', {
+      logger.info('[Dashboard] Room after join', {
         roomId,
         status: updatedRoom.status,
         participants: updatedRoom.participants.length,
@@ -176,16 +177,16 @@ const DashboardPage: React.FC = () => {
       // 根據房間狀態導航
       // 如果房間是 waiting 狀態，轉到等待頁面（但現在單人也可以進入，所以會很快轉為 open）
       if (updatedRoom.status === 'waiting') {
-        console.log('[Dashboard] Navigating to waiting page', { roomId });
+        logger.info('[Dashboard] Navigating to waiting page', { roomId });
         navigate(`/waiting/${roomId}`);
       } else {
         // open 狀態直接進入聊天頁面
-        console.log('[Dashboard] Navigating to chat page', { roomId });
+        logger.info('[Dashboard] Navigating to chat page', { roomId });
         navigate(`/chat/${roomId}`);
       }
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : '';
-      console.error('[Dashboard] Join room failed', { roomId, error: errMsg });
+      logger.error('[Dashboard] Join room failed', { roomId, error: errMsg });
       if (errMsg === '房間已關閉') {
         toast.warning('房間已關閉');
       } else {

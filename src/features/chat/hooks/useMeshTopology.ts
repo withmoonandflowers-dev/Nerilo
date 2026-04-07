@@ -3,6 +3,7 @@
  */
 
 import { useRef, useCallback, useMemo } from 'react';
+import { logger } from '@/utils/logger';
 import { MeshChatService } from '../MeshChatService';
 import type { IChatStorage } from '../../../ports';
 import type { ChatMessage, ConnectionState } from '../../../types';
@@ -45,14 +46,14 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
 
     // 如果已有舊的連線，先清理再重建（支援 StrictMode re-mount）
     if (meshChatServiceRef.current) {
-      console.log('[useMeshTopology] Cleaning up previous instance before re-init');
+      logger.info('[useMeshTopology] Cleaning up previous instance before re-init');
       if (stateCheckIntervalRef.current) clearInterval(stateCheckIntervalRef.current);
       meshChatServiceRef.current.cleanup();
       meshChatServiceRef.current = null;
     }
 
     try {
-      console.log('[useMeshTopology] Initializing mesh topology', {
+      logger.info('[useMeshTopology] Initializing mesh topology', {
         roomId,
         uid,
       });
@@ -72,7 +73,7 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
         }
         const state = meshChatServiceRef.current.getConnectionState();
         if (state !== connectionStateRef.current) {
-          console.log('[useMeshTopology] Mesh connection state changed', {
+          logger.info('[useMeshTopology] Mesh connection state changed', {
             roomId,
             from: connectionStateRef.current,
             to: state,
@@ -86,13 +87,13 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
       meshChatService.loadHistory().then((messages) => {
         messages.forEach(m => onMessageRef.current?.(m));
       }).catch((err) => {
-        console.warn('[useMeshTopology] Failed to load history', err);
+        logger.warn('[useMeshTopology] Failed to load history', err);
       });
 
       // 監聽新訊息（透過 ref，確保 StrictMode re-mount 後仍用最新的 addMessage）
       meshChatService.onMessage((msg) => onMessageRef.current?.(msg));
     } catch (error) {
-      console.error('[useMeshTopology] Error initializing', error);
+      logger.error('[useMeshTopology] Error initializing', error);
       connectionStateRef.current = 'failed';
       onStateChangeRef.current?.('failed');
       throw error;

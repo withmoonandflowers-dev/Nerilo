@@ -17,6 +17,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { logger } from '../../utils/logger';
 
 export interface RelayMessage {
   from: string;
@@ -106,7 +107,7 @@ export class FirestoreRelay {
 
     this.cleanupTimer = setInterval(() => {
       this.cleanup(roomId).catch((err) => {
-        console.warn('[FirestoreRelay] Cleanup error', err);
+        logger.warn('[FirestoreRelay] Cleanup error', err);
       });
     }, CLEANUP_INTERVAL_MS);
   }
@@ -132,7 +133,7 @@ export class FirestoreRelay {
 
     await Promise.allSettled(batch);
     if (deleted > 0) {
-      console.log('[FirestoreRelay] Cleaned up expired docs', {
+      logger.info('[FirestoreRelay] Cleaned up expired docs', {
         roomId,
         count: deleted,
       });

@@ -38,10 +38,11 @@ npm run ci           # type-check + lint + unit tests
 
 ```
 src/core/
+├── adapters/       # Hybrid Node runtime abstraction (see below)
 ├── p2p/            # WebRTC connections, signaling, channel bus
 ├── mesh/           # Gossip protocol, topology, heartbeat, identity
 ├── relay/          # Dual-layer relay infrastructure (see below)
-├── crypto/         # SenderKeyManager (E2EE), ECDH key exchange
+├── crypto/         # SenderKeyManager (E2EE), TreeKEM, GroupKeyManager
 ├── incentive/      # Relay credit system (LocalCreditProvider)
 ├── community/      # Governance, reports, roles, channels, reputation (see below)
 ├── chain/          # Append-only log sync & merge
@@ -128,6 +129,22 @@ Decentralized offline message delivery using Kademlia DHT instead of Firestore.
 **Storage strategy:** Messages stored on K=8 closest nodes (XOR distance to recipient). On retrieval, query all K nodes, dedup responses, deliver to recipient. Falls back to Firestore when DHT overlay has <3 nodes.
 
 **Protocol messages:** `DHT_STORE`, `DHT_RETRIEVE`, `DHT_RESPONSE`, `DHT_DELETE` — sent via P2PChannelBus or gossip layer.
+
+### Hybrid Node Architecture (`src/core/adapters/`)
+
+Abstracts browser-specific APIs so the core layer can run on multiple platforms:
+
+| Node Type | Storage | Crypto | Network | Module |
+|---|---|---|---|---|
+| Browser (existing) | IndexedDB | SubtleCrypto | WebRTC | `BrowserRuntime` |
+| Desktop Daemon | SQLite (future) | node:crypto webcrypto | WebSocket/libp2p (future) | `NodeRuntime` |
+| Bootstrap Node | SQLite (future) | node:crypto webcrypto | WebSocket/libp2p (future) | `NodeRuntime` |
+
+**Key interfaces:** `IStorageAdapter`, `ICryptoAdapter`, `INetworkAdapter`, `ITimerAdapter` → combined into `IRuntime`.
+
+**Usage:** `RuntimeRegistry.init(new BrowserRuntime(localId))` at startup. Core modules access `RuntimeRegistry.get()` for platform-agnostic operations.
+
+**MemoryStorageAdapter:** In-memory `Map`-based implementation for tests and Node.js (swap with SQLite adapter when ready).
 
 ## Conventions
 

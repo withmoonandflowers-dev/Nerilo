@@ -1,4 +1,5 @@
 import React from 'react';
+import { logger } from '@/utils/logger';
 
 interface State {
   hasError: boolean;
@@ -13,7 +14,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[ErrorBoundary] Uncaught error:', error, info.componentStack);
+    logger.error('[ErrorBoundary] Uncaught error:', error, info.componentStack);
   }
 
   handleReset = () => {

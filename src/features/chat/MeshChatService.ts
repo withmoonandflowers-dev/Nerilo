@@ -1,4 +1,5 @@
 import { MeshGossipManager } from '../../core/mesh/MeshGossipManager';
+import { logger } from '@/utils/logger';
 import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 import type { ChatMessage, GossipMessage } from '../../types';
@@ -39,7 +40,7 @@ export class MeshChatService {
       };
 
       this.chatStorage.saveChatMessage(chatMessage, this.roomId).catch(error => {
-        console.error('[MeshChatService] Failed to save message to IndexedDB', { error });
+        logger.error('[MeshChatService] Failed to save message to IndexedDB', { error });
       });
 
       // 通知監聽器
@@ -47,7 +48,7 @@ export class MeshChatService {
         try {
           listener(chatMessage);
         } catch (error) {
-          console.error('[MeshChatService] Error in message listener', { error });
+          logger.error('[MeshChatService] Error in message listener', { error });
         }
       });
     });

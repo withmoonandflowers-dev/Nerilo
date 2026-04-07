@@ -3,6 +3,7 @@
  */
 
 import { useRef, useCallback, useMemo } from 'react';
+import { logger } from '@/utils/logger';
 import { P2PManager } from '../../../core/p2p/P2PManager';
 import { ChatService } from '../ChatService';
 import type { IChatStorage } from '../../../ports';
@@ -51,7 +52,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
 
     // 如果已有舊的連線，先清理再重建（支援 StrictMode re-mount）
     if (p2pManagerRef.current) {
-      console.log('[useStarTopology] Cleaning up previous instance before re-init');
+      logger.info('[useStarTopology] Cleaning up previous instance before re-init');
       if (stateCheckIntervalRef.current) clearInterval(stateCheckIntervalRef.current);
       if (stateUnsubscribeRef.current) stateUnsubscribeRef.current();
       p2pManagerRef.current.close();
@@ -60,7 +61,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
     }
 
     try {
-      console.log('[useStarTopology] Initializing star topology', {
+      logger.info('[useStarTopology] Initializing star topology', {
         roomId,
         uid,
         isInitiator,
@@ -74,7 +75,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       // 監聽連線狀態（透過 ref 呼叫，確保用最新的 callback）
       const connectionManager = p2pManager.getConnectionManager();
       const stateUnsubscribe = connectionManager.onStateChange((state) => {
-        console.log('[useStarTopology] Connection state changed', { roomId, state });
+        logger.info('[useStarTopology] Connection state changed', { roomId, state });
         connectionStateRef.current = state;
         onStateChangeRef.current?.(state);
       });
@@ -103,7 +104,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
         // 不處理 'new'/'connecting'/'disconnected' → 避免 connected↔connecting 震盪
 
         if (mappedState) {
-          console.log('[useStarTopology] State check detected change', {
+          logger.info('[useStarTopology] State check detected change', {
             roomId,
             oldState: connectionStateRef.current,
             newState: mappedState,
@@ -126,7 +127,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
           // 檢查連線狀態，如果已連線則更新
           const pc = connectionManager.getPeerConnection();
           if (pc && pc.connectionState === 'connected') {
-            console.log('[useStarTopology] ChannelBus ready and connection is connected', { roomId });
+            logger.info('[useStarTopology] ChannelBus ready and connection is connected', { roomId });
             connectionStateRef.current = 'connected';
             onStateChangeRef.current?.('connected');
           }
@@ -148,7 +149,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
 
           // 監聽新訊息（透過 ref 呼叫，確保 StrictMode re-mount 後仍用最新的 addMessage）
           chatService.onMessage((msg) => {
-            console.log('[useStarTopology] onMessage wrapper called', {
+            logger.info('[useStarTopology] onMessage wrapper called', {
               messageId: msg.messageId,
               hasRef: !!onMessageRef.current,
             });
@@ -160,7 +161,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       // 清理定時器（30 秒超時，給更多時間建立連線）
       setTimeout(() => clearInterval(checkChannelBus), 30000);
     } catch (error) {
-      console.error('[useStarTopology] Error initializing', error);
+      logger.error('[useStarTopology] Error initializing', error);
       connectionStateRef.current = 'failed';
       onStateChangeRef.current?.('failed');
       throw error;

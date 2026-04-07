@@ -21,6 +21,8 @@
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
+import { logger } from '../../utils/logger';
+
 export type AppState = 'active' | 'passive' | 'hidden' | 'frozen' | 'terminated';
 
 export interface LifecycleEvent {
@@ -181,7 +183,7 @@ export class AppLifecycleManager {
       this.emit('drain-inbox', event);
     }
 
-    console.log('[AppLifecycleManager] State transition', {
+    logger.info('[AppLifecycleManager] State transition', {
       from: prev,
       to: newState,
       offlineDurationMs,
@@ -209,7 +211,7 @@ export class AppLifecycleManager {
       try {
         listener(data);
       } catch (err) {
-        console.error(`[AppLifecycleManager] Error in ${event} listener`, err);
+        logger.error(`[AppLifecycleManager] Error in ${event} listener`, err);
       }
     }
   }

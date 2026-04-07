@@ -11,6 +11,8 @@
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
+import { logger } from '../../utils/logger';
+
 export interface TurnServerConfig {
   urls: string | string[];
   username: string;
@@ -100,7 +102,7 @@ export class IceServerProvider {
           } as RTCIceServer);
         }
       } catch (err) {
-        console.warn('[IceServerProvider] Failed to fetch dynamic TURN credentials, using STUN only', err);
+        logger.warn('[IceServerProvider] Failed to fetch dynamic TURN credentials, using STUN only', err);
       }
     }
 
