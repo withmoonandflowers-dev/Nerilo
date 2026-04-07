@@ -14,7 +14,6 @@ import { createRequire } from 'module';
 const _require = createRequire(import.meta.url);
 
 // firebase-admin 僅有 CJS export，以 createRequire 匯入
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const admin = _require('firebase-admin') as typeof import('firebase-admin');
 
 const TEST_PROJECT_ID = 'nerilo';
