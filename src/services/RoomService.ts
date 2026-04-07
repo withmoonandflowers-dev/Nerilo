@@ -70,6 +70,9 @@ export class RoomService {
         waitingTimeout,
       });
     }
+    // TTL: waiting rooms expire in 5 min, open rooms in 30 min
+    const WAITING_TTL_MS = 5 * 60 * 1000;
+
     const roomData: Omit<P2PRoom, 'roomId'> = {
       ownerUid,
       ownerName: ownerName || '匿名使用者',
@@ -79,6 +82,8 @@ export class RoomService {
       createdAt: now,
       waitingTimeout,
       waitingStartedAt: now,
+      lastActiveAt: now,
+      ttlExpireAt: now + WAITING_TTL_MS,
     };
 
     const firestoreData: Record<string, unknown> = {
@@ -298,9 +303,14 @@ export class RoomService {
       // 當 waiting 房間滿 2 人時，自動轉為 open
       const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
 
+      const OPEN_TTL_MS = 30 * 60 * 1000; // 30 min TTL for open rooms
+      const now = Date.now();
+
       const updateData: Record<string, unknown> = {
         participants: newParticipants,
         participantCount: newParticipants.length,
+        lastActiveAt: now,
+        ttlExpireAt: now + OPEN_TTL_MS,
       };
 
       if (shouldActivate) {
@@ -386,9 +396,13 @@ export class RoomService {
 
           // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
           // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
+          const OPEN_TTL_MS = 30 * 60 * 1000;
+          const now = Date.now();
           transaction.update(roomDocRef, {
             participants: newParticipants,
             participantCount: newParticipants.length,
+            lastActiveAt: now,
+            ttlExpireAt: now + OPEN_TTL_MS,
           });
         });
         return; // success
