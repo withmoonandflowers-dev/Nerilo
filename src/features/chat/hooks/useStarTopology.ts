@@ -178,6 +178,42 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
   }, []);
 
   /**
+   * 發送 typing 狀態
+   */
+  const sendTyping = useCallback(async (isTyping: boolean): Promise<void> => {
+    if (!chatServiceRef.current) return;
+    try {
+      await chatServiceRef.current.sendTyping(isTyping);
+    } catch {
+      // typing indicator is best-effort, ignore errors
+    }
+  }, []);
+
+  /**
+   * 監聽對方 typing 狀態
+   */
+  const onTyping = useCallback((listener: (data: { userId: string; isTyping: boolean }) => void): (() => void) => {
+    // Store listener in a ref-based approach so it works even if chatService isn't ready yet
+    const wrapper = (data: { userId: string; isTyping: boolean }) => listener(data);
+    // If chatService is already available, register immediately
+    if (chatServiceRef.current) {
+      return chatServiceRef.current.onTyping(wrapper);
+    }
+    // Otherwise, we'll need to register later - use an interval to check
+    let unsubscribe: (() => void) | null = null;
+    const interval = setInterval(() => {
+      if (chatServiceRef.current && !unsubscribe) {
+        unsubscribe = chatServiceRef.current.onTyping(wrapper);
+        clearInterval(interval);
+      }
+    }, 200);
+    return () => {
+      clearInterval(interval);
+      unsubscribe?.();
+    };
+  }, []);
+
+  /**
    * 清理資源
    */
   const cleanup = useCallback(() => {
@@ -218,7 +254,9 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
   return useMemo(() => ({
     initialize,
     sendMessage,
+    sendTyping,
+    onTyping,
     cleanup,
     getState,
-  }), [initialize, sendMessage, cleanup, getState]);
+  }), [initialize, sendMessage, sendTyping, onTyping, cleanup, getState]);
 }

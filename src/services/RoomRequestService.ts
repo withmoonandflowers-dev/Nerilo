@@ -60,32 +60,45 @@ const SPLIT_EXPIRE_MS  = 5 * 60 * 1000; // 5 分鐘
 
 // ── 內部 Firestore 文件轉換 ─────────────────────────────────────────────────
 
-function docToMergeRequest(id: string, data: any): RoomMergeRequest {
+/** Firestore Timestamp 類型的最小介面 */
+interface FirestoreTimestampLike {
+  toMillis(): number;
+}
+
+/** 將可能為 Firestore Timestamp 或 number 的值轉換為 number */
+function toMillis(value: unknown): number {
+  if (value && typeof value === 'object' && 'toMillis' in value) {
+    return (value as FirestoreTimestampLike).toMillis();
+  }
+  return typeof value === 'number' ? value : Date.now();
+}
+
+function docToMergeRequest(id: string, data: Record<string, unknown>): RoomMergeRequest {
   return {
     requestId: id,
     type: 'merge',
-    status: data.status,
-    sourceRoomId: data.sourceRoomId,
-    sourceOwnerUid: data.sourceOwnerUid,
-    targetRoomId: data.targetRoomId,
-    targetOwnerUid: data.targetOwnerUid,
-    createdAt: data.createdAt?.toMillis?.() ?? data.createdAt ?? Date.now(),
-    expiresAt: data.expiresAt?.toMillis?.() ?? data.expiresAt ?? Date.now(),
+    status: data.status as RoomMergeRequest['status'],
+    sourceRoomId: data.sourceRoomId as string,
+    sourceOwnerUid: data.sourceOwnerUid as string,
+    targetRoomId: data.targetRoomId as string,
+    targetOwnerUid: data.targetOwnerUid as string,
+    createdAt: toMillis(data.createdAt),
+    expiresAt: toMillis(data.expiresAt),
   };
 }
 
-function docToSplitPlan(id: string, data: any): RoomSplitPlan {
+function docToSplitPlan(id: string, data: Record<string, unknown>): RoomSplitPlan {
   return {
     planId: id,
     type: 'split',
-    status: data.status,
-    sourceRoomId: data.sourceRoomId,
-    sourceOwnerUid: data.sourceOwnerUid,
-    newRoomOwnerUid: data.newRoomOwnerUid,
-    participantsToSplit: data.participantsToSplit ?? [],
-    newRoomId: data.newRoomId,
-    createdAt: data.createdAt?.toMillis?.() ?? data.createdAt ?? Date.now(),
-    expiresAt: data.expiresAt?.toMillis?.() ?? data.expiresAt ?? Date.now(),
+    status: data.status as RoomSplitPlan['status'],
+    sourceRoomId: data.sourceRoomId as string,
+    sourceOwnerUid: data.sourceOwnerUid as string,
+    newRoomOwnerUid: data.newRoomOwnerUid as string,
+    participantsToSplit: (data.participantsToSplit as string[]) ?? [],
+    newRoomId: data.newRoomId as string | undefined,
+    createdAt: toMillis(data.createdAt),
+    expiresAt: toMillis(data.expiresAt),
   };
 }
 

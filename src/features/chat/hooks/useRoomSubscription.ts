@@ -4,7 +4,7 @@
  * 依賴注入 IRoomService，利於解耦與測試。
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import type { IRoomService } from '../../../ports';
 import type { P2PRoom } from '../../../types';
 
@@ -137,9 +137,11 @@ export function useRoomSubscription(options: UseRoomSubscriptionOptions) {
     return lastParticipantCountRef.current;
   }, []);
 
-  return {
+  // useMemo ensures the returned object is the same reference between renders,
+  // preventing ChatPage's useEffect from re-running unnecessarily.
+  return useMemo(() => ({
     subscribe,
     unsubscribe,
     getLastParticipantCount,
-  };
+  }), [subscribe, unsubscribe, getLastParticipantCount]);
 }

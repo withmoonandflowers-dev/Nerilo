@@ -7,7 +7,7 @@ export interface User {
   email: string | null;
   displayName: string | null;
   role: UserRole;
-  customClaims?: Record<string, any>;
+  customClaims?: Record<string, unknown>;
 }
 
 // P2P 連線狀態
@@ -48,6 +48,12 @@ export interface P2PRoom {
   previousRoomId?: string | null;
   lineageRootRoomId?: string | null;
   capabilityHint?: RoomCapability;
+
+  // Room TTL fields
+  /** Last activity timestamp (updated on every message / join / leave) */
+  lastActiveAt?: number;
+  /** When the room should expire if idle. Set to lastActiveAt + TTL. */
+  ttlExpireAt?: number;
 }
 
 // ========== 房間合併 / 分岔請求 ==========
@@ -101,7 +107,7 @@ export interface Signal {
   from: string;
   to?: string;
   type: 'offer' | 'answer' | 'ice';
-  payload: any;
+  payload: RTCSessionDescriptionInit | RTCIceCandidateInit;
   createdAt: number;
 }
 
@@ -128,9 +134,12 @@ export interface P2PEnvelope {
   from: string;
   to?: string;
   replyTo?: string;
-  payload: any;
-  meta?: Record<string, any>;
+  payload: unknown;
+  meta?: Record<string, unknown>;
 }
+
+// 訊息傳送狀態
+export type DeliveryStatus = 'sending' | 'sent' | 'delivered' | 'failed';
 
 // 聊天訊息
 export interface ChatMessage {
@@ -141,6 +150,44 @@ export interface ChatMessage {
   timestamp: number;
   edited?: boolean;
   deleted?: boolean;
+  hlc?: HLCTimestamp; // Hybrid Logical Clock（向下相容，optional）
+  deliveryStatus?: DeliveryStatus;
+}
+
+// ========== E2EE 加密聊天訊息 ==========
+
+/** 透過 P2P 傳輸的加密聊天 payload（content 已加密） */
+export interface EncryptedChatPayload {
+  messageId: string;
+  from: string;
+  to?: string;
+  timestamp: number;
+  hlc?: HLCTimestamp;
+  encrypted: {
+    ciphertext: string; // Base64
+    iv: string;         // Base64
+    senderKeyEpoch: number;
+  };
+}
+
+/** ECDH 公鑰交換 payload */
+export interface ECDHPubKeyPayload {
+  userId: string;
+  ecdhPublicKey: string; // Base64 SPKI
+}
+
+/** Sender Key 分發 payload */
+export interface SenderKeyDistPayload {
+  senderId: string;
+  epoch: number;
+  ecdhPublicKey: string; // Base64 SPKI — sender 的 ECDH 公鑰
+  encryptedKeys: Record<string, { encryptedKey: string; iv: string }>;
+}
+
+// 因果訊息（帶有依賴關係）
+export interface CausalMessage extends ChatMessage {
+  /** 發送時最近收到的 N 個訊息 ID（用於因果排序） */
+  deps: string[];
 }
 
 // 檔案傳輸
@@ -177,6 +224,14 @@ export interface SyncMessage {
   hash: string;
 }
 
+// ========== Hybrid Logical Clock ==========
+
+export interface HLCTimestamp {
+  wallTime: number;
+  logical: number;
+  nodeId: string;
+}
+
 // Gossip 訊息（小網狀架構）
 export interface GossipMessage {
   roomId: string;
@@ -187,6 +242,7 @@ export interface GossipMessage {
   content: string;
   ttl: number; // Time To Live（跳數限制）
   signature: string; // Base64 編碼的簽名
+  hlc?: HLCTimestamp; // Hybrid Logical Clock（向下相容，optional）
 }
 
 // Mesh 身分資訊
@@ -379,6 +435,9 @@ export interface ChainCheckpoint {
 // ========== Multi-channel ==========
 
 export type ChannelKind = 'control' | 'bulk' | 'gossip';
+
+/** Message priority for backpressure queue */
+export type MessagePriority = 'critical' | 'high' | 'normal' | 'low';
 
 // ========== Enhanced Envelope ==========
 
