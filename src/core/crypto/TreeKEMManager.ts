@@ -363,12 +363,13 @@ export class TreeKEMManager {
       encoded
     );
 
-    this.messagesSinceRotation++;
+    const seq = this.messagesSinceRotation++;
 
     return {
       ciphertext: bufferToBase64(ciphertext),
       iv: bufferToBase64(iv.buffer as ArrayBuffer),
       senderKeyEpoch: this.currentEpoch,
+      seq,
     };
   }
 
@@ -683,7 +684,12 @@ function bufferToBase64(buffer: ArrayBuffer): string {
 }
 
 function base64ToBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error('Invalid base64 input');
+  }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);

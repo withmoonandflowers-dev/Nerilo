@@ -44,6 +44,11 @@ const DEFAULT_CONFIG: DHTStoreAndForwardConfig = {
 
 // ── DHTStoreAndForward ──────────────────────────────────────────────────────
 
+/** Per-sender rate limit for DHT_STORE: max stores per window */
+const DHT_STORE_RATE_LIMIT = 50;
+/** Rate limit window in ms */
+const DHT_STORE_RATE_WINDOW_MS = 60_000; // 1 minute
+
 export class DHTStoreAndForward {
   private localStorage: DHTStorage;
   private router: KademliaRouter;
@@ -51,6 +56,8 @@ export class DHTStoreAndForward {
   private localId: string;
   /** Function to send protocol messages to other DHT nodes */
   private sendFn: SendFunction | null = null;
+  /** Per-sender DHT_STORE rate tracking: senderId → timestamps[] */
+  private storeRateTracker = new Map<string, number[]>();
   /** Pending retrieve callbacks: requestId → handler */
   private pendingRetrieves = new Map<string, {
     handler: InboxHandler;
@@ -264,6 +271,13 @@ export class DHTStoreAndForward {
   handleIncoming(msg: DHTProtocolMessage): void {
     switch (msg.type) {
       case 'DHT_STORE':
+        // Per-sender rate limiting to prevent DHT flooding
+        if (!this.checkStoreRateLimit(msg.fromId)) {
+          logger.warn('[DHTStoreAndForward] DHT_STORE rate limit exceeded', {
+            fromId: msg.fromId,
+          });
+          break;
+        }
         this.localStorage.handleProtocolMessage(msg);
         break;
 
@@ -404,12 +418,39 @@ export class DHTStoreAndForward {
     return this.localStorage.pruneExpired();
   }
 
+  /**
+   * Per-sender rate limiter for DHT_STORE requests.
+   * Returns true if within limit, false if exceeded.
+   */
+  private checkStoreRateLimit(senderId: string): boolean {
+    const now = Date.now();
+    let timestamps = this.storeRateTracker.get(senderId);
+    if (!timestamps) {
+      timestamps = [];
+      this.storeRateTracker.set(senderId, timestamps);
+    }
+
+    // Prune old entries outside the window
+    const cutoff = now - DHT_STORE_RATE_WINDOW_MS;
+    while (timestamps.length > 0 && timestamps[0]! < cutoff) {
+      timestamps.shift();
+    }
+
+    if (timestamps.length >= DHT_STORE_RATE_LIMIT) {
+      return false;
+    }
+
+    timestamps.push(now);
+    return true;
+  }
+
   destroy(): void {
     this.localStorage.destroy();
     for (const pending of this.pendingRetrieves.values()) {
       clearTimeout(pending.timeoutId);
     }
     this.pendingRetrieves.clear();
+    this.storeRateTracker.clear();
     this.sendFn = null;
   }
 }
