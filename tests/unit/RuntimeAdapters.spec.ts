@@ -244,13 +244,14 @@ describe('NodeCryptoAdapter', () => {
 });
 
 describe('NodeRuntime (integration)', () => {
-  it('creates a complete runtime', () => {
+  it('creates a complete runtime with deviceCapability', () => {
     const runtime = new NodeRuntime('node', 'local-id');
     expect(runtime.type).toBe('node');
     expect(runtime.storage).toBeTruthy();
     expect(runtime.crypto).toBeTruthy();
     expect(runtime.network).toBeTruthy();
     expect(runtime.timer).toBeTruthy();
+    expect(runtime.deviceCapability).toBeTruthy();
   });
 
   it('creates electron runtime', () => {

@@ -20,7 +20,11 @@ import type {
   INetworkAdapter,
   IConnection,
   ITimerAdapter,
+  IDeviceCapabilityAdapter,
   RuntimeType,
+  NetworkType,
+  DeviceType,
+  DeviceCapabilitySnapshot,
 } from './types';
 
 // ── Node Storage (In-Memory / SQLite-ready) ─────────────────────────────────
@@ -283,12 +287,55 @@ export class NodeTimerAdapter implements ITimerAdapter {
 
 // ── Node Runtime (Composite) ────────────────────────────────────────────────
 
+// ── Node Device Capability ─────────────────────────────────────────────────
+
+export class NodeDeviceCapabilityAdapter implements IDeviceCapabilityAdapter {
+  getHardwareConcurrency(): number | null {
+    if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) {
+      return navigator.hardwareConcurrency;
+    }
+    return null;
+  }
+
+  getDeviceMemory(): number | null {
+    return null;
+  }
+
+  async getBatteryLevel(): Promise<number | null> {
+    return null;
+  }
+
+  async isCharging(): Promise<boolean | null> {
+    return null;
+  }
+
+  getNetworkType(): NetworkType {
+    return 'ethernet';
+  }
+
+  getDeviceType(): DeviceType {
+    return 'desktop';
+  }
+
+  async getSnapshot(): Promise<DeviceCapabilitySnapshot> {
+    return {
+      cpuCores: this.getHardwareConcurrency(),
+      memoryGb: this.getDeviceMemory(),
+      batteryLevel: null,
+      isCharging: null,
+      networkType: this.getNetworkType(),
+      deviceType: this.getDeviceType(),
+    };
+  }
+}
+
 export class NodeRuntime implements IRuntime {
   readonly type: RuntimeType;
   readonly storage: IStorageAdapter;
   readonly crypto: ICryptoAdapter;
   readonly network: INetworkAdapter;
   readonly timer: ITimerAdapter;
+  readonly deviceCapability: IDeviceCapabilityAdapter;
 
   constructor(type: 'node' | 'electron', localId: string) {
     this.type = type;
@@ -296,5 +343,6 @@ export class NodeRuntime implements IRuntime {
     this.crypto = new NodeCryptoAdapter();
     this.network = new NodeNetworkAdapter(localId);
     this.timer = new NodeTimerAdapter();
+    this.deviceCapability = new NodeDeviceCapabilityAdapter();
   }
 }

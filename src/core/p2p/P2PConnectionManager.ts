@@ -21,6 +21,25 @@ export interface IceServers {
   credential?: string;
 }
 
+/** Auto-reconnect configuration */
+export interface ReconnectConfig {
+  /** Maximum number of reconnect attempts (default: 5) */
+  maxAttempts: number;
+  /** Initial delay in ms before first retry (default: 1000) */
+  baseDelayMs: number;
+  /** Maximum delay in ms (caps exponential growth, default: 30000) */
+  maxDelayMs: number;
+  /** Multiplier for exponential backoff (default: 2) */
+  backoffMultiplier: number;
+}
+
+const DEFAULT_RECONNECT_CONFIG: ReconnectConfig = {
+  maxAttempts: 5,
+  baseDelayMs: 1_000,
+  maxDelayMs: 30_000,
+  backoffMultiplier: 2,
+};
+
 export class P2PConnectionManager {
   private pc: RTCPeerConnection | null = null;
   private roomId: string;
@@ -37,7 +56,7 @@ export class P2PConnectionManager {
   /** Signal 處理互斥鎖：確保 handleSignal 不會並行執行（避免 signalingState 競態） */
   private signalMutex: Promise<void> = Promise.resolve();
   /** 此連線的建立時間戳，用來過濾掉舊 session 殘留的 signals */
-  private readonly sessionStartedAt: Timestamp = Timestamp.now();
+  private sessionStartedAt: Timestamp = Timestamp.now();
   /** 是否已清理舊 signals（只在首次連線成功時執行一次） */
   private hasCleanedOldSignals = false;
   /**
@@ -48,10 +67,22 @@ export class P2PConnectionManager {
    */
   private readonly channelLabel: string;
 
-  constructor(roomId: string, localUid: string, channelLabel = 'default') {
+  // ── Auto-Reconnect State ────────────────────────────────────────────────
+  private readonly reconnectConfig: ReconnectConfig;
+  private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether this peer is the initiator (creates offer). Set by P2PManager. */
+  private isInitiator = false;
+  /** Callback invoked when reconnection succeeds */
+  private reconnectListeners: Set<(attempt: number) => void> = new Set();
+  /** Whether the manager has been explicitly closed (prevents reconnect after close) */
+  private isClosed = false;
+
+  constructor(roomId: string, localUid: string, channelLabel = 'default', reconnectConfig?: Partial<ReconnectConfig>) {
     this.roomId = roomId;
     this.localUid = localUid;
     this.channelLabel = channelLabel;
+    this.reconnectConfig = { ...DEFAULT_RECONNECT_CONFIG, ...reconnectConfig };
   }
 
   async initialize(): Promise<void> {
@@ -138,10 +169,20 @@ export class P2PConnectionManager {
 
     this.pc.onconnectionstatechange = () => {
       if (!this.pc) return;
-      
+
       const state = this.pc.connectionState;
       switch (state) {
         case 'connected':
+          // Reset reconnect state on successful connection
+          if (this.reconnectAttempt > 0) {
+            logger.info('[P2PConnectionManager] Reconnected successfully', {
+              roomId: this.roomId,
+              attempt: this.reconnectAttempt,
+            });
+            this.notifyReconnectListeners(this.reconnectAttempt);
+          }
+          this.reconnectAttempt = 0;
+          this.cancelReconnectTimer();
           this.setState('connected');
           // 連線成功後清理舊 session 的 signals（非阻塞）
           this.cleanupOldSignals();
@@ -149,9 +190,12 @@ export class P2PConnectionManager {
         case 'disconnected':
           // 'disconnected' 是暫時性狀態，瀏覽器會嘗試自動恢復；
           // 不立即標記為 failed，留給上層偵測逾時後處理。
+          logger.info('[P2PConnectionManager] Connection disconnected (transient)', {
+            roomId: this.roomId,
+          });
           break;
         case 'failed':
-          this.setState('failed');
+          this.handleConnectionFailure();
           break;
         case 'closed':
           this.setState('closed');
@@ -516,7 +560,177 @@ export class P2PConnectionManager {
     }
   }
 
+  // ── Auto-Reconnect ────────────────────────────────────────────────────
+
+  /** Set the initiator role (needed to know whether to create offer on reconnect) */
+  setInitiator(isInitiator: boolean): void {
+    this.isInitiator = isInitiator;
+  }
+
+  /** Listen for successful reconnection events */
+  onReconnect(listener: (attempt: number) => void): () => void {
+    this.reconnectListeners.add(listener);
+    return () => { this.reconnectListeners.delete(listener); };
+  }
+
+  /** Get current reconnect attempt number (0 = not reconnecting) */
+  getReconnectAttempt(): number {
+    return this.reconnectAttempt;
+  }
+
+  private handleConnectionFailure(): void {
+    if (this.isClosed) {
+      this.setState('failed');
+      return;
+    }
+
+    const { maxAttempts } = this.reconnectConfig;
+    if (this.reconnectAttempt >= maxAttempts) {
+      logger.warn('[P2PConnectionManager] Max reconnect attempts reached, giving up', {
+        roomId: this.roomId,
+        attempts: this.reconnectAttempt,
+      });
+      this.reconnectAttempt = 0;
+      this.setState('failed');
+      return;
+    }
+
+    this.reconnectAttempt++;
+    const delay = this.getReconnectDelay(this.reconnectAttempt);
+
+    // 兩階段策略（業界最佳實踐）：
+    //   Phase 1（前半 attempts）：ICE Restart — 輕量，重用現有 media streams
+    //   Phase 2（後半 attempts）：Full Renegotiation — 整個砍掉重建
+    const useIceRestart = this.reconnectAttempt <= Math.ceil(maxAttempts / 2) && this.pc !== null;
+    const strategy = useIceRestart ? 'ice-restart' : 'full-reconnect';
+
+    logger.info('[P2PConnectionManager] Scheduling reconnect', {
+      roomId: this.roomId,
+      attempt: this.reconnectAttempt,
+      strategy,
+      delayMs: delay,
+    });
+
+    this.setState('connecting');
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      const attempt = useIceRestart
+        ? this.attemptIceRestart()
+        : this.attemptFullReconnect();
+      attempt.catch((err) => {
+        logger.error('[P2PConnectionManager] Reconnect attempt failed', {
+          roomId: this.roomId,
+          attempt: this.reconnectAttempt,
+          strategy,
+          err,
+        });
+      });
+    }, delay);
+  }
+
+  /**
+   * Full jitter backoff（業界建議）：delay = random(0, min(cap, base * 2^attempt))
+   * 比 equal jitter (±20%) 更能打散重試風暴。
+   * 參考：AWS Architecture Blog "Exponential Backoff And Jitter"
+   */
+  private getReconnectDelay(attempt: number): number {
+    const { baseDelayMs, maxDelayMs, backoffMultiplier } = this.reconnectConfig;
+    const exponential = baseDelayMs * Math.pow(backoffMultiplier, attempt - 1);
+    const capped = Math.min(exponential, maxDelayMs);
+    // Full jitter: uniform random in [0, capped]
+    return Math.round(Math.random() * capped);
+  }
+
+  /**
+   * Phase 1: ICE Restart — 輕量重連
+   * 不砍掉 PeerConnection，只重新走 ICE 流程找新的 candidate pair。
+   * 成功率約 2/3（根據 Odinokun/Orosolini 的測量）。
+   */
+  private async attemptIceRestart(): Promise<void> {
+    if (!this.pc) {
+      // 沒有 PeerConnection 了，直接做 full reconnect
+      return this.attemptFullReconnect();
+    }
+
+    logger.info('[P2PConnectionManager] Attempting ICE restart', {
+      roomId: this.roomId,
+      attempt: this.reconnectAttempt,
+    });
+
+    try {
+      this.pc.restartIce();
+      // 如果是 initiator，需要重新 createOffer 讓 ICE restart 生效
+      if (this.isInitiator) {
+        const offer = await this.pc.createOffer({ iceRestart: true });
+        await this.pc.setLocalDescription(offer);
+        await this.sendSignal('offer', offer);
+      }
+    } catch (err) {
+      logger.warn('[P2PConnectionManager] ICE restart failed, falling back to full reconnect', {
+        roomId: this.roomId,
+        err,
+      });
+      return this.attemptFullReconnect();
+    }
+  }
+
+  /**
+   * Phase 2: Full Renegotiation — 整個砍掉重建
+   * ICE Restart 多次失敗後的 fallback。
+   */
+  private async attemptFullReconnect(): Promise<void> {
+    logger.info('[P2PConnectionManager] Attempting full reconnect', {
+      roomId: this.roomId,
+      attempt: this.reconnectAttempt,
+    });
+
+    // Tear down old connection
+    this.signalUnsubscribers.forEach(unsub => unsub());
+    this.signalUnsubscribers = [];
+    this.pendingIceCandidates = [];
+    this.processedSignalIds.clear();
+    this.signalMutex = Promise.resolve();
+
+    if (this.pc) {
+      this.pc.onconnectionstatechange = null;
+      this.pc.onicecandidate = null;
+      this.pc.oniceconnectionstatechange = null;
+      this.pc.close();
+      this.pc = null;
+    }
+
+    // Fresh session timestamp for signal isolation
+    this.sessionStartedAt = Timestamp.now();
+    this.hasCleanedOldSignals = false;
+
+    // Re-initialize
+    this.iceServers = await this.getIceServers();
+    this.pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    this.setupPeerConnectionHandlers();
+    this.setupSignalingListeners();
+
+    // Re-create offer if we're the initiator
+    if (this.isInitiator) {
+      await this.createOffer();
+    }
+  }
+
+  private cancelReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private notifyReconnectListeners(attempt: number): void {
+    for (const listener of this.reconnectListeners) {
+      try { listener(attempt); } catch { /* ignore */ }
+    }
+  }
+
   async close(): Promise<void> {
+    this.isClosed = true;
+    this.cancelReconnectTimer();
     // 先取消 Firestore 訂閱，避免 close 過程中收到新 signals
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
@@ -532,6 +746,7 @@ export class P2PConnectionManager {
     // 離開時清理自己在 Firestore 留下的 signals（非阻塞，best-effort）
     this.cleanupSessionSignals().catch(() => {});
 
+    this.reconnectListeners.clear();
     this.setState('closed');
   }
 }

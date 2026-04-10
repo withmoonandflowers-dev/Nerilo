@@ -15,6 +15,10 @@ import type {
   INetworkAdapter,
   IConnection,
   ITimerAdapter,
+  IDeviceCapabilityAdapter,
+  NetworkType,
+  DeviceType,
+  DeviceCapabilitySnapshot,
 } from './types';
 
 // ── Browser Storage (IndexedDB) ─────────────────────────────────────────────
@@ -315,6 +319,109 @@ export class BrowserTimerAdapter implements ITimerAdapter {
   }
 }
 
+// ── Browser Device Capability ──────────────────────────────────────────────
+
+/**
+ * Browser-based device capability detection.
+ * Uses: navigator.hardwareConcurrency, navigator.deviceMemory,
+ *       Battery Status API, Network Information API.
+ */
+export class BrowserDeviceCapabilityAdapter implements IDeviceCapabilityAdapter {
+  private batteryPromise: Promise<BatteryManager | null> | null = null;
+
+  getHardwareConcurrency(): number | null {
+    return typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+      ? navigator.hardwareConcurrency
+      : null;
+  }
+
+  getDeviceMemory(): number | null {
+    const nav = navigator as NavigatorWithDeviceMemory;
+    return nav.deviceMemory ?? null;
+  }
+
+  async getBatteryLevel(): Promise<number | null> {
+    const battery = await this.getBattery();
+    return battery?.level ?? null;
+  }
+
+  async isCharging(): Promise<boolean | null> {
+    const battery = await this.getBattery();
+    return battery?.charging ?? null;
+  }
+
+  getNetworkType(): NetworkType {
+    const conn = (navigator as NavigatorWithConnection).connection;
+    if (!conn) return 'unknown';
+
+    const type = conn.type;
+    if (type === 'wifi') return 'wifi';
+    if (type === 'ethernet') return 'ethernet';
+    if (type === 'cellular') {
+      const ect = conn.effectiveType;
+      if (ect === '4g') return '4g';
+      if (ect === '3g') return '3g';
+      if (ect === '2g') return '2g';
+      return '4g';
+    }
+    const ect = conn.effectiveType;
+    if (ect === '4g') return '4g';
+    if (ect === '3g') return '3g';
+    if (ect === '2g') return '2g';
+    return 'unknown';
+  }
+
+  getDeviceType(): DeviceType {
+    if (typeof navigator === 'undefined') return 'unknown';
+    const ua = navigator.userAgent.toLowerCase();
+    if (/mobile|iphone|ipod|android.*mobile|windows phone/i.test(ua)) return 'mobile';
+    if (/tablet|ipad|android(?!.*mobile)/i.test(ua)) return 'tablet';
+    if ('ontouchstart' in window && screen.width < 768) return 'mobile';
+    if ('ontouchstart' in window && screen.width < 1024) return 'tablet';
+    return 'desktop';
+  }
+
+  async getSnapshot(): Promise<DeviceCapabilitySnapshot> {
+    const [batteryLevel, charging] = await Promise.all([
+      this.getBatteryLevel(),
+      this.isCharging(),
+    ]);
+    return {
+      cpuCores: this.getHardwareConcurrency(),
+      memoryGb: this.getDeviceMemory(),
+      batteryLevel,
+      isCharging: charging,
+      networkType: this.getNetworkType(),
+      deviceType: this.getDeviceType(),
+    };
+  }
+
+  private async getBattery(): Promise<BatteryManager | null> {
+    if (!this.batteryPromise) {
+      this.batteryPromise = this.initBattery();
+    }
+    return this.batteryPromise;
+  }
+
+  private async initBattery(): Promise<BatteryManager | null> {
+    try {
+      const nav = navigator as NavigatorWithBattery;
+      if (typeof nav.getBattery === 'function') {
+        return await nav.getBattery();
+      }
+    } catch {
+      // Battery API not available
+    }
+    return null;
+  }
+}
+
+interface BatteryManager { level: number; charging: boolean; }
+interface NavigatorWithBattery extends Navigator { getBattery?: () => Promise<BatteryManager>; }
+interface NavigatorWithDeviceMemory extends Navigator { deviceMemory?: number; }
+interface NetworkInformation { type?: string; effectiveType?: string; }
+interface NavigatorWithConnection extends Navigator { connection?: NetworkInformation; }
+
 // ── Browser Runtime (Composite) ─────────────────────────────────────────────
 
 export class BrowserRuntime implements IRuntime {
@@ -323,11 +430,13 @@ export class BrowserRuntime implements IRuntime {
   readonly crypto: ICryptoAdapter;
   readonly network: INetworkAdapter;
   readonly timer: ITimerAdapter;
+  readonly deviceCapability: IDeviceCapabilityAdapter;
 
   constructor(localId: string, dbName?: string) {
     this.storage = new BrowserStorageAdapter(dbName);
     this.crypto = new BrowserCryptoAdapter();
     this.network = new BrowserNetworkAdapter(localId);
     this.timer = new BrowserTimerAdapter();
+    this.deviceCapability = new BrowserDeviceCapabilityAdapter();
   }
 }

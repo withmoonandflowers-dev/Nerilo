@@ -6,6 +6,7 @@ import { MeshTopologyManager } from './MeshTopologyManager';
 import type { MeshConnection } from './MeshConnection';
 import { TimeBucketedCache } from './TimeBucketedCache';
 import type { PeerScoring } from '../relay/PeerScoring';
+import type { GossipAckManager, AckEnvelope } from './GossipAckManager';
 import { logger } from '../../utils/logger';
 
 /**
@@ -20,6 +21,14 @@ export class GossipMessageHandler {
   private sendRateLimiter: Map<string, number[]> = new Map();
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
   private readonly MAX_MESSAGES_PER_SECOND = 10;
+  /** Maximum entries in lastSeenSeq / sendRateLimiter before pruning */
+  private readonly MAX_TRACKED_SENDERS = 500;
+  /** Cleanup timer for periodic Map pruning */
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  /** 可選的 ACK 管理器（關鍵訊息可靠投遞用） */
+  private ackManager: GossipAckManager | null = null;
+  /** ACK 訊息監聽器（收到 ACK envelope 時回傳給 AckManager） */
+  private ackListeners: Set<(ack: AckEnvelope) => void> = new Set();
 
   constructor(
     private roomId: string,
@@ -29,6 +38,89 @@ export class GossipMessageHandler {
     private topologyManager: MeshTopologyManager,
     private peerScoring: PeerScoring | null = null
   ) {}
+
+  /** Start periodic cleanup of rate limiter and sequence maps */
+  startCleanup(): void {
+    if (this.cleanupTimer) return;
+    // Run cleanup every 60 seconds
+    this.cleanupTimer = setInterval(() => this.pruneTrackedSenders(), 60_000);
+  }
+
+  /** 注入 ACK 管理器 */
+  setAckManager(ackManager: GossipAckManager): void {
+    this.ackManager = ackManager;
+  }
+
+  /** 監聽 ACK envelope（當收到 gossip:ack 類型的訊息時觸發） */
+  onAck(listener: (ack: AckEnvelope) => void): () => void {
+    this.ackListeners.add(listener);
+    return () => { this.ackListeners.delete(listener); };
+  }
+
+  /**
+   * 處理收到的 ACK envelope（由外部路由呼叫）。
+   * 轉發給 AckManager。
+   */
+  handleAckEnvelope(ack: AckEnvelope): void {
+    if (this.ackManager) {
+      this.ackManager.handleAck(ack);
+    }
+    for (const listener of this.ackListeners) {
+      try { listener(ack); } catch { /* ignore */ }
+    }
+  }
+
+  /** Stop cleanup and release all resources */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.lastSeenSeq.clear();
+    this.sendRateLimiter.clear();
+    this.messageListeners.clear();
+    this.ackListeners.clear();
+    this.ackManager = null;
+  }
+
+  /**
+   * Prune sendRateLimiter and lastSeenSeq Maps when they exceed MAX_TRACKED_SENDERS.
+   * Evicts the oldest entries (by insertion order, approximated by Map iteration).
+   */
+  private pruneTrackedSenders(): void {
+    // Prune sendRateLimiter: remove entries with no recent timestamps
+    const now = Date.now();
+    for (const [senderId, timestamps] of this.sendRateLimiter) {
+      const recent = timestamps.filter(ts => now - ts < 10_000);
+      if (recent.length === 0) {
+        this.sendRateLimiter.delete(senderId);
+      } else {
+        this.sendRateLimiter.set(senderId, recent);
+      }
+    }
+
+    // Cap lastSeenSeq size
+    if (this.lastSeenSeq.size > this.MAX_TRACKED_SENDERS) {
+      const excess = this.lastSeenSeq.size - this.MAX_TRACKED_SENDERS;
+      let removed = 0;
+      for (const key of this.lastSeenSeq.keys()) {
+        if (removed >= excess) break;
+        this.lastSeenSeq.delete(key);
+        removed++;
+      }
+    }
+
+    // Cap sendRateLimiter size
+    if (this.sendRateLimiter.size > this.MAX_TRACKED_SENDERS) {
+      const excess = this.sendRateLimiter.size - this.MAX_TRACKED_SENDERS;
+      let removed = 0;
+      for (const key of this.sendRateLimiter.keys()) {
+        if (removed >= excess) break;
+        this.sendRateLimiter.delete(key);
+        removed++;
+      }
+    }
+  }
 
   /**
    * 發送訊息

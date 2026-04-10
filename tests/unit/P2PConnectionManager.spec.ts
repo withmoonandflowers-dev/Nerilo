@@ -299,13 +299,13 @@ describe('P2PConnectionManager', () => {
       expect(manager.getState()).toBe('connected');
     });
 
-    it('PeerConnection が failed になると state も failed になる', () => {
-      const listener = vi.fn();
-      manager.onStateChange(listener);
-
+    it('PeerConnection が failed になると auto-reconnect が始まる（state は connecting のまま）', () => {
       pc._setConnectionState('failed');
 
-      expect(listener).toHaveBeenCalledWith('failed');
+      // Auto-reconnect kicks in: reconnectAttempt increments
+      // State stays 'connecting' (from initialize) — no duplicate transition
+      expect(manager.getState()).toBe('connecting');
+      expect(manager.getReconnectAttempt()).toBe(1);
     });
 
     it('close() を呼ぶと state は closed になる', async () => {

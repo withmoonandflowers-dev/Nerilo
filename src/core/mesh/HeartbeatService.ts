@@ -36,6 +36,8 @@ export interface PongMessage {
 
 const PING_INTERVAL_MS = 30_000;
 const MAX_MISSED_PINGS = 3;
+/** Auto-evict peers with no pong for this duration (5 minutes) */
+const PEER_STATE_TTL_MS = 300_000;
 
 export class HeartbeatService {
   private peerState = new Map<
@@ -77,6 +79,8 @@ export class HeartbeatService {
       for (const peerId of peers) {
         this.sendPingTo(peerId);
       }
+      // Evict stale entries that are no longer in the active peer list
+      this.evictStalePeers(new Set(peers));
     }, PING_INTERVAL_MS);
   }
 
@@ -200,6 +204,23 @@ export class HeartbeatService {
       });
     }
     return result;
+  }
+
+  /**
+   * Evict peerState entries that are not in the active peer set
+   * and have not received a pong within the TTL window.
+   * Prevents unbounded growth of peerState Map.
+   */
+  private evictStalePeers(activePeers: Set<string>): void {
+    const now = Date.now();
+    for (const [peerId, state] of this.peerState) {
+      if (activePeers.has(peerId)) continue;
+      // Peer is no longer active — check if it's stale
+      const lastActivity = state.lastPongAt ?? 0;
+      if (now - lastActivity > PEER_STATE_TTL_MS) {
+        this.peerState.delete(peerId);
+      }
+    }
   }
 
   private notifyUnreachable(peerId: string): void {

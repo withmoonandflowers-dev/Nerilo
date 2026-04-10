@@ -180,6 +180,48 @@ export interface ITimerAdapter {
   now(): number;
 }
 
+// ── Device Capability Adapter ──────────────────────────────────────────────
+
+export type NetworkType = 'wifi' | '4g' | '5g' | '3g' | '2g' | 'ethernet' | 'unknown';
+export type DeviceType = 'mobile' | 'tablet' | 'desktop' | 'unknown';
+
+/**
+ * Device hardware capability detection abstraction.
+ * Browser: navigator.hardwareConcurrency, navigator.deviceMemory, Battery API
+ * Node.js: os module
+ */
+export interface IDeviceCapabilityAdapter {
+  /** CPU logical core count, null if unavailable */
+  getHardwareConcurrency(): number | null;
+
+  /** Device memory in GB (approximate), null if unavailable */
+  getDeviceMemory(): number | null;
+
+  /** Battery level 0-1, null if unavailable or not a battery device */
+  getBatteryLevel(): Promise<number | null>;
+
+  /** Whether the device is charging */
+  isCharging(): Promise<boolean | null>;
+
+  /** Network connection type */
+  getNetworkType(): NetworkType;
+
+  /** Device type heuristic */
+  getDeviceType(): DeviceType;
+
+  /** Snapshot of all capabilities (for broadcasting in heartbeat) */
+  getSnapshot(): Promise<DeviceCapabilitySnapshot>;
+}
+
+export interface DeviceCapabilitySnapshot {
+  cpuCores: number | null;
+  memoryGb: number | null;
+  batteryLevel: number | null;
+  isCharging: boolean | null;
+  networkType: NetworkType;
+  deviceType: DeviceType;
+}
+
 // ── Runtime Environment ─────────────────────────────────────────────────────
 
 export type RuntimeType = 'browser' | 'node' | 'electron';
@@ -195,4 +237,5 @@ export interface IRuntime {
   readonly crypto: ICryptoAdapter;
   readonly network: INetworkAdapter;
   readonly timer: ITimerAdapter;
+  readonly deviceCapability: IDeviceCapabilityAdapter;
 }
