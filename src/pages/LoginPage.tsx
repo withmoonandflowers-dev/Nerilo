@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { featureLog } from '../utils/featureLog';
+import { getFirebaseErrorMessage } from '../utils/firebaseErrorMessages';
 import './LoginPage.css';
 
 const LoginPage: React.FC = () => {
@@ -29,7 +30,7 @@ const LoginPage: React.FC = () => {
       featureLog('auth', 'login', { method: 'email' });
       navigate('/dashboard');
     } catch (err: unknown) {
-      setError((err as Error)?.message || '登入失敗');
+      setError(getFirebaseErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -44,7 +45,7 @@ const LoginPage: React.FC = () => {
       featureLog('auth', 'login', { method: 'google' });
       navigate('/dashboard');
     } catch (err: unknown) {
-      setError((err as Error)?.message || 'Google 登入失敗');
+      setError(getFirebaseErrorMessage(err));
     } finally {
       setLoading(false);
     }
