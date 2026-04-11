@@ -1,20 +1,62 @@
-import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { ref, set, get, update, remove, onValue, query as rtdbQuery, orderByChild, equalTo, onDisconnect, DataSnapshot } from 'firebase/database';
+import { rtdb } from '../config/firebase';
+import { RTDB } from '../config/rtdb-paths';
 import { generateUUID } from '../utils/uuid';
 import type { P2PRoom } from '../types';
 
 // 只在開發模式或明確啟用時輸出 debug log，避免正式環境噪音
 const DEBUG_ROOMS = import.meta.env.DEV || import.meta.env.VITE_DEBUG_ROOMS === 'true';
 
+/** Convert RTDB participants object {uid: true} to string[] */
+function participantsToArray(obj: Record<string, boolean> | null | undefined): string[] {
+  return obj ? Object.keys(obj) : [];
+}
+
+/** Convert string[] to RTDB participants object {uid: true} */
+function participantsToObject(arr: string[]): Record<string, boolean> {
+  const obj: Record<string, boolean> = {};
+  for (const uid of arr) {
+    obj[uid] = true;
+  }
+  return obj;
+}
+
+/** Parse a room snapshot value into a P2PRoom (or null) */
+function parseRoom(roomId: string, data: any): P2PRoom | null {
+  if (!data) return null;
+  return {
+    roomId,
+    ownerUid: data.ownerUid,
+    ownerName: data.ownerName,
+    participants: participantsToArray(data.participants),
+    status: data.status || 'open',
+    isPrivate: !!data.isPrivate,
+    createdAt: data.createdAt || Date.now(),
+    waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
+    waitingStartedAt: data.waitingStartedAt,
+    meshIdentities: data.meshIdentities ? Object.fromEntries(
+      Object.entries(data.meshIdentities).map(([key, value]: [string, any]) => [
+        key,
+        {
+          userId: value.userId,
+          pubKey: value.pubKey,
+          joinedAt: value.joinedAt || Date.now(),
+        },
+      ])
+    ) : undefined,
+    topology: data.topology || 'star',
+  };
+}
+
 export class RoomService {
   /**
    * 建立新房間（預設為 waiting 狀態）
    * 如果同一用戶已有其他房間，會先關閉它們（包括所有狀態的房間）
-   * 
+   *
    * 安全要求：
    * - 只允許已登入的用戶建立房間（非匿名用戶）
    * - 自動清理用戶的所有舊房間
-   * 
+   *
    * @throws {Error} 如果 ownerUid 為空或無效
    */
   static async createRoom(
@@ -37,10 +79,9 @@ export class RoomService {
       import.meta.env.MODE === 'test' ||
       import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM === 'true'
     );
-    
+
     if (requireAuth && !isTestEnv) {
       // 注意：這裡無法直接檢查是否為匿名用戶，需要在調用端檢查
-      // 但我們可以在 Firestore 規則中加強驗證
       console.log('[RoomService] createRoom - auth check passed', { ownerUid });
     } else if (isTestEnv) {
       console.log('[RoomService] createRoom - test mode, allowing guest user', { ownerUid });
@@ -63,22 +104,21 @@ export class RoomService {
         waitingTimeout,
       });
     }
-    const roomData: Omit<P2PRoom, 'roomId'> = {
+
+    const participantList = participants.length > 0 ? participants : [ownerUid];
+
+    const roomData = {
       ownerUid,
       ownerName: ownerName || '匿名使用者',
-      participants: participants.length > 0 ? participants : [ownerUid],
-      status: 'waiting',
+      participants: participantsToObject(participantList),
+      status: 'waiting' as const,
       isPrivate,
       createdAt: now,
       waitingTimeout,
       waitingStartedAt: now,
     };
 
-    await setDoc(doc(db, 'p2pRooms', roomId), {
-      ...roomData,
-      createdAt: Timestamp.fromMillis(roomData.createdAt),
-      waitingStartedAt: Timestamp.fromMillis(roomData.waitingStartedAt!),
-    });
+    await set(ref(rtdb, RTDB.room(roomId)), roomData);
 
     return roomId;
   }
@@ -89,36 +129,30 @@ export class RoomService {
    */
   static async closeAllUserRooms(ownerUid: string): Promise<void> {
     console.log('[RoomService] closeAllUserRooms called', { ownerUid });
-    
-    const roomsRef = collection(db, 'p2pRooms');
-    // 查詢該用戶的所有房間（不限狀態）
-    const q = query(
-      roomsRef,
-      where('ownerUid', '==', ownerUid)
-    );
 
-    const snapshot = await getDocs(q);
-    const allRooms = snapshot.docs.map((docSnapshot) => ({
-      roomId: docSnapshot.id,
-      data: docSnapshot.data(),
-    }));
+    const q = rtdbQuery(ref(rtdb, RTDB.rooms()), orderByChild('ownerUid'), equalTo(ownerUid));
+    const snapshot = await get(q);
+
+    const allRooms: { roomId: string; data: any }[] = [];
+    snapshot.forEach((child: DataSnapshot) => {
+      allRooms.push({ roomId: child.key!, data: child.val() });
+    });
 
     console.log('[RoomService] closeAllUserRooms - found rooms', {
       ownerUid,
       totalRooms: allRooms.length,
-      rooms: allRooms.map(r => ({ 
-        roomId: r.roomId, 
+      rooms: allRooms.map(r => ({
+        roomId: r.roomId,
         status: r.data.status,
-        participants: r.data.participants?.length || 0 
+        participants: participantsToArray(r.data.participants).length,
       })),
     });
 
     // 關閉所有房間（包括已經是 closed 狀態的，確保一致性）
     const batch = allRooms.map((r) => {
-      const docRef = doc(db, 'p2pRooms', r.roomId);
-      return updateDoc(docRef, { 
+      return update(ref(rtdb, RTDB.room(r.roomId)), {
         status: 'closed',
-        closedAt: Timestamp.fromMillis(Date.now()),
+        closedAt: Date.now(),
       });
     });
 
@@ -140,38 +174,14 @@ export class RoomService {
   /**
    * 取得房間資訊
    */
-  static async getRoom(roomId: string, forceServer = false): Promise<P2PRoom | null> {
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-    const roomSnapshot = forceServer 
-      ? await getDocFromServer(roomDoc)
-      : await getDoc(roomDoc);
-    if (!roomSnapshot.exists()) {
+  static async getRoom(roomId: string, _forceServer = false): Promise<P2PRoom | null> {
+    const snapshot = await get(ref(rtdb, RTDB.room(roomId)));
+    if (!snapshot.exists()) {
       return null;
     }
 
-    const data = roomSnapshot.data();
-    const result: P2PRoom = {
-      roomId: roomSnapshot.id,
-      ownerUid: data.ownerUid,
-      ownerName: data.ownerName,
-      participants: data.participants || [],
-      status: data.status || 'open',
-      isPrivate: !!data.isPrivate,
-      createdAt: data.createdAt?.toMillis() || Date.now(),
-      waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
-      waitingStartedAt: data.waitingStartedAt?.toMillis(),
-      meshIdentities: data.meshIdentities ? Object.fromEntries(
-        Object.entries(data.meshIdentities).map(([key, value]: [string, any]) => [
-          key,
-          {
-            userId: value.userId,
-            pubKey: value.pubKey,
-            joinedAt: value.joinedAt?.toMillis?.() || value.joinedAt || Date.now(),
-          },
-        ])
-      ) : undefined,
-      topology: data.topology || 'star',
-    };
+    const data = snapshot.val();
+    const result = parseRoom(roomId, data);
 
     if (DEBUG_ROOMS) {
       console.log('[RoomService] getRoom', result);
@@ -186,20 +196,20 @@ export class RoomService {
    */
   static async joinRoom(roomId: string, uid: string): Promise<void> {
     console.log('[RoomService] joinRoom called', { roomId, uid });
-    
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-    const room = await getDoc(roomDoc);
 
-    if (!room.exists()) {
+    const snapshot = await get(ref(rtdb, RTDB.room(roomId)));
+
+    if (!snapshot.exists()) {
       console.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
       throw new Error('房間不存在');
     }
 
-    const roomData = room.data();
+    const roomData = snapshot.val();
+    const participants = participantsToArray(roomData.participants);
     console.log('[RoomService] joinRoom - current room data', {
       roomId,
       status: roomData.status,
-      participants: roomData.participants || [],
+      participants,
       ownerUid: roomData.ownerUid,
     });
 
@@ -209,7 +219,6 @@ export class RoomService {
       throw new Error('房間已關閉');
     }
 
-    const participants = roomData.participants || [];
     const isNewParticipant = !participants.includes(uid);
     const newParticipants = isNewParticipant ? [...participants, uid] : participants;
 
@@ -233,8 +242,8 @@ export class RoomService {
     });
 
     if (isNewParticipant || shouldActivate) {
-      const updateData: any = {
-        participants: newParticipants,
+      const updateData: Record<string, any> = {
+        participants: participantsToObject(newParticipants),
       };
 
       if (shouldActivate) {
@@ -249,7 +258,7 @@ export class RoomService {
       }
 
       console.log('[RoomService] joinRoom - updating room', { roomId, updateData });
-      await updateDoc(roomDoc, updateData);
+      await update(ref(rtdb, RTDB.room(roomId)), updateData);
       console.log('[RoomService] joinRoom - room updated successfully', {
         roomId,
         newStatus: updateData.status || roomData.status,
@@ -264,6 +273,9 @@ export class RoomService {
         participantCount: newParticipants.length,
       });
     }
+
+    // Set up onDisconnect to remove this participant if they lose connection
+    onDisconnect(ref(rtdb, RTDB.roomParticipant(roomId, uid))).remove();
   }
 
   /**
@@ -283,7 +295,7 @@ export class RoomService {
       throw new Error('房間不是等待狀態');
     }
 
-    await updateDoc(doc(db, 'p2pRooms', roomId), {
+    await update(ref(rtdb, RTDB.room(roomId)), {
       status: 'open',
     });
   }
@@ -304,26 +316,25 @@ export class RoomService {
    * 離開房間
    */
   static async leaveRoom(roomId: string, uid: string): Promise<void> {
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-    const room = await getDoc(roomDoc);
+    const snapshot = await get(ref(rtdb, RTDB.room(roomId)));
 
-    if (!room.exists()) {
+    if (!snapshot.exists()) {
       return;
     }
 
-    const roomData = room.data();
-    const participants = roomData.participants || [];
+    const roomData = snapshot.val();
+    const participants = participantsToArray(roomData.participants);
     const newParticipants = participants.filter((p: string) => p !== uid);
 
     // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
-    // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
-    await updateDoc(roomDoc, {
-      participants: newParticipants,
+    // 只更新 participants，讓房主或後續 UI 明確決定何時關閉房間
+    await update(ref(rtdb, RTDB.room(roomId)), {
+      participants: participantsToObject(newParticipants),
     });
   }
 
   /**
-   * 關閉房間（標記 status = closed，文件仍保留在 Firestore）
+   * 關閉房間（標記 status = closed）
    */
   static async closeRoom(roomId: string, ownerUid: string): Promise<void> {
     const room = await this.getRoom(roomId);
@@ -335,17 +346,17 @@ export class RoomService {
       throw new Error('只有房間擁有者可以關閉房間');
     }
 
-    await updateDoc(doc(db, 'p2pRooms', roomId), {
+    await update(ref(rtdb, RTDB.room(roomId)), {
       status: 'closed',
     });
   }
 
   /**
-   * 房主離開房間：直接從 Firestore 刪除房間文件
+   * 房主離開房間：直接從 RTDB 刪除房間節點
    *
    * 設計說明：
-   * - 房間文件從 Firebase 刪除 → 房間從公開列表消失
-   * - 已建立的 P2P WebRTC 連線不受影響（連線不依賴 Firestore）
+   * - 房間節點從 Firebase 刪除 → 房間從公開列表消失
+   * - 已建立的 P2P WebRTC 連線不受影響（連線不依賴 RTDB）
    * - 若剩餘成員中有人沒有自己的房間，可透過 RoomRequestService.promoteNewHost()
    *   另建新房間，讓後續新人可找到入口
    *
@@ -355,7 +366,7 @@ export class RoomService {
   static async deleteRoom(roomId: string, ownerUid: string): Promise<void> {
     const room = await this.getRoom(roomId);
     if (!room) {
-      // 文件已不存在，視為成功
+      // 節點已不存在，視為成功
       return;
     }
 
@@ -363,7 +374,12 @@ export class RoomService {
       throw new Error('只有房間擁有者可以刪除房間');
     }
 
-    await deleteDoc(doc(db, 'p2pRooms', roomId));
+    // Remove the room and associated subcollections
+    await Promise.all([
+      remove(ref(rtdb, RTDB.room(roomId))),
+      remove(ref(rtdb, 'signals/' + roomId)),
+      remove(ref(rtdb, 'relay/' + roomId)),
+    ]);
 
     if (DEBUG_ROOMS) {
       console.log('[RoomService] deleteRoom: room removed from Firebase', {
@@ -376,10 +392,10 @@ export class RoomService {
 
   /**
    * 房主離開時的完整流程：
-   * 1. 從 Firestore 刪除房間文件（讓房間從列表消失）
+   * 1. 從 RTDB 刪除房間節點（讓房間從列表消失）
    * 2. 回傳剩餘成員列表，供呼叫端決定是否需要提升新房主
    *
-   * 注意：P2P 連線由 P2PManager 管理，這裡只處理 Firestore 狀態。
+   * 注意：P2P 連線由 P2PManager 管理，這裡只處理 RTDB 狀態。
    */
   static async ownerLeaveRoom(
     roomId: string,
@@ -396,8 +412,12 @@ export class RoomService {
 
     const remainingParticipants = room.participants.filter((p) => p !== ownerUid);
 
-    // 刪除房間文件（讓房間從 Firebase 消失）
-    await deleteDoc(doc(db, 'p2pRooms', roomId));
+    // 刪除房間節點及相關子路徑（讓房間從 Firebase 消失）
+    await Promise.all([
+      remove(ref(rtdb, RTDB.room(roomId))),
+      remove(ref(rtdb, 'signals/' + roomId)),
+      remove(ref(rtdb, 'relay/' + roomId)),
+    ]);
 
     console.log('[RoomService] ownerLeaveRoom: room deleted from Firebase', {
       roomId,
@@ -415,28 +435,17 @@ export class RoomService {
     uid: string,
     callback: (rooms: P2PRoom[]) => void
   ): () => void {
-    const roomsRef = collection(db, 'p2pRooms');
-    // 監聽 open 和 waiting 狀態的房間
-    const q = query(
-      roomsRef,
-      where('participants', 'array-contains', uid)
-    );
+    // RTDB doesn't support array-contains; listen to all rooms and filter client-side
+    const roomsRef = ref(rtdb, RTDB.rooms());
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onValue(roomsRef, (snapshot: DataSnapshot) => {
       const rooms: P2PRoom[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        rooms.push({
-          roomId: doc.id,
-          ownerUid: data.ownerUid,
-          ownerName: data.ownerName,
-          participants: data.participants || [],
-          status: data.status || 'open',
-          isPrivate: !!data.isPrivate,
-          createdAt: data.createdAt?.toMillis() || Date.now(),
-          waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
-          waitingStartedAt: data.waitingStartedAt?.toMillis(),
-        });
+      snapshot.forEach((child: DataSnapshot) => {
+        const data = child.val();
+        if (data.participants?.[uid] === true) {
+          const room = parseRoom(child.key!, data);
+          if (room) rooms.push(room);
+        }
       });
       if (DEBUG_ROOMS) {
         console.log('[RoomService] subscribeUserRooms snapshot', {
@@ -458,37 +467,16 @@ export class RoomService {
     roomId: string,
     callback: (room: P2PRoom | null) => void
   ): () => void {
-    const roomDoc = doc(db, 'p2pRooms', roomId);
+    const roomRef = ref(rtdb, RTDB.room(roomId));
 
-    const unsubscribe = onSnapshot(roomDoc, (snapshot) => {
+    const unsubscribe = onValue(roomRef, (snapshot: DataSnapshot) => {
       if (!snapshot.exists()) {
         callback(null);
         return;
       }
 
-      const data = snapshot.data();
-      callback({
-        roomId: snapshot.id,
-        ownerUid: data.ownerUid,
-        ownerName: data.ownerName,
-        participants: data.participants || [],
-        status: data.status || 'open',
-        isPrivate: !!data.isPrivate,
-        createdAt: data.createdAt?.toMillis() || Date.now(),
-        waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
-        waitingStartedAt: data.waitingStartedAt?.toMillis(),
-        meshIdentities: data.meshIdentities ? Object.fromEntries(
-          Object.entries(data.meshIdentities).map(([key, value]: [string, any]) => [
-            key,
-            {
-              userId: value.userId,
-              pubKey: value.pubKey,
-              joinedAt: value.joinedAt?.toMillis?.() || value.joinedAt || Date.now(),
-            },
-          ])
-        ) : undefined,
-        topology: data.topology || 'star',
-      });
+      const data = snapshot.val();
+      callback(parseRoom(roomId, data));
     });
 
     return unsubscribe;
@@ -500,26 +488,14 @@ export class RoomService {
   static subscribePublicRooms(
     callback: (rooms: P2PRoom[]) => void
   ): () => void {
-    const roomsRef = collection(db, 'p2pRooms');
-    // 只用 status == 'open' 過濾，避免舊資料沒有 isPrivate 欄位時被排除
-    const q = query(roomsRef, where('status', '==', 'open'));
+    const q = rtdbQuery(ref(rtdb, RTDB.rooms()), orderByChild('status'), equalTo('open'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onValue(q, (snapshot: DataSnapshot) => {
       const rooms: P2PRoom[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const room: P2PRoom = {
-          roomId: doc.id,
-          ownerUid: data.ownerUid,
-          ownerName: data.ownerName,
-          participants: data.participants || [],
-          status: data.status || 'open',
-          isPrivate: !!data.isPrivate, // 沒有欄位時視為 false（公開）
-          createdAt: data.createdAt?.toMillis() || Date.now(),
-          waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
-          waitingStartedAt: data.waitingStartedAt?.toMillis(),
-        };
-        rooms.push(room);
+      snapshot.forEach((child: DataSnapshot) => {
+        const data = child.val();
+        const room = parseRoom(child.key!, data);
+        if (room) rooms.push(room);
       });
 
       // 只在前端過濾出非 private 的房間
@@ -545,20 +521,19 @@ export class RoomService {
     userId: string,
     pubKey: string
   ): Promise<void> {
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-    const roomSnapshot = await getDoc(roomDoc);
-    
-    if (!roomSnapshot.exists()) {
+    const snapshot = await get(ref(rtdb, RTDB.room(roomId)));
+
+    if (!snapshot.exists()) {
       throw new Error('房間不存在');
     }
-    
-    const roomData = roomSnapshot.data();
-    const participants = roomData.participants || [];
-    
+
+    const roomData = snapshot.val();
+    const participants = participantsToArray(roomData.participants);
+
     if (!participants.includes(firebaseUid)) {
       throw new Error('用戶不是房間參與者');
     }
-    
+
     // 更新 meshIdentities
     const meshIdentities = roomData.meshIdentities || {};
     meshIdentities[firebaseUid] = {
@@ -566,12 +541,12 @@ export class RoomService {
       pubKey,
       joinedAt: Date.now(),
     };
-    
-    await updateDoc(roomDoc, {
+
+    await update(ref(rtdb, RTDB.room(roomId)), {
       meshIdentities,
       topology: 'mesh', // 標記為 mesh 拓撲
     });
-    
+
     if (DEBUG_ROOMS) {
       console.log('[RoomService] Updated mesh identity', {
         roomId,
@@ -589,7 +564,7 @@ export class RoomService {
     if (!room || !room.meshIdentities) {
       return new Map();
     }
-    
+
     const identities = new Map<string, { userId: string; pubKey: string }>();
     for (const [firebaseUid, identity] of Object.entries(room.meshIdentities)) {
       identities.set(firebaseUid, {
@@ -597,7 +572,7 @@ export class RoomService {
         pubKey: identity.pubKey,
       });
     }
-    
+
     return identities;
   }
 }

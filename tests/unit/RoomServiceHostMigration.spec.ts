@@ -1,64 +1,93 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { P2PRoom } from '../../src/types';
 
-// Mock firebase modules
+// Mock firebase config — export rtdb for RTDB-based code
 vi.mock('../../src/config/firebase', () => ({
-  db: {},
+  rtdb: {},
   auth: {},
   functions: {},
   default: {},
 }));
 
-// Track updateDoc and deleteDoc calls
-const mockUpdateDoc = vi.fn().mockResolvedValue(undefined);
-const mockDeleteDoc = vi.fn().mockResolvedValue(undefined);
-const mockGetDoc = vi.fn();
-const mockGetDocFromServer = vi.fn();
-const mockGetDocs = vi.fn().mockResolvedValue({ docs: [] });
-const mockSetDoc = vi.fn().mockResolvedValue(undefined);
-
-/**
- * Mock runTransaction：
- * 呼叫 callback 時傳入一個假 transaction 物件，記錄 .get / .update 呼叫
- */
-const mockTransactionGet = vi.fn();
-const mockTransactionUpdate = vi.fn();
-const mockRunTransaction = vi.fn(async (_db: unknown, cb: (t: unknown) => Promise<unknown>) => {
-  const transaction = {
-    get: mockTransactionGet,
-    update: mockTransactionUpdate,
-  };
-  return cb(transaction);
-});
-
-/** Mock increment()：回傳一個帶有 __increment 標記的哨兵物件，方便斷言 */
-const mockIncrement = vi.fn((n: number) => ({ __type: 'FieldValue.increment', operand: n }));
-
-vi.mock('firebase/firestore', () => ({
-  collection: vi.fn(() => 'mock-collection'),
-  doc: vi.fn((_db: unknown, _col: string, id: string) => ({ id, path: `p2pRooms/${id}` })),
-  setDoc: (...args: unknown[]) => mockSetDoc(...args),
-  getDoc: (...args: unknown[]) => mockGetDoc(...args),
-  getDocFromServer: (...args: unknown[]) => mockGetDocFromServer(...args),
-  getDocs: (...args: unknown[]) => mockGetDocs(...args),
-  updateDoc: (...args: unknown[]) => mockUpdateDoc(...args),
-  deleteDoc: (...args: unknown[]) => mockDeleteDoc(...args),
-  runTransaction: (...args: unknown[]) => mockRunTransaction(...args),
-  increment: (n: number) => mockIncrement(n),
-  onSnapshot: vi.fn(() => vi.fn()),
-  query: vi.fn((...args: unknown[]) => args),
-  where: vi.fn((...args: unknown[]) => args),
-  Timestamp: {
-    fromMillis: (ms: number) => ({ toMillis: () => ms, seconds: ms / 1000, nanoseconds: 0 }),
-    now: () => ({ toMillis: () => Date.now() }),
+// Mock RTDB paths
+vi.mock('../../src/config/rtdb-paths', () => ({
+  RTDB: {
+    room: (id: string) => `rooms/${id}`,
+    rooms: () => 'rooms',
+    signals: (id: string) => `signals/${id}`,
+    relay: (id: string) => `relay/${id}`,
+    roomParticipant: (roomId: string, uid: string) => `rooms/${roomId}/participants/${uid}`,
   },
-  arrayUnion: vi.fn((...args: unknown[]) => args),
-  arrayRemove: vi.fn((...args: unknown[]) => args),
+}));
+
+// RTDB mocks
+const mockRtdbUpdate = vi.fn().mockResolvedValue(undefined);
+const mockRtdbRemove = vi.fn().mockResolvedValue(undefined);
+const mockRtdbGet = vi.fn();
+const mockRtdbSet = vi.fn().mockResolvedValue(undefined);
+const mockRtdbRef = vi.fn((_db: unknown, _path?: string) => ({ path: _path || 'mock-ref' }));
+const mockRtdbOnValue = vi.fn(() => vi.fn());
+
+const mockRtdbRunTransaction = vi.fn(async (_ref: unknown, updateFn: (current: any) => any) => {
+  const currentData = (mockRtdbRunTransaction as any)._currentData ?? null;
+  const newData = updateFn(currentData);
+  return { committed: true, snapshot: { val: () => newData } };
+}) as any;
+mockRtdbRunTransaction._currentData = null;
+
+const mockOnDisconnect = vi.fn(() => ({
+  remove: vi.fn().mockReturnValue(Promise.resolve()),
+  set: vi.fn().mockReturnValue(Promise.resolve()),
+}));
+
+vi.mock('firebase/database', () => ({
+  ref: (...args: unknown[]) => mockRtdbRef(...args),
+  set: (...args: unknown[]) => mockRtdbSet(...args),
+  get: (...args: unknown[]) => mockRtdbGet(...args),
+  update: (...args: unknown[]) => mockRtdbUpdate(...args),
+  remove: (...args: unknown[]) => mockRtdbRemove(...args),
+  onValue: (...args: unknown[]) => mockRtdbOnValue(...args),
+  runTransaction: (...args: unknown[]) => mockRtdbRunTransaction(...args),
+  query: vi.fn((...args: unknown[]) => args),
+  orderByChild: vi.fn((...args: unknown[]) => args),
+  equalTo: vi.fn((...args: unknown[]) => args),
+  onDisconnect: (...args: unknown[]) => mockOnDisconnect(...args),
+  DataSnapshot: {},
 }));
 
 vi.mock('../../src/utils/uuid', () => ({
   generateUUID: vi.fn(() => 'generated-uuid'),
 }));
+
+/**
+ * Build an RTDB snapshot mock for a room that exists.
+ * RTDB stores participants as { uid: true } objects.
+ */
+function makeRtdbSnapshot(room: P2PRoom) {
+  return {
+    exists: () => true,
+    val: () => ({
+      ownerUid: room.ownerUid,
+      ownerName: room.ownerName,
+      participants: Object.fromEntries(room.participants.map((p) => [p, true])),
+      status: room.status,
+      isPrivate: room.isPrivate,
+      createdAt: room.createdAt,
+      waitingTimeout: room.waitingTimeout ?? 5 * 60 * 1000,
+      waitingStartedAt: room.waitingStartedAt,
+      hostMigrationEpoch: room.hostMigrationEpoch ?? 0,
+      version: (room as any).version ?? 0,
+    }),
+  };
+}
+
+/** Build a snapshot for a room that does not exist */
+function makeEmptySnapshot() {
+  return {
+    exists: () => false,
+    val: () => null,
+  };
+}
 
 function makeRoom(overrides: Partial<P2PRoom> = {}): P2PRoom {
   return {
@@ -74,97 +103,46 @@ function makeRoom(overrides: Partial<P2PRoom> = {}): P2PRoom {
   };
 }
 
-function makeFirestoreDoc(room: P2PRoom) {
-  return {
-    exists: () => true,
-    id: room.roomId,
-    data: () => ({
-      ...room,
-      createdAt: { toMillis: () => room.createdAt },
-      waitingStartedAt: room.waitingStartedAt ? { toMillis: () => room.waitingStartedAt } : undefined,
-      hostMigrationEpoch: room.hostMigrationEpoch ?? 0,
-      version: room.version ?? 0,
-    }),
-  };
-}
-
 describe('RoomService - Host Migration', () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
+    mockRtdbRunTransaction._currentData = null;
   });
 
   describe('ownerLeaveRoom', () => {
-    it('uses transaction and sets status=open with new owner when remaining participants', async () => {
+    it('deletes the room node via remove() and returns remaining participants', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom();
-      // getRoom() 內部用 getDoc
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
-      // transaction.get() 回傳
-      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
+      // getRoom() calls get(ref(rtdb, RTDB.room(roomId)))
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
       const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
-      // 應使用 runTransaction
-      expect(mockRunTransaction).toHaveBeenCalled();
-      // transaction.update 應被呼叫，設定 status='open' 和新 ownerUid
-      expect(mockTransactionUpdate).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          status: 'open',
-          ownerUid: 'member-2',
-          hostMigrationEpoch: 1,
-        })
-      );
+      // Room should be removed via remove()
+      expect(mockRtdbRemove).toHaveBeenCalled();
+      // Remaining participants should exclude the owner
       expect(result.remainingParticipants).toContain('member-2');
       expect(result.remainingParticipants).toContain('member-3');
-      expect(result.newOwnerUid).toBe('member-2');
+      expect(result.remainingParticipants).not.toContain('owner-1');
     });
 
-    it('sets status=closed when no remaining participants (does NOT delete document)', async () => {
+    it('returns empty participants when owner is the only participant', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom({ participants: ['owner-1'] });
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
-      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
       const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
       expect(result.remainingParticipants).toHaveLength(0);
-      expect(mockDeleteDoc).not.toHaveBeenCalled();
-      // transaction.update 應包含 status='closed'
-      expect(mockTransactionUpdate).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ status: 'closed' })
-      );
-    });
-
-    it('closed room document is NOT deleted from Firestore', async () => {
-      const { RoomService } = await import('../../src/services/RoomService');
-      const room = makeRoom({ participants: ['owner-1'] });
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
-      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
-
-      await RoomService.ownerLeaveRoom('room-1', 'owner-1');
-
-      expect(mockDeleteDoc).not.toHaveBeenCalled();
-    });
-
-    it('promotes new host from remaining participants when no promoteNewHostFn', async () => {
-      const { RoomService } = await import('../../src/services/RoomService');
-      const room = makeRoom();
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
-      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
-
-      const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
-
-      expect(result.remainingParticipants).toContain('member-2');
-      expect(result.remainingParticipants).toContain('member-3');
-      expect(result.newOwnerUid).toBeDefined();
+      // Room is still removed
+      expect(mockRtdbRemove).toHaveBeenCalled();
     });
 
     it('throws when non-owner calls ownerLeaveRoom', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom();
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
       await expect(
         RoomService.ownerLeaveRoom('room-1', 'not-the-owner')
@@ -173,81 +151,58 @@ describe('RoomService - Host Migration', () => {
 
     it('returns empty when room does not exist', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
-      mockGetDoc.mockResolvedValueOnce({
-        exists: () => false,
-        id: 'room-1',
-        data: () => ({}),
-      });
+      mockRtdbGet.mockResolvedValueOnce(makeEmptySnapshot());
 
       const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1');
       expect(result.remainingParticipants).toHaveLength(0);
     });
 
-    it('hostMigrationEpoch increments atomically in transaction', async () => {
+    it('room node is removed from RTDB on owner leave', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
-      const room = makeRoom({ hostMigrationEpoch: 5 });
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
-      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
+      const room = makeRoom({ participants: ['owner-1'] });
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
       await RoomService.ownerLeaveRoom('room-1', 'owner-1');
 
-      expect(mockTransactionUpdate).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ hostMigrationEpoch: 6 })
-      );
+      expect(mockRtdbRemove).toHaveBeenCalled();
     });
+  });
 
-    it('uses promoteNewHostFn when provided and handles new room creation', async () => {
+  describe('closeRoom', () => {
+    it('writes status=closed via RTDB update()', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
       const room = makeRoom();
-      mockGetDoc.mockResolvedValueOnce(makeFirestoreDoc(room));
-      mockTransactionGet.mockResolvedValueOnce(makeFirestoreDoc(room));
+      // closeRoom calls getRoom() internally which calls get()
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
-      const promoteNewHostFn = vi.fn().mockResolvedValue('new-room-id');
+      await RoomService.closeRoom('room-1', 'owner-1');
 
-      const result = await RoomService.ownerLeaveRoom('room-1', 'owner-1', 'Owner', promoteNewHostFn);
-
-      expect(promoteNewHostFn).toHaveBeenCalled();
-      expect(result.remainingParticipants).toHaveLength(2);
-
-      // 在 transaction 之後，room 應被 closed（via updateDoc，非 transaction）
-      expect(mockUpdateDoc).toHaveBeenCalledWith(
+      expect(mockRtdbUpdate).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ status: 'closed' })
+        { status: 'closed' }
       );
     });
   });
 
-  describe('updateRoomStatus', () => {
-    it('writes the correct status to Firestore', async () => {
+  describe('deleteRoom', () => {
+    it('removes the room node when called by the owner', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
-      await RoomService.updateRoomStatus('room-1', 'closing');
-      expect(mockUpdateDoc).toHaveBeenCalledWith(
-        expect.anything(),
-        { status: 'closing' }
-      );
-    });
-  });
+      const room = makeRoom();
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
-  describe('incrementVersion', () => {
-    it('uses atomic increment(1) instead of read-then-write', async () => {
-      const { RoomService } = await import('../../src/services/RoomService');
+      await RoomService.deleteRoom('room-1', 'owner-1');
 
-      await RoomService.incrementVersion('room-1');
-
-      expect(mockUpdateDoc).toHaveBeenCalledWith(
-        expect.anything(),
-        { version: expect.objectContaining({ __type: 'FieldValue.increment', operand: 1 }) }
-      );
+      expect(mockRtdbRemove).toHaveBeenCalled();
     });
 
-    it('does not require reading the room first', async () => {
+    it('throws when non-owner tries to delete', async () => {
       const { RoomService } = await import('../../src/services/RoomService');
+      const room = makeRoom();
+      mockRtdbGet.mockResolvedValueOnce(makeRtdbSnapshot(room));
 
-      await RoomService.incrementVersion('room-1');
-
-      // 原子操作不需要先 getDoc
-      expect(mockGetDoc).not.toHaveBeenCalled();
+      await expect(
+        RoomService.deleteRoom('room-1', 'not-the-owner')
+      ).rejects.toThrow();
     });
   });
 });
