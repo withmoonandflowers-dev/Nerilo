@@ -1,4 +1,7 @@
 {
+  "database": {
+    "rules": "database.rules.json"
+  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
@@ -48,6 +51,10 @@
     },
     "firestore": {
       "port": 8080,
+      "host": "127.0.0.1"
+    },
+    "database": {
+      "port": 9000,
       "host": "127.0.0.1"
     },
     "ui": {

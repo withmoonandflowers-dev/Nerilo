@@ -11,8 +11,8 @@ import {
   onAuthStateChanged,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../config/firebase';
+import { ref, get } from 'firebase/database';
+import { auth, rtdb } from '../config/firebase';
 import type { User, UserRole } from '../types';
 import { logger } from '../utils/logger';
 
@@ -146,8 +146,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       // 取得使用者 profile（可選）
-      const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-      const userData = userDoc.data();
+      const userSnap = await get(ref(rtdb, 'users/' + firebaseUser.uid));
+      const userData = userSnap.val();
 
       setUser({
         uid: firebaseUser.uid,

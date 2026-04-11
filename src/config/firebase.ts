@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
 // firebase/functions 已移除 — 目前未使用 Cloud Functions（ICE servers 改用直連 STUN）
 // 未來若需要 httpsCallable()，再 import { getFunctions } from 'firebase/functions'
 
@@ -26,6 +27,7 @@ const REQUIRED_VARS = [
   'VITE_FIREBASE_STORAGE_BUCKET',
   'VITE_FIREBASE_MESSAGING_SENDER_ID',
   'VITE_FIREBASE_APP_ID',
+  'VITE_FIREBASE_DATABASE_URL',
 ] as const;
 
 // Test mode 使用假的 config 連 emulator（不需要真實 API key）
@@ -37,6 +39,7 @@ const firebaseConfig = IS_TEST_MODE
       storageBucket: '',
       messagingSenderId: '000000000000',
       appId: '1:000000000000:web:0000000000000000',
+      databaseURL: 'http://127.0.0.1:9000/?ns=nerilo',
     }
   : {
       apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            ?? '',
@@ -45,6 +48,7 @@ const firebaseConfig = IS_TEST_MODE
       storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     ?? '',
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? '',
       appId:             import.meta.env.VITE_FIREBASE_APP_ID             ?? '',
+      databaseURL:       import.meta.env.VITE_FIREBASE_DATABASE_URL       ?? '',
     };
 
 // 開發模式（非 test）下檢查環境變數是否齊全
@@ -63,12 +67,14 @@ if (IS_DEV && !IS_TEST_MODE) {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const rtdb = getDatabase(app);
 
 // Test mode：自動連接 Firebase Emulator（E2E 測試用）
 if (IS_TEST_MODE) {
   try {
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    connectDatabaseEmulator(rtdb, '127.0.0.1', 9000);
     console.log('[Firebase] Connected to emulators (test mode)');
   } catch (err) {
     console.warn('[Firebase] Failed to connect to emulators:', err);

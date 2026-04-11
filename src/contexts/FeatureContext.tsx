@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
-import type { Feature, UserRole } from '../types';
+import type { Feature } from '../types';
+
+// TODO: Migrate to Firebase Remote Config
 
 interface FeatureContextType {
   features: Feature[];
@@ -18,50 +18,12 @@ export const FeatureProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 無論 user 是否存在，都確保返回 cleanup function（#23）
-    let unsubscribe: (() => void) | null = null;
-
-    if (!user) {
-      setFeatures([]);
-      setLoading(false);
-    } else {
-      const featuresRef = collection(db, 'features');
-      const q = query(featuresRef, where('enabled', '==', true));
-
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        const featureList: Feature[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          const feature: Feature = {
-            featureId: doc.id,
-            name: data.name,
-            description: data.description,
-            enabled: data.enabled,
-            requiredRoles: data.requiredRoles || [],
-            route: data.route,
-            icon: data.icon,
-            createdAt: data.createdAt?.toMillis() || Date.now(),
-            updatedAt: data.updatedAt?.toMillis() || Date.now(),
-          };
-
-          // RBAC 過濾：檢查使用者是否有權限
-          if (hasPermission(user.role, feature.requiredRoles)) {
-            featureList.push(feature);
-          }
-        });
-
-        setFeatures(featureList);
-        setLoading(false);
-      });
-    }
-
-    return () => { unsubscribe?.(); };
+    // TODO: Migrate to Firebase Remote Config
+    setFeatures([]);
+    setLoading(false);
   }, [user]);
 
-  const hasPermission = (userRole: UserRole, requiredRoles: UserRole[]): boolean => {
-    if (requiredRoles.length === 0) return true;
-    return requiredRoles.includes(userRole);
-  };
+  // TODO: Restore RBAC filtering (hasPermission) when migrated to Firebase Remote Config
 
   const searchFeatures = (keyword: string): Feature[] => {
     if (!keyword.trim()) return features;
@@ -88,6 +50,3 @@ export const useFeatures = (): FeatureContextType => {
   }
   return context;
 };
-
-
-

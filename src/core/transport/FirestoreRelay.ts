@@ -1,30 +1,31 @@
 /**
- * Firestore Relay Fallback
- * 當 WebRTC 直連失敗時，透過 Firestore 做訊息 relay。
- * 僅用於 control 和 chat 訊息（不用於 bulk/file）。
+ * RTDB Relay Fallback
+ * When WebRTC direct connection fails, relay messages through Firebase Realtime Database.
+ * Only used for control and chat messages (not for bulk/file).
  */
 
 import {
-  collection,
-  addDoc,
-  query,
-  where,
-  onSnapshot,
-  serverTimestamp,
-  Timestamp,
-  getDocs,
-  deleteDoc,
+  ref,
+  push,
+  set,
+  get,
+  remove,
+  onChildAdded,
+  query as rtdbQuery,
+  orderByChild,
+  equalTo,
   type Unsubscribe,
-} from 'firebase/firestore';
-import { db } from '../../config/firebase';
+} from 'firebase/database';
+import { rtdb } from '../../config/firebase';
+import { RTDB } from '../../config/rtdb-paths';
 import { logger } from '../../utils/logger';
 
 export interface RelayMessage {
   from: string;
   to: string;
   payload: string;
-  createdAt: unknown; // Firestore Timestamp or serverTimestamp sentinel
-  expiresAt: Timestamp;
+  createdAt: number; // epoch ms
+  expiresAt: number; // epoch ms
 }
 
 /** Max relay payload size in bytes (64 KB) */
@@ -41,7 +42,7 @@ export class FirestoreRelay {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
-   * Send a message through the Firestore relay.
+   * Send a message through the RTDB relay.
    * @param roomId  P2P room ID
    * @param to      Target user UID
    * @param payload JSON-serialized envelope (must be < 64 KB)
@@ -53,19 +54,20 @@ export class FirestoreRelay {
       );
     }
 
-    const relayCol = collection(db, 'p2pRooms', roomId, 'relay');
-    const now = Timestamp.now();
-    const expiresAt = Timestamp.fromMillis(now.toMillis() + RELAY_TTL_MS);
+    const relayRef = ref(rtdb, RTDB.relay(roomId));
+    const now = Date.now();
+    const expiresAt = now + RELAY_TTL_MS;
 
-    const doc: RelayMessage = {
+    const msg: RelayMessage = {
       from,
       to,
       payload,
-      createdAt: serverTimestamp(),
+      createdAt: now,
       expiresAt,
     };
 
-    await addDoc(relayCol, doc);
+    const newRef = push(relayRef);
+    await set(newRef, msg);
   }
 
   /**
@@ -76,23 +78,24 @@ export class FirestoreRelay {
    * @returns Unsubscribe function
    */
   subscribe(roomId: string, myUid: string, handler: RelayHandler): Unsubscribe {
-    const relayCol = collection(db, 'p2pRooms', roomId, 'relay');
-    const q = query(
-      relayCol,
-      where('to', '==', myUid),
-      where('expiresAt', '>', Timestamp.now())
-    );
+    const relayRef = ref(rtdb, RTDB.relay(roomId));
+    const q = rtdbQuery(relayRef, orderByChild('to'), equalTo(myUid));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      for (const change of snapshot.docChanges()) {
-        if (change.type === 'added') {
-          const data = change.doc.data() as RelayMessage;
-          handler(data.from, data.payload);
+    const unsubscribe = onChildAdded(q, (snapshot) => {
+      const data = snapshot.val() as RelayMessage | null;
+      if (!data) return;
 
-          // Delete the doc after reading (fire-and-forget)
-          deleteDoc(change.doc.ref).catch(() => {});
-        }
+      // Client-side expiration filter
+      if (data.expiresAt <= Date.now()) {
+        // Expired — delete and skip
+        remove(snapshot.ref).catch(() => {});
+        return;
       }
+
+      handler(data.from, data.payload);
+
+      // Delete the entry after reading (fire-and-forget)
+      remove(snapshot.ref).catch(() => {});
     });
 
     this.subscriptions.push(unsubscribe);
@@ -100,7 +103,7 @@ export class FirestoreRelay {
   }
 
   /**
-   * Start periodic cleanup of expired relay documents.
+   * Start periodic cleanup of expired relay entries.
    */
   startCleanup(roomId: string): void {
     if (this.cleanupTimer) return;
@@ -113,27 +116,29 @@ export class FirestoreRelay {
   }
 
   /**
-   * Delete expired relay documents for a room.
+   * Delete expired relay entries for a room.
    */
   async cleanup(roomId: string): Promise<number> {
-    const relayCol = collection(db, 'p2pRooms', roomId, 'relay');
-    const q = query(
-      relayCol,
-      where('expiresAt', '<', Timestamp.now())
-    );
+    const relayRef = ref(rtdb, RTDB.relay(roomId));
+    const snapshot = await get(relayRef);
 
-    const snapshot = await getDocs(q);
+    if (!snapshot.exists()) return 0;
+
     let deleted = 0;
+    const now = Date.now();
     const batch: Promise<void>[] = [];
 
-    for (const doc of snapshot.docs) {
-      batch.push(deleteDoc(doc.ref));
-      deleted++;
-    }
+    snapshot.forEach((child) => {
+      const data = child.val() as RelayMessage | null;
+      if (data && data.expiresAt < now) {
+        batch.push(remove(child.ref));
+        deleted++;
+      }
+    });
 
     await Promise.allSettled(batch);
     if (deleted > 0) {
-      logger.info('[FirestoreRelay] Cleaned up expired docs', {
+      logger.info('[FirestoreRelay] Cleaned up expired entries', {
         roomId,
         count: deleted,
       });
