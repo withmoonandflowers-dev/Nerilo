@@ -8,8 +8,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useServices } from '../../contexts/ServicesContext';
 import {
-  sendMessageViaFirestore,
-  subscribeToFirestoreMessages,
+  sendMessageViaRelay,
+  subscribeToRelayMessages,
 } from '../../services/FirestoreChatFallback';
 import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
 import { featureLog } from '../../utils/featureLog';
@@ -291,7 +291,7 @@ const ChatPage: React.FC = () => {
   // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied
   useEffect(() => {
     if (!roomId || !user || !hasJoinedRoom) return;
-    const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, user?.uid);
+    const unsubscribe = subscribeToRelayMessages(roomId, addMessage, user?.uid);
     return () => unsubscribe();
   }, [roomId, user, addMessage, hasJoinedRoom]);
 
@@ -350,7 +350,7 @@ const ChatPage: React.FC = () => {
           return;
         }
       } else {
-        await sendMessageViaFirestore(roomId, user.uid, content);
+        await sendMessageViaRelay(roomId, user.uid, content);
         featureLog('chat', 'message_sent', { roomId, channel: 'firestore_fallback' });
       }
       updateMessageStatus(tempId, 'sent');

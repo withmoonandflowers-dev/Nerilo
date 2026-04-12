@@ -1,9 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
-// firebase/functions 已移除 — 目前未使用 Cloud Functions（ICE servers 改用直連 STUN）
-// 未來若需要 httpsCallable()，再 import { getFunctions } from 'firebase/functions'
 
 /**
  * Firebase 設定
@@ -66,14 +63,12 @@ if (IS_DEV && !IS_TEST_MODE) {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
 export const rtdb = getDatabase(app);
 
 // Test mode：自動連接 Firebase Emulator（E2E 測試用）
 if (IS_TEST_MODE) {
   try {
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    connectFirestoreEmulator(db, '127.0.0.1', 8080);
     connectDatabaseEmulator(rtdb, '127.0.0.1', 9000);
     console.log('[Firebase] Connected to emulators (test mode)');
   } catch (err) {

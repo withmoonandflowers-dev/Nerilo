@@ -1,12 +1,12 @@
 /**
  * RoomRequestService — 房間合併（Merge）與分岔（Split）請求管理
  *
- * Firestore 集合：roomRequests
- * 集合中每個文件代表一次 merge 或 split 請求/計劃。
+ * RTDB 路徑：roomRequests/{requestId}
+ * 每個節點代表一次 merge 或 split 請求/計劃。
  *
  * ── 合併流程（Merge）────────────────────────────────────────────────────────
  *
- *  Room A owner ──(createMergeRequest)──▶ Firestore roomRequests
+ *  Room A owner ──(createMergeRequest)──▶ RTDB roomRequests
  *       ▲                                          │
  *       │                                (subscribeIncomingMerge)
  *       │                                          ▼
@@ -19,7 +19,7 @@
  *
  * ── 分岔流程（Split）────────────────────────────────────────────────────────
  *
- *  Room A owner ──(createSplitPlan)──▶ Firestore roomRequests
+ *  Room A owner ──(createSplitPlan)──▶ RTDB roomRequests
  *       ▲                                          │
  *       │                               (subscribeSplitPlan)
  *       │                                          ▼
@@ -37,20 +37,17 @@
  */
 
 import {
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  updateDoc,
-  onSnapshot,
-  query,
-  where,
-  arrayUnion,
-  arrayRemove,
-  Timestamp,
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
+  ref,
+  set,
+  get,
+  update,
+  onValue,
+  query as rtdbQuery,
+  orderByChild,
+  equalTo,
+} from 'firebase/database';
+import { rtdb } from '../config/firebase';
+import { RTDB } from '../config/rtdb-paths';
 import { generateUUID } from '../utils/uuid';
 import { logger } from '../utils/logger';
 import type { RoomMergeRequest, RoomSplitPlan } from '../types';
@@ -59,22 +56,14 @@ import { RoomService } from './RoomService';
 const MERGE_EXPIRE_MS = 2 * 60 * 1000;  // 2 分鐘
 const SPLIT_EXPIRE_MS  = 5 * 60 * 1000; // 5 分鐘
 
-// ── 內部 Firestore 文件轉換 ─────────────────────────────────────────────────
+// ── 內部 RTDB 資料轉換 ─────────────────────────────────────────────────
 
-/** Firestore Timestamp 類型的最小介面 */
-interface FirestoreTimestampLike {
-  toMillis(): number;
-}
-
-/** 將可能為 Firestore Timestamp 或 number 的值轉換為 number */
+/** 將可能為 number 或其他型別的值轉換為 number */
 function toMillis(value: unknown): number {
-  if (value && typeof value === 'object' && 'toMillis' in value) {
-    return (value as FirestoreTimestampLike).toMillis();
-  }
   return typeof value === 'number' ? value : Date.now();
 }
 
-function docToMergeRequest(id: string, data: Record<string, unknown>): RoomMergeRequest {
+function snapshotToMergeRequest(id: string, data: Record<string, unknown>): RoomMergeRequest {
   return {
     requestId: id,
     type: 'merge',
@@ -88,7 +77,7 @@ function docToMergeRequest(id: string, data: Record<string, unknown>): RoomMerge
   };
 }
 
-function docToSplitPlan(id: string, data: Record<string, unknown>): RoomSplitPlan {
+function snapshotToSplitPlan(id: string, data: Record<string, unknown>): RoomSplitPlan {
   return {
     planId: id,
     type: 'split',
@@ -140,19 +129,19 @@ export class RoomRequestService {
     const requestId = generateUUID();
     const now = Date.now();
 
-    await setDoc(doc(db, 'roomRequests', requestId), {
+    await set(ref(rtdb, RTDB.roomRequest(requestId)), {
       type: 'merge',
       status: 'pending',
       sourceRoomId,
       sourceOwnerUid,
       targetRoomId,
       targetOwnerUid,
-      createdAt: Timestamp.fromMillis(now),
-      expiresAt: Timestamp.fromMillis(now + MERGE_EXPIRE_MS),
+      createdAt: now,
+      expiresAt: now + MERGE_EXPIRE_MS,
     });
 
     // 在目標房間寫入 pendingMergeRequestId，讓 B 的房主可以快速訂閱
-    await updateDoc(doc(db, 'p2pRooms', targetRoomId), {
+    await update(ref(rtdb, RTDB.room(targetRoomId)), {
       pendingMergeRequestId: requestId,
     });
 
@@ -168,7 +157,7 @@ export class RoomRequestService {
   /**
    * 目標房主接受合併請求
    *
-   * Firestore 執行順序：
+   * RTDB 執行順序：
    * 1. 將 Room A 的 participants 加入 Room B
    * 2. 刪除 Room A 文件（房間從列表消失）
    * 3. 清除 Room B 上的 pendingMergeRequestId
@@ -180,7 +169,7 @@ export class RoomRequestService {
    * - Room A 成員透過 P2P 宣告 provenance（chain-sync:provenance-announce）
    *   Room B 成員收到後請求並儲存 Room A 的鏈
    *
-   * @param onChainAction 可選的 chain 操作回呼，在 Firestore 更新完成後呼叫。
+   * @param onChainAction 可選的 chain 操作回呼，在 RTDB 更新完成後呼叫。
    *   接收 mergeInfo，呼叫端可用來：
    *   - 呼叫 ChainMergeService.writeMergeMarker(sourceRoomId, sourceOwnerUid)
    */
@@ -194,10 +183,10 @@ export class RoomRequestService {
       mergedParticipants: string[];
     }) => Promise<void>
   ): Promise<void> {
-    const requestDoc = await getDoc(doc(db, 'roomRequests', requestId));
-    if (!requestDoc.exists()) throw new Error('合併請求不存在');
+    const snap = await get(ref(rtdb, RTDB.roomRequest(requestId)));
+    if (!snap.exists()) throw new Error('合併請求不存在');
 
-    const request = docToMergeRequest(requestDoc.id, requestDoc.data());
+    const request = snapshotToMergeRequest(snap.key!, snap.val());
     if (request.status !== 'pending') throw new Error('請求已處理過');
     if (request.targetOwnerUid !== targetOwnerUid) throw new Error('只有目標房主可以接受合併');
     if (Date.now() > request.expiresAt) throw new Error('合併請求已過期');
@@ -211,10 +200,16 @@ export class RoomRequestService {
     if (!targetRoom) throw new Error('目標房間已不存在');
     const sourceParticipants = sourceRoom?.participants ?? [];
 
-    // 1. 將 source 的所有成員加入 target
+    // 1. 將 source 的所有成員加入 target（RTDB: read current participants, merge, write back）
     if (sourceParticipants.length > 0) {
-      await updateDoc(doc(db, 'p2pRooms', request.targetRoomId), {
-        participants: arrayUnion(...sourceParticipants),
+      const targetRoomSnap = await get(ref(rtdb, RTDB.room(request.targetRoomId)));
+      const targetData = targetRoomSnap.val() || {};
+      const currentParticipants: Record<string, boolean> = targetData.participants || {};
+      for (const uid of sourceParticipants) {
+        currentParticipants[uid] = true;
+      }
+      await update(ref(rtdb, RTDB.room(request.targetRoomId)), {
+        participants: currentParticipants,
       });
     }
 
@@ -225,23 +220,23 @@ export class RoomRequestService {
     }
 
     // 3. 清除 target 上的 pendingMergeRequestId
-    await updateDoc(doc(db, 'p2pRooms', request.targetRoomId), {
+    await update(ref(rtdb, RTDB.room(request.targetRoomId)), {
       pendingMergeRequestId: null,
     });
 
     // 4. 更新 request 狀態
-    await updateDoc(doc(db, 'roomRequests', requestId), {
+    await update(ref(rtdb, RTDB.roomRequest(requestId)), {
       status: 'completed',
     });
 
-    logger.info('[RoomRequestService] Merge accepted (Firestore done)', {
+    logger.info('[RoomRequestService] Merge accepted (RTDB done)', {
       requestId,
       sourceRoomId: request.sourceRoomId,
       targetRoomId: request.targetRoomId,
       mergedParticipants: sourceParticipants,
     });
 
-    // 5. Chain 操作（在 Firestore 更新完成後執行，由呼叫端提供）
+    // 5. Chain 操作（在 RTDB 更新完成後執行，由呼叫端提供）
     //    典型用法：
     //    await mergeService.writeMergeMarker(sourceRoomId, sourceOwnerUid)
     if (onChainAction) {
@@ -261,16 +256,16 @@ export class RoomRequestService {
     requestId: string,
     targetOwnerUid: string
   ): Promise<void> {
-    const requestDoc = await getDoc(doc(db, 'roomRequests', requestId));
-    if (!requestDoc.exists()) throw new Error('合併請求不存在');
+    const snap = await get(ref(rtdb, RTDB.roomRequest(requestId)));
+    if (!snap.exists()) throw new Error('合併請求不存在');
 
-    const request = docToMergeRequest(requestDoc.id, requestDoc.data());
+    const request = snapshotToMergeRequest(snap.key!, snap.val());
     if (request.targetOwnerUid !== targetOwnerUid) throw new Error('只有目標房主可以拒絕合併');
 
     await Promise.all([
-      updateDoc(doc(db, 'roomRequests', requestId), { status: 'rejected' }),
+      update(ref(rtdb, RTDB.roomRequest(requestId)), { status: 'rejected' }),
       // 清除 target 上的 pendingMergeRequestId
-      updateDoc(doc(db, 'p2pRooms', request.targetRoomId), {
+      update(ref(rtdb, RTDB.room(request.targetRoomId)), {
         pendingMergeRequestId: null,
       }),
     ]);
@@ -281,6 +276,9 @@ export class RoomRequestService {
   /**
    * 訂閱「送進來」的合併請求（目標房主用）
    *
+   * RTDB 限制：只能對一個子鍵做 orderByChild + equalTo，
+   * 因此先查 targetOwnerUid，前端再過濾 type 與 status。
+   *
    * @param targetOwnerUid 目標房主 UID（監聽所有以此為 targetOwnerUid 的 pending 請求）
    * @param callback 回呼，帶入所有 pending 請求列表
    * @returns 取消訂閱函式
@@ -289,19 +287,27 @@ export class RoomRequestService {
     targetOwnerUid: string,
     callback: (requests: RoomMergeRequest[]) => void
   ): () => void {
-    const q = query(
-      collection(db, 'roomRequests'),
-      where('type', '==', 'merge'),
-      where('targetOwnerUid', '==', targetOwnerUid),
-      where('status', '==', 'pending')
+    const q = rtdbQuery(
+      ref(rtdb, RTDB.roomRequests()),
+      orderByChild('targetOwnerUid'),
+      equalTo(targetOwnerUid)
     );
 
-    return onSnapshot(q, (snapshot) => {
-      const requests = snapshot.docs
-        .map((d) => docToMergeRequest(d.id, d.data()))
-        .filter((r) => Date.now() <= r.expiresAt); // 前端也過濾過期項目
+    const unsubscribe = onValue(q, (snapshot) => {
+      const requests: RoomMergeRequest[] = [];
+      snapshot.forEach((child) => {
+        const data = child.val();
+        if (data.type === 'merge' && data.status === 'pending') {
+          const req = snapshotToMergeRequest(child.key!, data);
+          if (Date.now() <= req.expiresAt) {
+            requests.push(req);
+          }
+        }
+      });
       callback(requests);
     });
+
+    return unsubscribe;
   }
 
   /**
@@ -311,13 +317,15 @@ export class RoomRequestService {
     requestId: string,
     callback: (request: RoomMergeRequest | null) => void
   ): () => void {
-    return onSnapshot(doc(db, 'roomRequests', requestId), (snapshot) => {
+    const unsubscribe = onValue(ref(rtdb, RTDB.roomRequest(requestId)), (snapshot) => {
       if (!snapshot.exists()) {
         callback(null);
         return;
       }
-      callback(docToMergeRequest(snapshot.id, snapshot.data()));
+      callback(snapshotToMergeRequest(snapshot.key!, snapshot.val()));
     });
+
+    return unsubscribe;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -365,33 +373,37 @@ export class RoomRequestService {
     }
 
     // 確認 newRoomOwnerUid 目前沒有自己的房間
-    const existingRoomsSnap = await getDocs(
-      query(collection(db, 'p2pRooms'), where('ownerUid', '==', newRoomOwnerUid))
+    const roomsSnap = await get(
+      rtdbQuery(ref(rtdb, RTDB.rooms()), orderByChild('ownerUid'), equalTo(newRoomOwnerUid))
     );
     // 只考慮 waiting/open 狀態的房間（closed 的不影響）
-    const activeOwnedRooms = existingRoomsSnap.docs.filter(
-      (d) => d.data().status !== 'closed'
-    );
-    if (activeOwnedRooms.length > 0) {
+    let hasActiveRoom = false;
+    roomsSnap.forEach((child) => {
+      const data = child.val();
+      if (data.status !== 'closed') {
+        hasActiveRoom = true;
+      }
+    });
+    if (hasActiveRoom) {
       throw new Error('指定的新房主目前已擁有一個房間，無法再建立新房間');
     }
 
     const planId = generateUUID();
     const now = Date.now();
 
-    await setDoc(doc(db, 'roomRequests', planId), {
+    await set(ref(rtdb, RTDB.roomRequest(planId)), {
       type: 'split',
       status: 'pending',
       sourceRoomId,
       sourceOwnerUid,
       newRoomOwnerUid,
       participantsToSplit,
-      createdAt: Timestamp.fromMillis(now),
-      expiresAt: Timestamp.fromMillis(now + SPLIT_EXPIRE_MS),
+      createdAt: now,
+      expiresAt: now + SPLIT_EXPIRE_MS,
     });
 
     // 在 source 房間寫入 pendingSplitPlanId，讓 newRoomOwnerUid 可快速感知
-    await updateDoc(doc(db, 'p2pRooms', sourceRoomId), {
+    await update(ref(rtdb, RTDB.room(sourceRoomId)), {
       pendingSplitPlanId: planId,
     });
 
@@ -408,7 +420,7 @@ export class RoomRequestService {
   /**
    * 被指定的新房主接受分岔計劃
    *
-   * Firestore 執行順序：
+   * RTDB 執行順序：
    * 1. newRoomOwnerUid 建立新房間（自動帶入 participantsToSplit）
    * 2. 將 participantsToSplit 從 source 房間移除
    * 3. 清除 source 上的 pendingSplitPlanId
@@ -423,7 +435,7 @@ export class RoomRequestService {
    * @param planId          分岔計劃 ID
    * @param newRoomOwnerUid 接受者（必須與計劃中的 newRoomOwnerUid 一致）
    * @param ownerName       新房主的顯示名稱
-   * @param onChainAction   可選的 chain 操作回呼，在 Firestore 更新完成後呼叫
+   * @param onChainAction   可選的 chain 操作回呼，在 RTDB 更新完成後呼叫
    * @returns 新建立的房間 ID
    */
   static async acceptSplitPlan(
@@ -437,10 +449,10 @@ export class RoomRequestService {
       participantsToSplit: string[];
     }) => Promise<void>
   ): Promise<string> {
-    const planDoc = await getDoc(doc(db, 'roomRequests', planId));
-    if (!planDoc.exists()) throw new Error('分岔計劃不存在');
+    const snap = await get(ref(rtdb, RTDB.roomRequest(planId)));
+    if (!snap.exists()) throw new Error('分岔計劃不存在');
 
-    const plan = docToSplitPlan(planDoc.id, planDoc.data());
+    const plan = snapshotToSplitPlan(snap.key!, snap.val());
     if (plan.status !== 'pending') throw new Error('分岔計劃已處理過');
     if (plan.newRoomOwnerUid !== newRoomOwnerUid) throw new Error('只有指定的新房主可以接受分岔');
     if (Date.now() > plan.expiresAt) throw new Error('分岔計劃已過期');
@@ -454,26 +466,34 @@ export class RoomRequestService {
       plan.participantsToSplit
     );
 
-    // 2. 從 source 房間移除 participantsToSplit
-    await updateDoc(doc(db, 'p2pRooms', plan.sourceRoomId), {
-      participants: arrayRemove(...plan.participantsToSplit),
-      pendingSplitPlanId: null,
-    });
+    // 2. 從 source 房間移除 participantsToSplit（RTDB: read, delete keys, write back）
+    const sourceRoomSnap = await get(ref(rtdb, RTDB.room(plan.sourceRoomId)));
+    const sourceData = sourceRoomSnap.val();
+    if (sourceData) {
+      const currentParticipants: Record<string, boolean> = sourceData.participants || {};
+      for (const uid of plan.participantsToSplit) {
+        delete currentParticipants[uid];
+      }
+      await update(ref(rtdb, RTDB.room(plan.sourceRoomId)), {
+        participants: currentParticipants,
+        pendingSplitPlanId: null,
+      });
+    }
 
     // 3. 更新 plan 狀態
-    await updateDoc(doc(db, 'roomRequests', planId), {
+    await update(ref(rtdb, RTDB.roomRequest(planId)), {
       status: 'completed',
       newRoomId,
     });
 
-    logger.info('[RoomRequestService] Split plan accepted (Firestore done)', {
+    logger.info('[RoomRequestService] Split plan accepted (RTDB done)', {
       planId,
       sourceRoomId: plan.sourceRoomId,
       newRoomId,
       movedParticipants: plan.participantsToSplit,
     });
 
-    // 4. Chain 操作（Firestore 完成後，由呼叫端執行）
+    // 4. Chain 操作（RTDB 完成後，由呼叫端執行）
     //    典型用法：
     //    const sourceEntries = await indexedDBService.getChainEntries(sourceRoomId)
     //    await mergeService.writeSplitFromMarker(sourceRoomId, sourceEntries)
@@ -496,17 +516,17 @@ export class RoomRequestService {
     planId: string,
     callerUid: string
   ): Promise<void> {
-    const planDoc = await getDoc(doc(db, 'roomRequests', planId));
-    if (!planDoc.exists()) throw new Error('分岔計劃不存在');
+    const snap = await get(ref(rtdb, RTDB.roomRequest(planId)));
+    if (!snap.exists()) throw new Error('分岔計劃不存在');
 
-    const plan = docToSplitPlan(planDoc.id, planDoc.data());
+    const plan = snapshotToSplitPlan(snap.key!, snap.val());
     if (plan.sourceOwnerUid !== callerUid && plan.newRoomOwnerUid !== callerUid) {
       throw new Error('只有原房主或指定新房主可以取消分岔');
     }
 
     await Promise.all([
-      updateDoc(doc(db, 'roomRequests', planId), { status: 'cancelled' }),
-      updateDoc(doc(db, 'p2pRooms', plan.sourceRoomId), { pendingSplitPlanId: null }),
+      update(ref(rtdb, RTDB.roomRequest(planId)), { status: 'cancelled' }),
+      update(ref(rtdb, RTDB.room(plan.sourceRoomId)), { pendingSplitPlanId: null }),
     ]);
 
     logger.info('[RoomRequestService] Split plan cancelled', { planId });
@@ -514,24 +534,35 @@ export class RoomRequestService {
 
   /**
    * 訂閱「送給我的」分岔計劃（newRoomOwnerUid 用）
+   *
+   * RTDB 限制：只能對一個子鍵做 orderByChild + equalTo，
+   * 因此先查 newRoomOwnerUid，前端再過濾 type 與 status。
    */
   static subscribeIncomingSplitPlan(
     newRoomOwnerUid: string,
     callback: (plans: RoomSplitPlan[]) => void
   ): () => void {
-    const q = query(
-      collection(db, 'roomRequests'),
-      where('type', '==', 'split'),
-      where('newRoomOwnerUid', '==', newRoomOwnerUid),
-      where('status', '==', 'pending')
+    const q = rtdbQuery(
+      ref(rtdb, RTDB.roomRequests()),
+      orderByChild('newRoomOwnerUid'),
+      equalTo(newRoomOwnerUid)
     );
 
-    return onSnapshot(q, (snapshot) => {
-      const plans = snapshot.docs
-        .map((d) => docToSplitPlan(d.id, d.data()))
-        .filter((p) => Date.now() <= p.expiresAt);
+    const unsubscribe = onValue(q, (snapshot) => {
+      const plans: RoomSplitPlan[] = [];
+      snapshot.forEach((child) => {
+        const data = child.val();
+        if (data.type === 'split' && data.status === 'pending') {
+          const plan = snapshotToSplitPlan(child.key!, data);
+          if (Date.now() <= plan.expiresAt) {
+            plans.push(plan);
+          }
+        }
+      });
       callback(plans);
     });
+
+    return unsubscribe;
   }
 
   /**
@@ -541,13 +572,15 @@ export class RoomRequestService {
     planId: string,
     callback: (plan: RoomSplitPlan | null) => void
   ): () => void {
-    return onSnapshot(doc(db, 'roomRequests', planId), (snapshot) => {
+    const unsubscribe = onValue(ref(rtdb, RTDB.roomRequest(planId)), (snapshot) => {
       if (!snapshot.exists()) {
         callback(null);
         return;
       }
-      callback(docToSplitPlan(snapshot.id, snapshot.data()));
+      callback(snapshotToSplitPlan(snapshot.key!, snapshot.val()));
     });
+
+    return unsubscribe;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -581,10 +614,16 @@ export class RoomRequestService {
     // 找出沒有房間的成員（UID 排序後取最小，決定誰負責建立）
     const noRoomCandidates: string[] = [];
     for (const uid of remainingParticipants) {
-      const snap = await getDocs(
-        query(collection(db, 'p2pRooms'), where('ownerUid', '==', uid))
+      const snap = await get(
+        rtdbQuery(ref(rtdb, RTDB.rooms()), orderByChild('ownerUid'), equalTo(uid))
       );
-      const hasActiveRoom = snap.docs.some((d) => d.data().status !== 'closed');
+      let hasActiveRoom = false;
+      snap.forEach((child) => {
+        const data = child.val();
+        if (data.status !== 'closed') {
+          hasActiveRoom = true;
+        }
+      });
       if (!hasActiveRoom) {
         noRoomCandidates.push(uid);
       }

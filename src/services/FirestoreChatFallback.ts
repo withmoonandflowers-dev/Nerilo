@@ -1,5 +1,5 @@
 /**
- * RTDB Chat Fallback: when P2P is not connected, send/receive messages
+ * RTDB Chat Relay: when P2P is not connected, send/receive messages
  * through Firebase Realtime Database to keep the chat room functional.
  */
 
@@ -21,9 +21,9 @@ import type { ChatMessage } from '../types';
 const MESSAGES_LIMIT = 100;
 
 /**
- * Send a message via RTDB (fallback path).
+ * Send a message via RTDB relay (fallback path when P2P is not connected).
  */
-export async function sendMessageViaFirestore(
+export async function sendMessageViaRelay(
   roomId: string,
   uid: string,
   content: string
@@ -43,10 +43,11 @@ export async function sendMessageViaFirestore(
 }
 
 /**
- * Subscribe to RTDB messages for a room and invoke the callback with ChatMessage format.
+ * Subscribe to RTDB relay messages for a room.
+ * @param myUid - If provided, messages from this uid are filtered out (dedup with optimistic render)
  * @returns Unsubscribe function
  */
-export function subscribeToFirestoreMessages(
+export function subscribeToRelayMessages(
   roomId: string,
   onMessage: (message: ChatMessage) => void,
   myUid?: string
@@ -78,3 +79,9 @@ export function subscribeToFirestoreMessages(
 
   return unsubscribe;
 }
+
+// ── Backward-compatible aliases (deprecated) ───────────────────────
+/** @deprecated Use sendMessageViaRelay instead */
+export const sendMessageViaFirestore = sendMessageViaRelay;
+/** @deprecated Use subscribeToRelayMessages instead */
+export const subscribeToFirestoreMessages = subscribeToRelayMessages;

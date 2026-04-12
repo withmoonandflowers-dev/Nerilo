@@ -26,4 +26,8 @@ export const RTDB = {
 
   /** 使用者 profile */
   user: (uid: string) => `users/${uid}`,
+
+  /** 房間合併/分岔請求 */
+  roomRequest: (id: string) => `roomRequests/${id}`,
+  roomRequests: () => 'roomRequests',
 } as const;

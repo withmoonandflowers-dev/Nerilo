@@ -1,174 +1,227 @@
 /**
- * Scheduled Cloud Functions for room, signal, and inbox cleanup.
+ * Scheduled Cloud Functions for room, signal, inbox, and relay cleanup.
  *
- * cleanupExpiredRooms: runs every hour, deletes rooms past ttlExpireAt
- * cleanupStaleSignals: runs every 5 minutes, deletes old signaling docs
- * cleanupExpiredInbox: runs every 30 minutes, deletes expired store-and-forward messages
+ * Uses Firebase Realtime Database (not Firestore).
+ *
+ * RTDB structure:
+ *   /rooms/{roomId}          — room metadata (ttlExpireAt, status, participants: {uid: true})
+ *   /signals/{roomId}/{key}  — signaling entries (createdAt)
+ *   /inbox/{roomId}/{uid}/{msgId} — store-and-forward messages (expiresAt)
+ *   /relay/{roomId}/{msgId}  — relay messages (expiresAt)
+ *
+ * cleanupExpiredRooms:   runs every hour, deletes rooms past ttlExpireAt
+ * cleanupStaleSignals:   runs every 5 minutes, deletes old signaling entries
+ * cleanupExpiredInbox:   runs every 30 minutes, deletes expired inbox messages
+ * cleanupExpiredRelay:   runs every 30 minutes, deletes expired relay messages
  */
 
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 
-const firestore = admin.firestore;
-
 /**
  * Cleanup expired rooms — runs every hour.
- * 1. Query rooms where ttlExpireAt < now
- * 2. Delete signals, relay subcollections
- * 3. Delete room document
+ * 1. Query rooms where ttlExpireAt < now (limited to 100)
+ * 2. For each expired room, delete its signals, inbox, relay data and the room itself
  */
 export const cleanupExpiredRooms = functions.pubsub
   .schedule('every 60 minutes')
   .onRun(async () => {
-    const db = admin.firestore();
+    const db = admin.database();
     const now = Date.now();
 
     const expiredSnapshot = await db
-      .collection('p2pRooms')
-      .where('ttlExpireAt', '<', now)
-      .limit(100) // batch limit
-      .get();
+      .ref('rooms')
+      .orderByChild('ttlExpireAt')
+      .endAt(now)
+      .limitToFirst(100)
+      .once('value');
 
-    if (expiredSnapshot.empty) {
+    if (!expiredSnapshot.exists()) {
       console.log('[cleanupExpiredRooms] No expired rooms found');
       return null;
     }
 
     let deletedCount = 0;
+    const updates: Record<string, null> = {};
 
-    for (const roomDoc of expiredSnapshot.docs) {
-      const roomId = roomDoc.id;
+    expiredSnapshot.forEach((roomSnap) => {
+      const roomId = roomSnap.key;
+      if (!roomId) return;
 
+      // Queue room and all related paths for deletion
+      updates[`/rooms/${roomId}`] = null;
+      updates[`/signals/${roomId}`] = null;
+      updates[`/inbox/${roomId}`] = null;
+      updates[`/relay/${roomId}`] = null;
+      deletedCount++;
+    });
+
+    if (deletedCount > 0) {
       try {
-        // Delete signals subcollection
-        await deleteSubcollection(db, `p2pRooms/${roomId}/signals`);
-        // Delete relay subcollection
-        await deleteSubcollection(db, `p2pRooms/${roomId}/relay`);
-        // Delete room document
-        await roomDoc.ref.delete();
-        deletedCount++;
+        await db.ref().update(updates);
+        console.log(`[cleanupExpiredRooms] Deleted ${deletedCount} expired rooms`);
       } catch (error) {
-        console.error(`[cleanupExpiredRooms] Failed to delete room ${roomId}`, error);
+        console.error('[cleanupExpiredRooms] Failed to delete expired rooms', error);
       }
     }
 
-    console.log(`[cleanupExpiredRooms] Deleted ${deletedCount} expired rooms`);
     return null;
   });
 
 /**
- * Cleanup stale signaling documents — runs every 5 minutes.
- * Deletes signals older than 5 minutes to prevent buildup.
+ * Cleanup stale signaling entries — runs every 5 minutes.
+ * Iterates /signals/{roomId} and deletes entries where createdAt < 5 minutes ago.
  */
 export const cleanupStaleSignals = functions.pubsub
   .schedule('every 5 minutes')
   .onRun(async () => {
-    const db = admin.firestore();
+    const db = admin.database();
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
 
-    // We need to iterate over rooms with active signals.
-    // For efficiency, query rooms that are 'open' or 'waiting'.
-    const activeRooms = await db
-      .collection('p2pRooms')
-      .where('status', 'in', ['open', 'waiting'])
-      .limit(50)
-      .get();
+    // Get all signal rooms
+    const signalsSnapshot = await db.ref('signals').once('value');
+
+    if (!signalsSnapshot.exists()) {
+      return null;
+    }
 
     let totalDeleted = 0;
+    const updates: Record<string, null> = {};
 
-    for (const roomDoc of activeRooms.docs) {
-      const roomId = roomDoc.id;
-      const signalsRef = db.collection(`p2pRooms/${roomId}/signals`);
+    signalsSnapshot.forEach((roomSnap) => {
+      const roomId = roomSnap.key;
+      if (!roomId) return;
 
-      const staleSignals = await signalsRef
-        .where('createdAt', '<', fiveMinutesAgo)
-        .limit(100)
-        .get();
+      roomSnap.forEach((signalSnap) => {
+        const signalKey = signalSnap.key;
+        const data = signalSnap.val();
+        if (!signalKey || !data) return;
 
-      const batch = db.batch();
-      let count = 0;
-
-      for (const signalDoc of staleSignals.docs) {
-        batch.delete(signalDoc.ref);
-        count++;
-      }
-
-      if (count > 0) {
-        await batch.commit();
-        totalDeleted += count;
-      }
-    }
+        if (typeof data.createdAt === 'number' && data.createdAt < fiveMinutesAgo) {
+          updates[`/signals/${roomId}/${signalKey}`] = null;
+          totalDeleted++;
+        }
+      });
+    });
 
     if (totalDeleted > 0) {
-      console.log(`[cleanupStaleSignals] Deleted ${totalDeleted} stale signals`);
+      try {
+        await db.ref().update(updates);
+        console.log(`[cleanupStaleSignals] Deleted ${totalDeleted} stale signals`);
+      } catch (error) {
+        console.error('[cleanupStaleSignals] Failed to delete stale signals', error);
+      }
     }
+
     return null;
   });
 
 /**
- * Helper: delete all documents in a subcollection.
- */
-async function deleteSubcollection(
-  db: admin.firestore.Firestore,
-  path: string
-): Promise<void> {
-  const collRef = db.collection(path);
-  const snapshot = await collRef.limit(500).get();
-
-  if (snapshot.empty) return;
-
-  const batch = db.batch();
-  for (const doc of snapshot.docs) {
-    batch.delete(doc.ref);
-  }
-  await batch.commit();
-
-  // Recurse if there are more documents
-  if (snapshot.size === 500) {
-    await deleteSubcollection(db, path);
-  }
-}
-
-/**
  * Cleanup expired store-and-forward inbox messages — runs every 30 minutes.
  *
- * Structure: /p2pRooms/{roomId}/inbox/{recipientUid}/messages/{docId}
+ * Structure: /inbox/{roomId}/{uid}/{msgId}
  * Deletes messages where expiresAt < now.
- *
- * Uses collectionGroup query to scan ALL inbox messages across all rooms.
  */
 export const cleanupExpiredInbox = functions.pubsub
   .schedule('every 30 minutes')
   .onRun(async () => {
-    const db = admin.firestore();
-    const now = firestore.Timestamp.now();
+    const db = admin.database();
+    const now = Date.now();
 
-    // collectionGroup 查詢所有 "messages" 子集合（inbox 下的）
-    const expiredMessages = await db
-      .collectionGroup('messages')
-      .where('expiresAt', '<', now)
-      .limit(500)
-      .get();
+    const inboxSnapshot = await db.ref('inbox').once('value');
 
-    if (expiredMessages.empty) {
-      console.log('[cleanupExpiredInbox] No expired inbox messages found');
+    if (!inboxSnapshot.exists()) {
+      console.log('[cleanupExpiredInbox] No inbox data found');
       return null;
     }
 
-    const batch = db.batch();
     let count = 0;
+    const updates: Record<string, null> = {};
 
-    for (const doc of expiredMessages.docs) {
-      // 只處理 inbox 路徑下的文件（避免誤刪其他 "messages" 集合）
-      if (doc.ref.path.includes('/inbox/')) {
-        batch.delete(doc.ref);
-        count++;
-      }
-    }
+    // /inbox/{roomId}/{uid}/{msgId}
+    inboxSnapshot.forEach((roomSnap) => {
+      const roomId = roomSnap.key;
+      if (!roomId) return;
+
+      roomSnap.forEach((uidSnap) => {
+        const uid = uidSnap.key;
+        if (!uid) return;
+
+        uidSnap.forEach((msgSnap) => {
+          const msgKey = msgSnap.key;
+          const data = msgSnap.val();
+          if (!msgKey || !data) return;
+
+          if (typeof data.expiresAt === 'number' && data.expiresAt < now) {
+            updates[`/inbox/${roomId}/${uid}/${msgKey}`] = null;
+            count++;
+          }
+        });
+      });
+    });
 
     if (count > 0) {
-      await batch.commit();
-      console.log(`[cleanupExpiredInbox] Deleted ${count} expired inbox messages`);
+      try {
+        await db.ref().update(updates);
+        console.log(`[cleanupExpiredInbox] Deleted ${count} expired inbox messages`);
+      } catch (error) {
+        console.error('[cleanupExpiredInbox] Failed to delete expired inbox messages', error);
+      }
+    } else {
+      console.log('[cleanupExpiredInbox] No expired inbox messages found');
+    }
+
+    return null;
+  });
+
+/**
+ * Cleanup expired relay messages — runs every 30 minutes.
+ *
+ * Structure: /relay/{roomId}/{msgId}
+ * Deletes messages where expiresAt < now.
+ */
+export const cleanupExpiredRelay = functions.pubsub
+  .schedule('every 30 minutes')
+  .onRun(async () => {
+    const db = admin.database();
+    const now = Date.now();
+
+    const relaySnapshot = await db.ref('relay').once('value');
+
+    if (!relaySnapshot.exists()) {
+      console.log('[cleanupExpiredRelay] No relay data found');
+      return null;
+    }
+
+    let count = 0;
+    const updates: Record<string, null> = {};
+
+    // /relay/{roomId}/{msgId}
+    relaySnapshot.forEach((roomSnap) => {
+      const roomId = roomSnap.key;
+      if (!roomId) return;
+
+      roomSnap.forEach((msgSnap) => {
+        const msgKey = msgSnap.key;
+        const data = msgSnap.val();
+        if (!msgKey || !data) return;
+
+        if (typeof data.expiresAt === 'number' && data.expiresAt < now) {
+          updates[`/relay/${roomId}/${msgKey}`] = null;
+          count++;
+        }
+      });
+    });
+
+    if (count > 0) {
+      try {
+        await db.ref().update(updates);
+        console.log(`[cleanupExpiredRelay] Deleted ${count} expired relay messages`);
+      } catch (error) {
+        console.error('[cleanupExpiredRelay] Failed to delete expired relay messages', error);
+      }
+    } else {
+      console.log('[cleanupExpiredRelay] No expired relay messages found');
     }
 
     return null;
