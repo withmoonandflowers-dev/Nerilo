@@ -48,7 +48,8 @@ export async function sendMessageViaFirestore(
  */
 export function subscribeToFirestoreMessages(
   roomId: string,
-  onMessage: (message: ChatMessage) => void
+  onMessage: (message: ChatMessage) => void,
+  myUid?: string
 ): () => void {
   const relayRef = ref(rtdb, RTDB.relay(roomId));
   const q = rtdbQuery(
@@ -60,6 +61,9 @@ export function subscribeToFirestoreMessages(
   const unsubscribe: Unsubscribe = onChildAdded(q, (snapshot) => {
     const data = snapshot.val();
     if (!data) return;
+
+    // 過濾自己發的訊息（已由 optimistic render 顯示，避免重複）
+    if (myUid && data.from === myUid) return;
 
     const message: ChatMessage = {
       messageId: data.messageId,

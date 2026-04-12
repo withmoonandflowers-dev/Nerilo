@@ -291,7 +291,7 @@ const ChatPage: React.FC = () => {
   // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied
   useEffect(() => {
     if (!roomId || !user || !hasJoinedRoom) return;
-    const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage);
+    const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, user?.uid);
     return () => unsubscribe();
   }, [roomId, user, addMessage, hasJoinedRoom]);
 
