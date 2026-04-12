@@ -138,14 +138,4 @@ export class AdaptiveTopologyManager {
     return false;
   }
 
-  /** Map strategy to numeric rank for comparison */
-  private strategyRank(strategy: TopologyStrategy): number {
-    const ranks: Record<TopologyStrategy, number> = {
-      'direct': 0,
-      'full-mesh': 1,
-      'partial-mesh': 2,
-      'super-node': 3,
-    };
-    return ranks[strategy];
-  }
 }

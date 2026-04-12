@@ -18,8 +18,6 @@ export default defineConfig(({ mode }) => ({
         manualChunks: {
           // Firebase Auth — 登入頁面首屏需要，獨立打包以利快取
           'vendor-firebase-auth': ['firebase/app', 'firebase/auth'],
-          // Firebase Firestore — 進入 Dashboard/Chat 才需要
-          'vendor-firebase-firestore': ['firebase/firestore'],
           // React 核心 — 所有頁面都需要
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           // IndexedDB ORM — 只有 ChatPage 需要

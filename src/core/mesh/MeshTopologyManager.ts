@@ -91,16 +91,16 @@ export class MeshTopologyManager {
    * everyone joins simultaneously and can't see each other.
    */
   private startReactiveDiscovery(): void {
-    const roomRef = ref(rtdb, RTDB.room(this.roomId));
+    const roomRef = ref(rtdb, RTDB.room(this.roomId) + '/meshIdentities');
 
     this.discoveryUnsubscribe = onValue(roomRef, (snapshot) => {
       if (!snapshot.exists()) return;
-      const data = snapshot.val();
-      if (!data?.meshIdentities) return;
+      const meshIdentities = snapshot.val();
+      if (!meshIdentities) return;
 
       const newCandidates: string[] = [];
 
-      for (const [firebaseUid, identity] of Object.entries(data.meshIdentities)) {
+      for (const [firebaseUid, identity] of Object.entries(meshIdentities)) {
         if (firebaseUid === this.localFirebaseUid) continue;
         const typedIdentity = identity as { userId: string; pubKey: string; joinedAt: unknown };
         const userId = typedIdentity.userId;

@@ -24,7 +24,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 /** Session timeout（毫秒）：8 小時無互動後自動登出 */
-const SESSION_TIMEOUT_MS = 8 * 60 * 1000;
+const SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
