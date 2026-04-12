@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInAnonymously,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
@@ -61,14 +62,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (firebaseUser) {
         await loadUserData(firebaseUser);
       } else {
-        // 未登入 → 設為 guest（不再自動匿名登入）
-        setUser({
-          uid: 'guest',
-          email: null,
-          displayName: null,
-          role: 'guest',
-        });
-        setLoading(false);
+        // 未登入 → 自動匿名登入（取得獨立 UID + Auth token，P2P 和 RTDB 才能運作）
+        try {
+          await signInAnonymously(auth);
+          // onAuthStateChanged 會再次觸發並走 loadUserData
+        } catch (error) {
+          logger.error('[Auth] Anonymous login error:', error);
+          setUser({ uid: 'guest', email: null, displayName: null, role: 'guest' });
+          setLoading(false);
+        }
       }
     });
 
@@ -78,7 +80,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadUserData = async (firebaseUser: FirebaseUser): Promise<void> => {
     try {
       const tokenResult = await firebaseUser.getIdTokenResult();
-      const role = (tokenResult.claims.role as UserRole) || 'user';
+      const role = firebaseUser.isAnonymous
+        ? 'guest'
+        : ((tokenResult.claims.role as UserRole) || 'user');
 
       logger.debug('[Auth] loadUserData', {
         uid: firebaseUser.uid,
