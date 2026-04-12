@@ -1,9 +1,10 @@
 {
   "rules": {
     "rooms": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["ownerUid", "status", "isPrivate"],
       "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null",
         "participants": {
           "$uid": {
             ".write": "auth.uid === $uid || root.child('rooms').child($roomId).child('ownerUid').val() === auth.uid"
@@ -12,9 +13,9 @@
       }
     },
     "signals": {
+      ".read": "auth != null",
+      ".write": "auth != null",
       "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null",
         ".indexOn": ["createdAt"],
         "$signalId": {
           ".validate": "newData.hasChildren(['from', 'type', 'payload', 'createdAt'])"
@@ -22,9 +23,9 @@
       }
     },
     "relay": {
+      ".read": "auth != null",
+      ".write": "auth != null",
       "$roomId": {
-        ".read": "auth != null",
-        ".write": "auth != null",
         ".indexOn": ["to", "expiresAt"]
       }
     },
