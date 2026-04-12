@@ -10,7 +10,8 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { user, loginWithEmail, loginWithGoogle } = useAuth();
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const { user, loginWithEmail, registerWithEmail, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   // 已登入（非遊客）時直接進入儀表板，避免重複登入
@@ -20,14 +21,24 @@ const LoginPage: React.FC = () => {
     }
   }, [user, navigate]);
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
+  const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      await loginWithEmail(email, password);
-      featureLog('auth', 'login', { method: 'email' });
+      if (isRegisterMode) {
+        if (password.length < 6) {
+          setError('密碼長度至少需要 6 個字元');
+          setLoading(false);
+          return;
+        }
+        await registerWithEmail(email, password);
+        featureLog('auth', 'register', { method: 'email' });
+      } else {
+        await loginWithEmail(email, password);
+        featureLog('auth', 'login', { method: 'email' });
+      }
       navigate('/dashboard');
     } catch (err: unknown) {
       setError(getFirebaseErrorMessage(err));
@@ -56,8 +67,13 @@ const LoginPage: React.FC = () => {
       <div className="login-container" role="main">
         <h1>Nerilo</h1>
         <p className="subtitle">P2P 即時互動平台</p>
+        <ul className="value-props">
+          <li>端對端加密，訊息不經伺服器</li>
+          <li>瀏覽器直接使用，無需安裝</li>
+          <li>點對點直連，隱私優先</li>
+        </ul>
 
-        <form onSubmit={handleEmailLogin} className="login-form">
+        <form onSubmit={handleEmailSubmit} className="login-form">
           <div className="form-group">
             <label htmlFor="email">電子郵件</label>
             <input
@@ -85,9 +101,20 @@ const LoginPage: React.FC = () => {
           {error && <div className="error-message" role="alert">{error}</div>}
 
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? '登入中...' : '登入'}
+            {loading ? (isRegisterMode ? '註冊中...' : '登入中...') : (isRegisterMode ? '註冊' : '登入')}
           </button>
         </form>
+
+        <p className="toggle-mode">
+          {isRegisterMode ? '已有帳號？' : '沒有帳號？'}
+          <button
+            type="button"
+            className="btn-link"
+            onClick={() => { setIsRegisterMode(!isRegisterMode); setError(''); }}
+          >
+            {isRegisterMode ? '登入' : '註冊新帳號'}
+          </button>
+        </p>
 
         <div className="divider">
           <span>或</span>

@@ -53,7 +53,7 @@ const ChatPage: React.FC = () => {
   const starTopology = useStarTopology({ chatStorage });
   const meshTopology = useMeshTopology({ chatStorage });
   const roomSubscription = useRoomSubscription({ roomService });
-  const { messages, addMessage, setMessagesList, updateMessageStatus } = useChatMessages();
+  const { messages, addMessage, addMessages, setMessagesList, updateMessageStatus } = useChatMessages();
 
   // 避免在 React StrictMode（開發環境）下重複初始化同一個 room + uid
   const initKey = user && roomId ? `room-${roomId}-uid-${user.uid}` : null;
@@ -100,6 +100,18 @@ const ChatPage: React.FC = () => {
           participants: room.participants.length,
           ownerUid: room.ownerUid,
         });
+
+        // 1b. 從 IndexedDB 載入歷史訊息（使頁面重載後仍可見）
+        try {
+          const history = await chatStorage.getChatMessages(roomId, 200);
+          if (!isMounted()) return;
+          if (history.length > 0) {
+            addMessages(history);
+            logger.info('[ChatPage] Loaded message history from IndexedDB', { roomId, count: history.length });
+          }
+        } catch (e) {
+          logger.warn('[ChatPage] Failed to load message history', e);
+        }
 
         // 2. 檢查房間狀態
         if (room.status === 'closed') {
@@ -486,8 +498,18 @@ const ChatPage: React.FC = () => {
   };
 
   const handleReconnect = () => {
-    // Reload the page to re-initialize P2P
-    window.location.reload();
+    // Soft reconnect: reset init guard and re-trigger P2P initialization
+    // Messages are preserved in memory + IndexedDB
+    initializedRef.current = false;
+    if (initKey) {
+      const w = window as unknown as Record<string, Record<string, boolean>>;
+      if (w.__neriloChatInitRooms) {
+        delete w.__neriloChatInitRooms[initKey];
+      }
+    }
+    setConnectionState('connecting');
+    // Force re-mount of the effect by navigating to same page
+    navigate(`/chat/${roomId}`, { replace: true });
   };
 
   return (

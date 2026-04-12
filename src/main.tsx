@@ -2,6 +2,10 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { logger } from './utils/logger';
+import { initSentry } from './config/sentry';
+
+// Initialize Sentry error tracking (no-op if VITE_SENTRY_DSN not set)
+initSentry();
 
 // Global unhandled error/rejection reporting
 window.addEventListener('error', (event) => {

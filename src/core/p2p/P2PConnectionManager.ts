@@ -61,6 +61,10 @@ export class P2PConnectionManager {
   private sessionStartedAt: number = Date.now();
   /** 是否已清理舊 signals（只在首次連線成功時執行一次） */
   private hasCleanedOldSignals = false;
+  /** ICE candidate batching: buffer outgoing candidates and flush after 200ms */
+  private iceBatchBuffer: RTCIceCandidateInit[] = [];
+  private iceBatchTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly ICE_BATCH_DELAY_MS = 200;
   /**
    * Signal 通道標籤：用於隔離同一房間內不同連線的 signals。
    * - Star: 'chat'
@@ -158,7 +162,17 @@ export class P2PConnectionManager {
 
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.sendSignal('ice', event.candidate);
+        // Batch ICE candidates: buffer for 200ms then send as array to reduce RTDB writes
+        this.iceBatchBuffer.push(event.candidate.toJSON());
+        if (!this.iceBatchTimer) {
+          this.iceBatchTimer = setTimeout(() => {
+            const batch = this.iceBatchBuffer.splice(0);
+            this.iceBatchTimer = null;
+            if (batch.length > 0) {
+              this.sendSignal('ice', batch);
+            }
+          }, P2PConnectionManager.ICE_BATCH_DELAY_MS);
+        }
       }
     };
 
@@ -336,20 +350,19 @@ export class P2PConnectionManager {
         }
 
         case 'ice': {
-          const icePayload = signal.payload as RTCIceCandidateInit;
-          const candidate: RTCIceCandidateInit = {
-            candidate: icePayload.candidate,
-            sdpMid: icePayload.sdpMid,
-            sdpMLineIndex: icePayload.sdpMLineIndex,
-          };
-          if (!this.pc.remoteDescription) {
-            logger.debug('[P2PConnectionManager] Buffering ICE candidate (remoteDescription not set yet)', {
-              buffered: this.pendingIceCandidates.length + 1,
-            });
-            this.pendingIceCandidates.push(candidate);
-            return;
+          // Support both single candidate and batched array (from ICE batching)
+          const rawPayload = signal.payload;
+          const candidates: RTCIceCandidateInit[] = Array.isArray(rawPayload)
+            ? rawPayload.map((c: RTCIceCandidateInit) => ({ candidate: c.candidate, sdpMid: c.sdpMid, sdpMLineIndex: c.sdpMLineIndex }))
+            : [{ candidate: (rawPayload as RTCIceCandidateInit).candidate, sdpMid: (rawPayload as RTCIceCandidateInit).sdpMid, sdpMLineIndex: (rawPayload as RTCIceCandidateInit).sdpMLineIndex }];
+
+          for (const candidate of candidates) {
+            if (!this.pc.remoteDescription) {
+              this.pendingIceCandidates.push(candidate);
+            } else {
+              await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+            }
           }
-          await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
           break;
         }
       }
@@ -409,7 +422,7 @@ export class P2PConnectionManager {
     }
   }
 
-  private async sendSignal(type: 'offer' | 'answer' | 'ice', payload: RTCSessionDescriptionInit | RTCIceCandidate): Promise<void> {
+  private async sendSignal(type: 'offer' | 'answer' | 'ice', payload: RTCSessionDescriptionInit | RTCIceCandidate | RTCIceCandidateInit[]): Promise<void> {
     const signalsRef = ref(rtdb, RTDB.signals(this.roomId));
     let serializedPayload: Record<string, unknown> = {};
 
@@ -639,6 +652,8 @@ export class P2PConnectionManager {
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
     this.pendingIceCandidates = [];
+    this.iceBatchBuffer = [];
+    if (this.iceBatchTimer) { clearTimeout(this.iceBatchTimer); this.iceBatchTimer = null; }
     this.processedSignalIds.clear();
     this.signalMutex = Promise.resolve();
 
@@ -684,6 +699,8 @@ export class P2PConnectionManager {
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
     this.pendingIceCandidates = [];
+    this.iceBatchBuffer = [];
+    if (this.iceBatchTimer) { clearTimeout(this.iceBatchTimer); this.iceBatchTimer = null; }
     this.processedSignalIds.clear();
     this.signalMutex = Promise.resolve();
 
