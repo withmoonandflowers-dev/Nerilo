@@ -151,6 +151,7 @@ export class ChatService {
           ciphertext: encrypted.ciphertext,
           iv: encrypted.iv,
           senderKeyEpoch: encrypted.senderKeyEpoch,
+          seq: encrypted.seq,
         },
       };
 
@@ -189,13 +190,14 @@ export class ChatService {
       edited: true,
     });
 
-    let payloadContent: string | { ciphertext: string; iv: string; senderKeyEpoch: number };
+    let payloadContent: string | { ciphertext: string; iv: string; senderKeyEpoch: number; seq: number };
     if (this.senderKeyManager && this.e2eeReady) {
       const encrypted = await this.senderKeyManager.encryptMessage(newContent);
       payloadContent = {
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
         senderKeyEpoch: encrypted.senderKeyEpoch,
+        seq: encrypted.seq,
       };
     } else {
       payloadContent = newContent;

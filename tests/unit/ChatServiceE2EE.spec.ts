@@ -295,6 +295,7 @@ describe('ChatService E2EE Integration', () => {
               ciphertext: encrypted.ciphertext,
               iv: encrypted.iv,
               senderKeyEpoch: encrypted.senderKeyEpoch,
+              seq: encrypted.seq,
             },
           },
         })
@@ -581,6 +582,7 @@ describe('ChatService E2EE Integration', () => {
               ciphertext: encrypted.ciphertext,
               iv: encrypted.iv,
               senderKeyEpoch: encrypted.senderKeyEpoch,
+              seq: encrypted.seq,
             },
           },
         })

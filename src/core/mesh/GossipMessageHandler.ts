@@ -345,7 +345,11 @@ export class GossipMessageHandler {
     neighbors: MeshConnection[],
     count: number
   ): MeshConnection[] {
-    const shuffled = [...neighbors].sort(() => Math.random() - 0.5);
+    // Use CSPRNG for security-relevant shuffle (prevent gossip path prediction)
+    const arr = new Uint32Array(neighbors.length);
+    crypto.getRandomValues(arr);
+    const indexed = neighbors.map((n, i) => ({ n, r: arr[i] }));
+    const shuffled = indexed.sort((a, b) => a.r - b.r).map(x => x.n);
     return shuffled.slice(0, Math.min(count, neighbors.length));
   }
 

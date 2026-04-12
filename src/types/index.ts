@@ -167,6 +167,7 @@ export interface EncryptedChatPayload {
     ciphertext: string; // Base64
     iv: string;         // Base64
     senderKeyEpoch: number;
+    seq: number;        // Replay protection sequence number
   };
 }
 

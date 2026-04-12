@@ -322,16 +322,17 @@ export class SenderKeyManager {
     senderId: string
   ): Promise<string> {
     // Replay protection: verify seq is strictly increasing per sender per epoch
-    if (typeof payload.seq === 'number') {
-      const seqKey = `${senderId}:${payload.senderKeyEpoch}`;
-      const lastSeq = this.peerSeqCounters.get(seqKey) ?? -1;
-      if (payload.seq <= lastSeq) {
-        throw new Error(
-          `Replay detected from ${senderId}: seq ${payload.seq} <= last ${lastSeq}`
-        );
-      }
-      this.peerSeqCounters.set(seqKey, payload.seq);
+    if (typeof payload.seq !== 'number') {
+      throw new Error(`Missing seq field from ${senderId} — potential replay attack`);
     }
+    const seqKey = `${senderId}:${payload.senderKeyEpoch}`;
+    const lastSeq = this.peerSeqCounters.get(seqKey) ?? -1;
+    if (payload.seq <= lastSeq) {
+      throw new Error(
+        `Replay detected from ${senderId}: seq ${payload.seq} <= last ${lastSeq}`
+      );
+    }
+    this.peerSeqCounters.set(seqKey, payload.seq);
 
     // Try current key first
     let entry = this.peerSenderKeys.get(senderId);

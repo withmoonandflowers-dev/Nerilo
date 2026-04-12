@@ -139,7 +139,10 @@ export class CoverTrafficGenerator {
    * where U is uniform(0,1) and λ is packets per second.
    */
   private poissonDelay(lambda: number): number {
-    const u = Math.random();
+    // Use CSPRNG for cover traffic timing (prevent statistical analysis)
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    const u = buf[0] / (0xFFFFFFFF + 1);
     // Avoid log(0)
     const safeU = Math.max(u, 1e-10);
     const delaySec = -Math.log(safeU) / lambda;
