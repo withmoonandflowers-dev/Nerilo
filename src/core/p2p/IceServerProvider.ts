@@ -43,7 +43,34 @@ interface CachedTurnCredentials {
 const DEFAULT_STUN_SERVERS = [
   'stun:stun.l.google.com:19302',
   'stun:stun1.l.google.com:19302',
+  'stun:stun.relay.metered.ca:80',
 ];
+
+/**
+ * 從環境變數建構 fallback TURN 伺服器配置。
+ * 預設使用 Metered Open Relay（免費 20GB/月，適合開發與小規模使用）。
+ * 正式環境建議換成自建 coturn 或付費 TURN。
+ *
+ * 環境變數：
+ *   VITE_FALLBACK_TURN_USERNAME - Metered 帳號
+ *   VITE_FALLBACK_TURN_CREDENTIAL - Metered 密碼
+ */
+function getFallbackTurnServers(): TurnServerConfig[] {
+  const username = import.meta.env?.VITE_FALLBACK_TURN_USERNAME;
+  const credential = import.meta.env?.VITE_FALLBACK_TURN_CREDENTIAL;
+
+  if (!username || !credential) {
+    logger.warn('[IceServerProvider] Fallback TURN env vars not set (VITE_FALLBACK_TURN_USERNAME / VITE_FALLBACK_TURN_CREDENTIAL). No fallback TURN available.');
+    return [];
+  }
+
+  return [
+    { urls: 'turn:standard.relay.metered.ca:80', username, credential },
+    { urls: 'turn:standard.relay.metered.ca:80?transport=tcp', username, credential },
+    { urls: 'turn:standard.relay.metered.ca:443', username, credential },
+    { urls: 'turns:standard.relay.metered.ca:443?transport=tcp', username, credential },
+  ];
+}
 
 const DEFAULT_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
@@ -103,6 +130,26 @@ export class IceServerProvider {
         }
       } catch (err) {
         logger.warn('[IceServerProvider] Failed to fetch dynamic TURN credentials, using STUN only', err);
+      }
+    }
+
+    // 4. 沒有任何 TURN 設定時，使用內建的免費 TURN（Metered Open Relay）
+    const hasTurn = servers.some(s => {
+      const urls = Array.isArray(s.urls) ? s.urls : [s.urls ?? ''];
+      return urls.some(u => u.startsWith('turn:') || u.startsWith('turns:'));
+    });
+    if (!hasTurn) {
+      const fallbackTurns = getFallbackTurnServers();
+      if (fallbackTurns.length > 0) {
+        logger.info('[IceServerProvider] No TURN configured, using fallback Metered Open Relay');
+      }
+      for (const turn of fallbackTurns) {
+        servers.push({
+          urls: turn.urls,
+          username: turn.username,
+          credential: turn.credential,
+          credentialType: 'password',
+        } as RTCIceServer);
       }
     }
 

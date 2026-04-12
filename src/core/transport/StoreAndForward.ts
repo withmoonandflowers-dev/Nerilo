@@ -134,7 +134,9 @@ export class StoreAndForward {
 
       // Client-side expiration filter
       if (data.expiresAt <= Date.now()) {
-        remove(snapshot.ref).catch(() => {});
+        remove(snapshot.ref).catch((e) =>
+          logger.warn('[StoreAndForward] Failed to delete expired message', e)
+        );
         return;
       }
 
@@ -179,7 +181,9 @@ export class StoreAndForward {
 
       // Skip expired
       if (data.expiresAt <= now) {
-        remove(child.ref).catch(() => {});
+        remove(child.ref).catch((e) =>
+          logger.warn('[StoreAndForward] Failed to delete expired message during drain', e)
+        );
         return;
       }
 
@@ -191,7 +195,9 @@ export class StoreAndForward {
       }
 
       // Delete after consumption
-      remove(child.ref).catch(() => {});
+      remove(child.ref).catch((e) =>
+        logger.warn('[StoreAndForward] Failed to delete consumed message during drain', e)
+      );
     });
 
     if (consumed > 0) {

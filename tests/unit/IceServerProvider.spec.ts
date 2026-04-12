@@ -37,9 +37,11 @@ describe('IceServerProvider', () => {
       const provider = new IceServerProvider();
       const servers = await provider.getIceServers();
 
-      expect(servers).toHaveLength(2);
+      // 3 STUN + 4 fallback TURN (env vars loaded from .env.local in Vitest)
+      expect(servers).toHaveLength(7);
       expect(servers[0]).toEqual({ urls: 'stun:stun.l.google.com:19302' });
       expect(servers[1]).toEqual({ urls: 'stun:stun1.l.google.com:19302' });
+      expect(servers[2]).toEqual({ urls: 'stun:stun.relay.metered.ca:80' });
     });
 
     it('should allow custom STUN URLs', async () => {
@@ -48,7 +50,8 @@ describe('IceServerProvider', () => {
       });
       const servers = await provider.getIceServers();
 
-      expect(servers).toHaveLength(1);
+      // 1 custom STUN + 4 fallback TURN (env vars loaded from .env.local)
+      expect(servers).toHaveLength(5);
       expect(servers[0]).toEqual({ urls: 'stun:custom.stun.example.com:3478' });
     });
   });
@@ -71,8 +74,8 @@ describe('IceServerProvider', () => {
 
       const servers = await provider.getIceServers();
 
-      // 2 STUN + 1 TURN
-      expect(servers).toHaveLength(3);
+      // 3 STUN + 1 TURN (has TURN → no fallback)
+      expect(servers).toHaveLength(4);
 
       const turnServer = servers.find(
         (s) => typeof s.urls === 'string' && s.urls.startsWith('turn:')
@@ -114,8 +117,8 @@ describe('IceServerProvider', () => {
       });
 
       const servers = await provider.getIceServers();
-      // 2 STUN + 2 TURN
-      expect(servers).toHaveLength(4);
+      // 3 STUN + 2 TURN (has TURN → no fallback)
+      expect(servers).toHaveLength(5);
     });
   });
 
@@ -150,8 +153,8 @@ describe('IceServerProvider', () => {
 
       const servers = await provider.getIceServers();
 
-      // 2 STUN + 1 dynamic TURN
-      expect(servers).toHaveLength(3);
+      // 3 STUN + 1 dynamic TURN (has TURN → no fallback)
+      expect(servers).toHaveLength(4);
       const turnServer = servers.find(
         (s) => typeof s.urls === 'string' && s.urls.includes('dynamic')
       );
@@ -283,9 +286,17 @@ describe('IceServerProvider', () => {
 
       const servers = await provider.getIceServers();
 
-      // Should still have STUN servers
-      expect(servers).toHaveLength(2);
-      expect(servers.every((s) => typeof s.urls === 'string' && s.urls.startsWith('stun:'))).toBe(true);
+      // 3 STUN + 4 fallback TURN (dynamic failed → fallback TURN activates from env vars)
+      expect(servers).toHaveLength(7);
+      // First 3 are STUN
+      const stunServers = servers.filter((s) => typeof s.urls === 'string' && s.urls.startsWith('stun:'));
+      expect(stunServers).toHaveLength(3);
+      // Last 4 are fallback TURN
+      const turnServers = servers.filter((s) => {
+        const url = typeof s.urls === 'string' ? s.urls : '';
+        return url.startsWith('turn:') || url.startsWith('turns:');
+      });
+      expect(turnServers).toHaveLength(4);
     });
 
     it('should fallback when HTTP response is not ok', async () => {
@@ -303,7 +314,8 @@ describe('IceServerProvider', () => {
       });
 
       const servers = await provider.getIceServers();
-      expect(servers).toHaveLength(2); // STUN only
+      // 3 STUN + 4 fallback TURN (dynamic failed, no other TURN → fallback activates)
+      expect(servers).toHaveLength(7);
     });
 
     it('should still include static TURN when dynamic fails', async () => {
@@ -321,8 +333,8 @@ describe('IceServerProvider', () => {
       });
 
       const servers = await provider.getIceServers();
-      // 2 STUN + 1 static TURN (dynamic failed gracefully)
-      expect(servers).toHaveLength(3);
+      // 3 STUN + 1 static TURN (dynamic failed, but static TURN exists → no fallback)
+      expect(servers).toHaveLength(4);
     });
   });
 

@@ -592,7 +592,8 @@ export class P2PConnectionManager {
     const { baseDelayMs, maxDelayMs, backoffMultiplier } = this.reconnectConfig;
     const exponential = baseDelayMs * Math.pow(backoffMultiplier, attempt - 1);
     const capped = Math.min(exponential, maxDelayMs);
-    return Math.round(Math.random() * capped);
+    // Ensure minimum 50% of exponential delay to avoid near-instant retries
+    return Math.round(capped * (0.5 + 0.5 * Math.random()));
   }
 
   private async attemptIceRestart(): Promise<void> {
@@ -685,7 +686,9 @@ export class P2PConnectionManager {
     }
 
     // 離開時清理自己在 RTDB 留下的 signals（非阻塞，best-effort）
-    this.cleanupSessionSignals().catch(() => {});
+    this.cleanupSessionSignals().catch((e) =>
+      logger.warn('[P2PConnectionManager] Failed to cleanup session signals', e)
+    );
 
     this.reconnectListeners.clear();
     this.setState('closed');

@@ -88,14 +88,18 @@ export class FirestoreRelay {
       // Client-side expiration filter
       if (data.expiresAt <= Date.now()) {
         // Expired — delete and skip
-        remove(snapshot.ref).catch(() => {});
+        remove(snapshot.ref).catch((e) =>
+          logger.warn('[FirestoreRelay] Failed to delete expired relay message', e)
+        );
         return;
       }
 
       handler(data.from, data.payload);
 
       // Delete the entry after reading (fire-and-forget)
-      remove(snapshot.ref).catch(() => {});
+      remove(snapshot.ref).catch((e) =>
+        logger.warn('[FirestoreRelay] Failed to delete consumed relay message', e)
+      );
     });
 
     this.subscriptions.push(unsubscribe);

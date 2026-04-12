@@ -156,7 +156,9 @@ export class MeshTopologyManager {
           remoteUserId: userId,
         });
         this.neighbors.delete(userId);
-        await existing.close().catch(() => {});
+        await existing.close().catch((e) =>
+          logger.warn('[MeshTopologyManager] Failed to close existing connection', { remoteUserId: userId, e })
+        );
       }
 
       const isInitiator = this.localUserId < userId;
@@ -210,7 +212,9 @@ export class MeshTopologyManager {
           if (this.neighbors.get(userId) === connection) {
             this.neighbors.delete(userId);
           }
-          await connection.close().catch(() => {});
+          await connection.close().catch((e) =>
+            logger.warn('[MeshTopologyManager] Failed to close failed connection', { remoteUserId: userId, e })
+          );
           this.scheduleReconnect(userId);
         });
     } catch (error) {
