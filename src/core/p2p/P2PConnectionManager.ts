@@ -52,8 +52,9 @@ export class P2PConnectionManager {
   private signalUnsubscribers: (() => void)[] = [];
   /** ICE candidates that arrived before remoteDescription was set; flushed after setRemoteDescription */
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
-  /** 已處理的 signal ID 集合，防止快照重播導致重複處理 */
+  /** 已處理的 signal ID 集合，防止快照重播導致重複處理（LRU cap 防止記憶體洩漏） */
   private processedSignalIds: Set<string> = new Set();
+  private static readonly MAX_PROCESSED_SIGNAL_IDS = 500;
   /** Signal 處理互斥鎖：確保 handleSignal 不會並行執行（避免 signalingState 競態） */
   private signalMutex: Promise<void> = Promise.resolve();
   /** 此連線的建立時間戳（epoch ms），用來過濾掉舊 session 殘留的 signals */
@@ -231,6 +232,12 @@ export class P2PConnectionManager {
         return;
       }
       this.processedSignalIds.add(signalId);
+
+      // LRU eviction: remove oldest entries when cap is reached
+      if (this.processedSignalIds.size > P2PConnectionManager.MAX_PROCESSED_SIGNAL_IDS) {
+        const it = this.processedSignalIds.values();
+        this.processedSignalIds.delete(it.next().value!);
+      }
 
       logger.info('[P2PConnectionManager] Processing signal', {
         roomId: this.roomId,

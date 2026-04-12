@@ -271,11 +271,11 @@ describe('DHTStoreAndForward', () => {
   describe('pruneExpired', () => {
     it('removes expired messages', async () => {
       const shortTTL = new DHTStoreAndForward('aa'.repeat(16), router, {
-        storageConfig: { messageTtlMs: 1 },
+        storageConfig: { messageTtlMs: 100 },
       });
 
       shortTTL.store('room-1', 'r-1', 's-1', 'expires soon');
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 200));
 
       const pruned = shortTTL.pruneExpired();
       expect(pruned).toBe(1);

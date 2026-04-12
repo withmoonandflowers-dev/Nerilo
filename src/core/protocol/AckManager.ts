@@ -1,4 +1,5 @@
 import type { Envelope } from '../../types';
+import { logger } from '../../utils/logger';
 
 interface PendingEntry {
   peerId: string;
@@ -80,8 +81,8 @@ export class AckManager {
       }
 
       const nextRetry = currentRetry + 1;
-      this.sendFn(peerId, env).catch(() => {
-        // ignore send errors during retry
+      this.sendFn(peerId, env).catch((e) => {
+        logger.debug('[AckManager] Retry send failed, will retry on next timeout', { peerId, envId: env.id, e });
       });
 
       const newTimeoutId = this.arm(peerId, env, nextRetry);

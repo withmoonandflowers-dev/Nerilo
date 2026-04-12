@@ -2,6 +2,7 @@ import { ref, set, get, update, remove, onValue, query as rtdbQuery, orderByChil
 import { rtdb } from '../config/firebase';
 import { RTDB } from '../config/rtdb-paths';
 import { generateUUID } from '../utils/uuid';
+import { logger } from '../utils/logger';
 import type { P2PRoom } from '../types';
 
 // 只在開發模式或明確啟用時輸出 debug log，避免正式環境噪音
@@ -82,9 +83,9 @@ export class RoomService {
 
     if (requireAuth && !isTestEnv) {
       // 注意：這裡無法直接檢查是否為匿名用戶，需要在調用端檢查
-      console.log('[RoomService] createRoom - auth check passed', { ownerUid });
+      logger.info('[RoomService] createRoom - auth check passed', { ownerUid });
     } else if (isTestEnv) {
-      console.log('[RoomService] createRoom - test mode, allowing guest user', { ownerUid });
+      logger.info('[RoomService] createRoom - test mode, allowing guest user', { ownerUid });
     }
 
     // 先關閉同一用戶的所有房間（包括 waiting、open、closed 狀態）
@@ -95,7 +96,7 @@ export class RoomService {
     const now = Date.now();
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] createRoom', {
+      logger.info('[RoomService] createRoom', {
         roomId,
         ownerUid,
         ownerName,
@@ -128,7 +129,7 @@ export class RoomService {
    * 這確保用戶建立新房間時，舊房間都被清理
    */
   static async closeAllUserRooms(ownerUid: string): Promise<void> {
-    console.log('[RoomService] closeAllUserRooms called', { ownerUid });
+    logger.info('[RoomService] closeAllUserRooms called', { ownerUid });
 
     const q = rtdbQuery(ref(rtdb, RTDB.rooms()), orderByChild('ownerUid'), equalTo(ownerUid));
     const snapshot = await get(q);
@@ -138,7 +139,7 @@ export class RoomService {
       allRooms.push({ roomId: child.key!, data: child.val() });
     });
 
-    console.log('[RoomService] closeAllUserRooms - found rooms', {
+    logger.info('[RoomService] closeAllUserRooms - found rooms', {
       ownerUid,
       totalRooms: allRooms.length,
       rooms: allRooms.map(r => ({
@@ -158,7 +159,7 @@ export class RoomService {
 
     if (batch.length > 0) {
       await Promise.all(batch);
-      console.log('[RoomService] Closed all', batch.length, 'rooms for user', ownerUid);
+      logger.info('[RoomService] Closed all', batch.length, 'rooms for user', ownerUid);
     }
   }
 
@@ -184,7 +185,7 @@ export class RoomService {
     const result = parseRoom(roomId, data);
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] getRoom', result);
+      logger.info('[RoomService] getRoom', result);
     }
 
     return result;
@@ -195,18 +196,18 @@ export class RoomService {
    * 如果房間是 waiting 狀態且有第二個人加入，自動轉為 open 狀態
    */
   static async joinRoom(roomId: string, uid: string): Promise<void> {
-    console.log('[RoomService] joinRoom called', { roomId, uid });
+    logger.info('[RoomService] joinRoom called', { roomId, uid });
 
     const snapshot = await get(ref(rtdb, RTDB.room(roomId)));
 
     if (!snapshot.exists()) {
-      console.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
+      logger.error('[RoomService] joinRoom failed: Room does not exist', { roomId });
       throw new Error('房間不存在');
     }
 
     const roomData = snapshot.val();
     const participants = participantsToArray(roomData.participants);
-    console.log('[RoomService] joinRoom - current room data', {
+    logger.info('[RoomService] joinRoom - current room data', {
       roomId,
       status: roomData.status,
       participants,
@@ -215,14 +216,14 @@ export class RoomService {
 
     // 檢查房間狀態
     if (roomData.status === 'closed') {
-      console.warn('[RoomService] joinRoom failed: Room is closed', { roomId, uid });
+      logger.warn('[RoomService] joinRoom failed: Room is closed', { roomId, uid });
       throw new Error('房間已關閉');
     }
 
     const isNewParticipant = !participants.includes(uid);
     const newParticipants = isNewParticipant ? [...participants, uid] : participants;
 
-    console.log('[RoomService] joinRoom - participant check', {
+    logger.info('[RoomService] joinRoom - participant check', {
       roomId,
       uid,
       isNewParticipant,
@@ -233,7 +234,7 @@ export class RoomService {
     // 當 waiting 房間人數達到 2 人時，自動轉為 open 狀態
     const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
 
-    console.log('[RoomService] joinRoom - activation check', {
+    logger.info('[RoomService] joinRoom - activation check', {
       roomId,
       shouldActivate,
       status: roomData.status,
@@ -249,7 +250,7 @@ export class RoomService {
       if (shouldActivate) {
         updateData.status = 'open';
         if (DEBUG_ROOMS) {
-          console.log('[RoomService] Room activated', {
+          logger.info('[RoomService] Room activated', {
             roomId,
             participants: newParticipants,
             participantCount: newParticipants.length,
@@ -257,15 +258,15 @@ export class RoomService {
         }
       }
 
-      console.log('[RoomService] joinRoom - updating room', { roomId, updateData });
+      logger.info('[RoomService] joinRoom - updating room', { roomId, updateData });
       await update(ref(rtdb, RTDB.room(roomId)), updateData);
-      console.log('[RoomService] joinRoom - room updated successfully', {
+      logger.info('[RoomService] joinRoom - room updated successfully', {
         roomId,
         newStatus: updateData.status || roomData.status,
         newParticipantCount: newParticipants.length,
       });
     } else {
-      console.log('[RoomService] joinRoom - no update needed', {
+      logger.info('[RoomService] joinRoom - no update needed', {
         roomId,
         uid,
         isNewParticipant,
@@ -382,7 +383,7 @@ export class RoomService {
     ]);
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] deleteRoom: room removed from Firebase', {
+      logger.info('[RoomService] deleteRoom: room removed from Firebase', {
         roomId,
         ownerUid,
         participants: room.participants,
@@ -419,7 +420,7 @@ export class RoomService {
       remove(ref(rtdb, 'relay/' + roomId)),
     ]);
 
-    console.log('[RoomService] ownerLeaveRoom: room deleted from Firebase', {
+    logger.info('[RoomService] ownerLeaveRoom: room deleted from Firebase', {
       roomId,
       ownerUid,
       remainingParticipants,
@@ -448,7 +449,7 @@ export class RoomService {
         }
       });
       if (DEBUG_ROOMS) {
-        console.log('[RoomService] subscribeUserRooms snapshot', {
+        logger.info('[RoomService] subscribeUserRooms snapshot', {
           uid,
           count: rooms.length,
           rooms,
@@ -501,7 +502,7 @@ export class RoomService {
       // 只在前端過濾出非 private 的房間
       const publicRooms = rooms.filter((room) => !room.isPrivate);
       if (DEBUG_ROOMS) {
-        console.log('[RoomService] subscribePublicRooms snapshot', {
+        logger.info('[RoomService] subscribePublicRooms snapshot', {
           count: publicRooms.length,
           rooms: publicRooms,
         });
@@ -548,7 +549,7 @@ export class RoomService {
     });
 
     if (DEBUG_ROOMS) {
-      console.log('[RoomService] Updated mesh identity', {
+      logger.info('[RoomService] Updated mesh identity', {
         roomId,
         firebaseUid,
         userId,

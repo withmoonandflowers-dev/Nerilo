@@ -5,11 +5,14 @@
       ".indexOn": ["ownerUid", "status", "isPrivate"],
       "$roomId": {
         ".write": "auth != null && (!data.exists() || data.child('ownerUid').val() === auth.uid || data.child('participants').child(auth.uid).exists())",
-        ".validate": "newData.hasChildren(['name', 'ownerUid'])",
         "participants": {
+          ".read": "auth != null && (root.child('rooms').child($roomId).child('isPrivate').val() !== true || root.child('rooms').child($roomId).child('participants').child(auth.uid).exists() || root.child('rooms').child($roomId).child('ownerUid').val() === auth.uid)",
           "$uid": {
             ".write": "auth.uid === $uid || root.child('rooms').child($roomId).child('ownerUid').val() === auth.uid"
           }
+        },
+        "meshIdentities": {
+          ".read": "auth != null && (root.child('rooms').child($roomId).child('isPrivate').val() !== true || root.child('rooms').child($roomId).child('participants').child(auth.uid).exists() || root.child('rooms').child($roomId).child('ownerUid').val() === auth.uid)"
         }
       }
     },
@@ -48,8 +51,8 @@
     "roomRequests": {
       "$requestId": {
         ".read": "auth != null",
-        ".write": "auth != null",
-        ".validate": "newData.hasChildren(['type', 'from', 'createdAt'])"
+        ".write": "auth != null && (!data.exists() || data.child('from').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['type', 'from', 'createdAt']) && newData.child('from').val() === auth.uid"
       }
     }
   }

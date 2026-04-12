@@ -1,28 +1,63 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { AdaptiveTopologyManager } from '../../src/core/mesh/AdaptiveTopologyManager';
 
 describe('AdaptiveTopologyManager', () => {
-  const manager = new AdaptiveTopologyManager();
+  let manager: AdaptiveTopologyManager;
 
-  describe('getStrategy()', () => {
+  beforeEach(() => {
+    manager = new AdaptiveTopologyManager();
+  });
+
+  describe('getStrategy() — initial (no hysteresis)', () => {
     it('should return direct for 1-2 participants', () => {
       expect(manager.getStrategy(1)).toBe('direct');
-      expect(manager.getStrategy(2)).toBe('direct');
+      expect(new AdaptiveTopologyManager().getStrategy(2)).toBe('direct');
     });
 
     it('should return full-mesh for 3-6 participants', () => {
       expect(manager.getStrategy(3)).toBe('full-mesh');
-      expect(manager.getStrategy(6)).toBe('full-mesh');
+      expect(new AdaptiveTopologyManager().getStrategy(6)).toBe('full-mesh');
     });
 
     it('should return partial-mesh for 7-20 participants', () => {
       expect(manager.getStrategy(7)).toBe('partial-mesh');
-      expect(manager.getStrategy(20)).toBe('partial-mesh');
+      expect(new AdaptiveTopologyManager().getStrategy(20)).toBe('partial-mesh');
     });
 
     it('should return super-node for 21+ participants', () => {
       expect(manager.getStrategy(21)).toBe('super-node');
-      expect(manager.getStrategy(100)).toBe('super-node');
+      expect(new AdaptiveTopologyManager().getStrategy(100)).toBe('super-node');
+    });
+  });
+
+  describe('getStrategy() — hysteresis behavior', () => {
+    it('should NOT upgrade full-mesh to partial-mesh at 7 (hysteresis: upgradeAt=8)', () => {
+      manager.getStrategy(5); // set current = full-mesh
+      expect(manager.getStrategy(7)).toBe('full-mesh'); // stays due to hysteresis
+    });
+
+    it('should upgrade full-mesh to partial-mesh at 8', () => {
+      manager.getStrategy(5); // set current = full-mesh
+      expect(manager.getStrategy(8)).toBe('partial-mesh');
+    });
+
+    it('should NOT downgrade partial-mesh to full-mesh at 6 (hysteresis: downgradeAt=5)', () => {
+      manager.getStrategy(10); // set current = partial-mesh
+      expect(manager.getStrategy(6)).toBe('partial-mesh'); // stays due to hysteresis
+    });
+
+    it('should downgrade partial-mesh to full-mesh at 5', () => {
+      manager.getStrategy(10); // set current = partial-mesh
+      expect(manager.getStrategy(5)).toBe('full-mesh');
+    });
+
+    it('should prevent thrashing at boundary 7-8', () => {
+      manager.getStrategy(5); // full-mesh
+      expect(manager.getStrategy(7)).toBe('full-mesh');   // stays
+      expect(manager.getStrategy(8)).toBe('partial-mesh'); // upgrades
+      expect(manager.getStrategy(7)).toBe('partial-mesh'); // stays (downgradeAt=5)
+      expect(manager.getStrategy(6)).toBe('partial-mesh'); // stays
+      expect(manager.getStrategy(5)).toBe('full-mesh');    // finally downgrades
     });
   });
 
@@ -99,29 +134,29 @@ describe('AdaptiveTopologyManager', () => {
   });
 
   describe('shouldUpgrade / shouldDowngrade', () => {
-    it('should detect upgrade needed at boundary 6→7', () => {
-      expect(manager.shouldUpgrade('full-mesh', 7)).toBe(true);
-      expect(manager.shouldUpgrade('full-mesh', 6)).toBe(false);
+    it('should detect upgrade at hysteresis boundary (full-mesh upgradeAt=8)', () => {
+      expect(manager.shouldUpgrade('full-mesh', 8)).toBe(true);
+      expect(new AdaptiveTopologyManager().shouldUpgrade('full-mesh', 7)).toBe(false);
     });
 
-    it('should detect upgrade needed at boundary 20→21', () => {
-      expect(manager.shouldUpgrade('partial-mesh', 21)).toBe(true);
-      expect(manager.shouldUpgrade('partial-mesh', 20)).toBe(false);
+    it('should detect upgrade at hysteresis boundary (partial-mesh upgradeAt=22)', () => {
+      expect(manager.shouldUpgrade('partial-mesh', 22)).toBe(true);
+      expect(new AdaptiveTopologyManager().shouldUpgrade('partial-mesh', 21)).toBe(false);
     });
 
-    it('should detect downgrade needed at boundary 7→6', () => {
-      expect(manager.shouldDowngrade('partial-mesh', 6)).toBe(true);
-      expect(manager.shouldDowngrade('partial-mesh', 7)).toBe(false);
+    it('should detect downgrade at hysteresis boundary (partial-mesh downgradeAt=5)', () => {
+      expect(manager.shouldDowngrade('partial-mesh', 5)).toBe(true);
+      expect(new AdaptiveTopologyManager().shouldDowngrade('partial-mesh', 6)).toBe(false);
     });
 
-    it('should detect downgrade needed at boundary 3→2', () => {
+    it('should detect downgrade at hysteresis boundary (full-mesh downgradeAt=2)', () => {
       expect(manager.shouldDowngrade('full-mesh', 2)).toBe(true);
-      expect(manager.shouldDowngrade('full-mesh', 3)).toBe(false);
+      expect(new AdaptiveTopologyManager().shouldDowngrade('full-mesh', 3)).toBe(false);
     });
 
-    it('should not upgrade/downgrade when strategy matches', () => {
+    it('should not upgrade/downgrade when within hysteresis band', () => {
       expect(manager.shouldUpgrade('full-mesh', 5)).toBe(false);
-      expect(manager.shouldDowngrade('full-mesh', 5)).toBe(false);
+      expect(new AdaptiveTopologyManager().shouldDowngrade('full-mesh', 5)).toBe(false);
     });
   });
 });
