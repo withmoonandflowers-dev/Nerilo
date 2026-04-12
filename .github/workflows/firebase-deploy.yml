@@ -3,7 +3,7 @@ name: Deploy to Firebase
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch: # 允許手動觸發
 
 env:
@@ -140,7 +140,7 @@ jobs:
       - name: Deploy to Firebase (Hosting + Functions + Firestore rules)
         run: >
           npx firebase-tools deploy
-          --only hosting,functions,firestore:rules,firestore:indexes
+          --only hosting,functions,firestore:rules,firestore:indexes,database
           --project nerilo
           --non-interactive
         env:

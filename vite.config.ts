@@ -31,6 +31,8 @@ export default defineConfig(({ mode }) => ({
     cssCodeSplit: true,
     // 使用 esbuild minify（比 terser 快 20-100x，gzip 效果差異 < 2%）
     minify: 'esbuild',
+    // 確保 production build 不暴露 source map
+    sourcemap: false,
     target: 'es2020',
   },
   server: {

@@ -48,3 +48,4 @@ functions/lib
 # Tool directories
 .claude/
 .cursor/
+nul
