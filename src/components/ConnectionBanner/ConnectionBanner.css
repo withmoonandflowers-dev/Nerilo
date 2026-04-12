@@ -64,8 +64,8 @@
 }
 
 .connection-banner.fallback {
-  background: var(--color-info-bg);
-  color: var(--color-info-text);
+  background: var(--color-warning-bg, #fef3c7);
+  color: var(--color-warning-text, #92400e);
 }
 
 .connection-banner.idle {

@@ -33,8 +33,14 @@ export class P2PChannelBus {
 
     this.dataChannel.onmessage = (event) => {
       try {
+        const dataLength = event.data?.length || 0;
+        // Reject oversized messages to prevent memory/CPU abuse (64KB limit for chat)
+        if (dataLength > 65536) {
+          logger.warn('[P2PChannelBus] Rejected oversized message', { dataLength });
+          return;
+        }
         logger.info('[P2PChannelBus] onmessage received', {
-          dataLength: event.data?.length || 0,
+          dataLength,
           readyState: this.dataChannel?.readyState,
         });
         const envelope = JSON.parse(event.data) as P2PEnvelope;

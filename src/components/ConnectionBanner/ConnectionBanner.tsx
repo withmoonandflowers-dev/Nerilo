@@ -59,7 +59,7 @@ export const ConnectionBanner: React.FC<ConnectionBannerProps> = ({
   const isFallback = connectionState !== 'connected' && mode === 'firestore';
   const bannerClass = isFallback ? 'fallback' : connectionState;
   const config = isFallback
-    ? { icon: '\uD83D\uDD35', label: '備援模式' }
+    ? { icon: '\u26A0\uFE0F', label: '備援模式 — 訊息經由伺服器中繼，端對端加密未啟用' }
     : (STATE_CONFIG[connectionState] || STATE_CONFIG.idle);
 
   const modeLabel = mode ? MODE_LABELS[mode] || mode : null;

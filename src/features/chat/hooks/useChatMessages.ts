@@ -9,15 +9,38 @@ import type { ChatMessage, CausalMessage, DeliveryStatus } from '../../../types'
 import { HybridLogicalClock } from '../../../core/clock/HybridLogicalClock';
 import { CausalOrderingBuffer } from '../../../core/ordering/CausalOrderingBuffer';
 
-/** Sort messages using HLC timestamps with fallback to plain timestamp */
+/** Compare two messages by HLC then timestamp */
+function compareMessages(a: ChatMessage, b: ChatMessage): number {
+  if (a.hlc && b.hlc) return HybridLogicalClock.compare(a.hlc, b.hlc);
+  return a.timestamp - b.timestamp;
+}
+
+/**
+ * Insert a message into an already-sorted array using binary search — O(log N).
+ * Falls back to full sort if the array is unsorted (e.g. bulk load).
+ */
+function insertSorted(sorted: ChatMessage[], msg: ChatMessage): ChatMessage[] {
+  // Fast path: new message belongs at the end (most common case)
+  if (sorted.length === 0 || compareMessages(msg, sorted[sorted.length - 1]) >= 0) {
+    return [...sorted, msg];
+  }
+
+  // Binary search for insertion point
+  let lo = 0, hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (compareMessages(sorted[mid], msg) < 0) lo = mid + 1;
+    else hi = mid;
+  }
+
+  const result = [...sorted];
+  result.splice(lo, 0, msg);
+  return result;
+}
+
+/** Full sort — used only for bulk loading (addMessages / setMessagesList) */
 function sortByHLC(messages: ChatMessage[]): ChatMessage[] {
-  return messages.sort((a, b) => {
-    if (a.hlc && b.hlc) {
-      return HybridLogicalClock.compare(a.hlc, b.hlc);
-    }
-    // Fallback: prefer HLC-aware messages, then sort by timestamp
-    return a.timestamp - b.timestamp;
-  });
+  return messages.sort(compareMessages);
 }
 
 /**
@@ -51,7 +74,7 @@ export function useChatMessages() {
       setMessagesRef.current((prev) => {
         if (messageIdsRef.current.has(msg.messageId)) return prev;
         messageIdsRef.current.add(msg.messageId);
-        return sortByHLC([...prev, msg]);
+        return insertSorted(prev, msg);
       });
     });
 

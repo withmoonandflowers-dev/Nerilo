@@ -18,6 +18,9 @@ export class GossipMessageHandler {
   /** Time-bucketed 去重快取（取代無上限的 Set，避免記憶體洩漏） */
   private seenMessageIds = new TimeBucketedCache(60_000, 10);
   private lastSeenSeq: Map<string, number> = new Map();
+  /** Cache of imported public keys: Base64 pubKey → CryptoKey (avoids repeated importKey) */
+  private importedKeyCache: Map<string, CryptoKey> = new Map();
+  private static readonly MAX_KEY_CACHE = 100;
   private sendRateLimiter: Map<string, number[]> = new Map();
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
   private readonly MAX_MESSAGES_PER_SECOND = 10;
@@ -199,8 +202,17 @@ export class GossipMessageHandler {
       return; // 已處理過
     }
 
-    // 驗證簽名
-    const publicKey = await this.securityManager.importPublicKey(message.pubKey);
+    // 驗證簽名（with key import cache to reduce crypto overhead in high-traffic scenarios）
+    let publicKey = this.importedKeyCache.get(message.pubKey);
+    if (!publicKey) {
+      publicKey = await this.securityManager.importPublicKey(message.pubKey);
+      if (this.importedKeyCache.size >= GossipMessageHandler.MAX_KEY_CACHE) {
+        // Evict oldest entry
+        const firstKey = this.importedKeyCache.keys().next().value!;
+        this.importedKeyCache.delete(firstKey);
+      }
+      this.importedKeyCache.set(message.pubKey, publicKey);
+    }
     const isValid = await this.securityManager.verifyMessage(message, publicKey);
 
     if (!isValid) {

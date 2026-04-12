@@ -1,8 +1,10 @@
 .chat-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh; /* dynamic viewport height — handles mobile keyboard */
+  height: 100vh; /* fallback for older browsers */
   background: var(--color-bg);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .chat-header {
@@ -324,6 +326,7 @@
 .chat-input-area {
   background: var(--color-surface);
   padding: 16px 24px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--color-border);
   display: flex;
   gap: 12px;
