@@ -522,3 +522,17 @@
   font-weight: 600;
   color: var(--color-text-primary);
 }
+
+/* ── Load more button ─────────────────────────────────────────────── */
+
+.btn-load-more {
+  display: block;
+  margin: 8px auto;
+  padding: 6px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  color: var(--color-primary);
+  font-size: 13px;
+  cursor: pointer;
+}

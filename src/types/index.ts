@@ -176,6 +176,10 @@ export interface EncryptedChatPayload {
 export interface ECDHPubKeyPayload {
   userId: string;
   ecdhPublicKey: string; // Base64 SPKI
+  /** ECDSA signature of ecdhPublicKey (TOFU: signed with identity key) */
+  identitySignature?: string; // Base64
+  /** ECDSA identity public key for verification */
+  identityPublicKey?: string; // Base64 SPKI
 }
 
 /** Sender Key 分發 payload */

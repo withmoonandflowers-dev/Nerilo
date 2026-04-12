@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { FeatureProvider } from './contexts/FeatureContext';
 import { ServicesProvider } from './contexts/ServicesContext';
@@ -12,6 +12,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const WaitingRoomPage = lazy(() => import('./pages/WaitingRoomPage'));
 const ChatPage = lazy(() => import('./features/chat/ChatPage'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 
 function LoadingFallback() {
   return <AppLoadingFallback />;
@@ -34,7 +35,7 @@ function App() {
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/waiting/:roomId" element={<WaitingRoomPage />} />
                     <Route path="/chat/:roomId" element={<ChatPage />} />
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/" element={<LandingPage />} />
                   </Routes>
                 </Suspense>
               </Router>

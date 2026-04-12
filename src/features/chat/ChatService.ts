@@ -400,6 +400,26 @@ export class ChatService {
       []
     );
 
+    // TOFU: warn if a peer's ECDH key has changed unexpectedly
+    const existingKey = this.peerECDHKeys.get(peerUid);
+    if (existingKey) {
+      try {
+        const existingRaw = await crypto.subtle.exportKey('spki', existingKey);
+        const newRaw = await crypto.subtle.exportKey('spki', peerECDHKey);
+        const existingB64 = btoa(String.fromCharCode(...new Uint8Array(existingRaw)));
+        const newB64 = btoa(String.fromCharCode(...new Uint8Array(newRaw)));
+        if (existingB64 !== newB64) {
+          logger.warn('[ChatService][E2EE][TOFU] Peer ECDH public key CHANGED — potential MITM!', {
+            peerUid,
+            previousKeyFingerprint: existingB64.substring(0, 16) + '...',
+            newKeyFingerprint: newB64.substring(0, 16) + '...',
+          });
+        }
+      } catch {
+        // Non-exportable key comparison failed; skip TOFU check
+      }
+    }
+
     this.peerECDHKeys.set(peerUid, peerECDHKey);
     this.pendingKeyExchangePeers.delete(peerUid);
 

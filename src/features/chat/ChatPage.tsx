@@ -14,6 +14,7 @@ import {
 import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
 import { featureLog } from '../../utils/featureLog';
 import { logger } from '../../utils/logger';
+import { requestNotificationPermission, notifyNewMessage, incrementUnread } from '../../utils/notifications';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -49,6 +50,8 @@ const ChatPage: React.FC = () => {
   const migrationInProgressRef = useRef(false);
   const connectingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Max messages to render in DOM at once; older messages hidden behind "Load more" */
+  const [displayLimit, setDisplayLimit] = useState(100);
   const architecture = useP2PArchitecture();
   const starTopology = useStarTopology({ chatStorage });
   const meshTopology = useMeshTopology({ chatStorage });
@@ -300,6 +303,27 @@ const ChatPage: React.FC = () => {
       migrationInProgressRef.current = false;
     };
   }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList]);
+
+  // Request browser notification permission on first connected state
+  useEffect(() => {
+    if (connectionState === 'connected') {
+      requestNotificationPermission();
+    }
+  }, [connectionState]);
+
+  // Notify on new incoming messages when tab is in background
+  const prevMessageCountRef = useRef(messages.length);
+  useEffect(() => {
+    if (messages.length > prevMessageCountRef.current) {
+      const newMsg = messages[messages.length - 1];
+      if (newMsg && !newMsg.from.startsWith(user?.uid || '')) {
+        const senderName = newMsg.from.split('/')[0].substring(0, 8);
+        notifyNewMessage(senderName, newMsg.content);
+        incrementUnread();
+      }
+    }
+    prevMessageCountRef.current = messages.length;
+  }, [messages, user]);
 
   // Firestore 備援：訂閱房間訊息，P2P 未連線時對方經 Firestore 送的訊息也能顯示
   // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied
@@ -560,9 +584,17 @@ const ChatPage: React.FC = () => {
             <p>發送訊息開始聊天吧！</p>
           </div>
         )}
-        {messages.map((msg, index) => {
+        {messages.length > displayLimit && (
+          <button
+            className="btn-load-more"
+            onClick={() => setDisplayLimit(prev => prev + 100)}
+          >
+            載入更早的訊息（還有 {messages.length - displayLimit} 則）
+          </button>
+        )}
+        {messages.slice(-displayLimit).map((msg, index, arr) => {
           const isOwn = msg.from.startsWith(user?.uid || '');
-          const prevMsg = index > 0 ? messages[index - 1] : null;
+          const prevMsg = index > 0 ? arr[index - 1] : null;
           const showDateSep = !prevMsg || shouldShowDateSeparator(prevMsg.timestamp, msg.timestamp);
           return (
             <React.Fragment key={msg.messageId}>
