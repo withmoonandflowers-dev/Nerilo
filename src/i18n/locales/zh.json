@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "Nerilo",
+    "subtitle": "P2P 即時互動平台"
+  },
+  "landing": {
+    "hero_title": "安全、私密的 P2P 即時聊天",
+    "hero_subtitle": "無需安裝，開啟瀏覽器即可使用。訊息透過端對端加密直接傳送，不經過任何伺服器。",
+    "feature_e2ee": "端對端加密",
+    "feature_e2ee_desc": "AES-256-GCM 加密，ECDH 金鑰交換。只有你和對方能讀取訊息。",
+    "feature_p2p": "點對點直連",
+    "feature_p2p_desc": "WebRTC 技術實現瀏覽器間直接通訊，訊息不經過中間伺服器。",
+    "feature_instant": "即開即用",
+    "feature_instant_desc": "純瀏覽器運作，無需下載或安裝任何軟體。分享連結即可開始對話。",
+    "cta_start": "免費開始使用",
+    "cta_login": "登入現有帳號",
+    "footer": "Nerilo — 隱私優先的即時通訊平台"
+  },
+  "auth": {
+    "email": "電子郵件",
+    "password": "密碼",
+    "login": "登入",
+    "logging_in": "登入中...",
+    "register": "註冊",
+    "registering": "註冊中...",
+    "login_google": "使用 Google 登入",
+    "no_account": "沒有帳號？",
+    "has_account": "已有帳號？",
+    "register_link": "註冊新帳號",
+    "login_link": "登入",
+    "password_min": "密碼長度至少需要 6 個字元",
+    "logout": "登出",
+    "value_e2ee": "端對端加密，訊息不經伺服器",
+    "value_no_install": "瀏覽器直接使用，無需安裝",
+    "value_p2p": "點對點直連，隱私優先"
+  },
+  "dashboard": {
+    "my_rooms": "我的房間",
+    "public_rooms": "公開房間",
+    "create_room": "+ 建立新房間",
+    "cancel": "取消",
+    "room_name_placeholder": "輸入房間名稱（選填）",
+    "creating": "建立中...",
+    "create": "建立房間",
+    "private": "私人房間",
+    "enter": "進入",
+    "share": "分享",
+    "no_rooms": "尚無房間",
+    "guest_notice": "建立房間需要登入"
+  },
+  "chat": {
+    "back": "← 返回",
+    "e2ee_badge": "E2EE",
+    "send": "送出",
+    "input_placeholder": "輸入訊息...",
+    "empty_state_title": "已建立安全連線",
+    "empty_state_subtitle": "發送訊息開始聊天吧！",
+    "load_more": "載入更早的訊息（還有 {{count}} 則）",
+    "connecting": "正在建立 P2P 連線...",
+    "deleted": "訊息已刪除",
+    "edited": "已編輯",
+    "sending": "傳送中",
+    "sent": "已傳送",
+    "delivered": "已送達",
+    "failed": "傳送失敗",
+    "resend": "重新傳送"
+  },
+  "connection": {
+    "connected": "P2P 已連線",
+    "connecting": "連線中",
+    "failed": "連線失敗",
+    "closed": "已斷線",
+    "idle": "準備連線",
+    "fallback": "備援模式 — 訊息經由伺服器中繼，端對端加密未啟用",
+    "reconnect": "手動重連",
+    "countdown": "{{seconds}}s 後自動重連",
+    "p2p_star": "P2P 直連",
+    "p2p_mesh": "Mesh 中繼",
+    "firestore": "Firestore 備援"
+  },
+  "settings": {
+    "title": "設定",
+    "language": "語言",
+    "notifications": "通知",
+    "enable_notifications": "啟用瀏覽器通知",
+    "notification_sound": "通知音效",
+    "privacy": "隱私",
+    "about": "關於"
+  }
+}

@@ -3,6 +3,7 @@ import App from './App';
 import './index.css';
 import { logger } from './utils/logger';
 import { initSentry } from './config/sentry';
+import './i18n'; // Initialize i18n before rendering
 
 // Initialize Sentry error tracking (no-op if VITE_SENTRY_DSN not set)
 initSentry();

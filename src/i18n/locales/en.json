@@ -1,0 +1,90 @@
+{
+  "app": {
+    "name": "Nerilo",
+    "subtitle": "P2P Real-Time Chat Platform"
+  },
+  "landing": {
+    "hero_title": "Secure, Private P2P Chat",
+    "hero_subtitle": "No installation needed. Open your browser and start chatting. Messages are end-to-end encrypted and sent directly between peers.",
+    "feature_e2ee": "End-to-End Encrypted",
+    "feature_e2ee_desc": "AES-256-GCM encryption with ECDH key exchange. Only you and your recipient can read messages.",
+    "feature_p2p": "Peer-to-Peer Direct",
+    "feature_p2p_desc": "WebRTC enables direct browser-to-browser communication. Messages never pass through a server.",
+    "feature_instant": "Instant Access",
+    "feature_instant_desc": "Runs entirely in the browser. No downloads or installations. Share a link to start chatting.",
+    "cta_start": "Get Started Free",
+    "cta_login": "Sign In",
+    "footer": "Nerilo — Privacy-first instant messaging"
+  },
+  "auth": {
+    "email": "Email",
+    "password": "Password",
+    "login": "Sign In",
+    "logging_in": "Signing in...",
+    "register": "Sign Up",
+    "registering": "Signing up...",
+    "login_google": "Sign in with Google",
+    "no_account": "Don't have an account?",
+    "has_account": "Already have an account?",
+    "register_link": "Sign up",
+    "login_link": "Sign in",
+    "password_min": "Password must be at least 6 characters",
+    "logout": "Sign Out",
+    "value_e2ee": "End-to-end encrypted, messages never touch a server",
+    "value_no_install": "Use directly in your browser, no install needed",
+    "value_p2p": "Peer-to-peer direct connection, privacy first"
+  },
+  "dashboard": {
+    "my_rooms": "My Rooms",
+    "public_rooms": "Public Rooms",
+    "create_room": "+ Create Room",
+    "cancel": "Cancel",
+    "room_name_placeholder": "Room name (optional)",
+    "creating": "Creating...",
+    "create": "Create Room",
+    "private": "Private Room",
+    "enter": "Enter",
+    "share": "Share",
+    "no_rooms": "No rooms yet",
+    "guest_notice": "Sign in to create rooms"
+  },
+  "chat": {
+    "back": "← Back",
+    "e2ee_badge": "E2EE",
+    "send": "Send",
+    "input_placeholder": "Type a message...",
+    "empty_state_title": "Secure connection established",
+    "empty_state_subtitle": "Send a message to start chatting!",
+    "load_more": "Load older messages ({{count}} more)",
+    "connecting": "Establishing P2P connection...",
+    "deleted": "Message deleted",
+    "edited": "edited",
+    "sending": "Sending",
+    "sent": "Sent",
+    "delivered": "Delivered",
+    "failed": "Failed",
+    "resend": "Resend"
+  },
+  "connection": {
+    "connected": "P2P Connected",
+    "connecting": "Connecting",
+    "failed": "Connection Failed",
+    "closed": "Disconnected",
+    "idle": "Ready",
+    "fallback": "Fallback Mode — Messages relayed via server, E2E encryption not active",
+    "reconnect": "Reconnect",
+    "countdown": "Auto-reconnect in {{seconds}}s",
+    "p2p_star": "P2P Direct",
+    "p2p_mesh": "Mesh Relay",
+    "firestore": "Firestore Fallback"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "notifications": "Notifications",
+    "enable_notifications": "Enable browser notifications",
+    "notification_sound": "Notification sound",
+    "privacy": "Privacy",
+    "about": "About"
+  }
+}

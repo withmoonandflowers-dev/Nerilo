@@ -59,6 +59,27 @@ export function notifyNewMessage(senderName: string, content: string): void {
   }
 }
 
+/** Play a subtle notification sound using Web Audio API */
+let audioCtx: AudioContext | null = null;
+
+export function playNotificationSound(): void {
+  try {
+    if (!audioCtx) audioCtx = new AudioContext();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+    osc.frequency.setValueAtTime(600, audioCtx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.2);
+  } catch {
+    // Audio not available (e.g. autoplay policy)
+  }
+}
+
 /** Update document title with unread count */
 let originalTitle = '';
 let unreadCount = 0;

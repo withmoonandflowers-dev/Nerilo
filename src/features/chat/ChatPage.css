@@ -528,6 +528,43 @@
 
 /* ── Load more button ─────────────────────────────────────────────── */
 
+/* ── Search bar ───────────────────────────────────────────────────── */
+
+.btn-search-toggle {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  font-size: 14px;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+.search-count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* ── Load more button ─────────────────────────────────────────────── */
+
 .btn-load-more {
   display: block;
   margin: 8px auto;

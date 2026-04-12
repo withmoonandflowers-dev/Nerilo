@@ -13,6 +13,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const WaitingRoomPage = lazy(() => import('./pages/WaitingRoomPage'));
 const ChatPage = lazy(() => import('./features/chat/ChatPage'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 function LoadingFallback() {
   return <AppLoadingFallback />;
@@ -35,6 +36,7 @@ function App() {
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/waiting/:roomId" element={<WaitingRoomPage />} />
                     <Route path="/chat/:roomId" element={<ChatPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/" element={<LandingPage />} />
                   </Routes>
                 </Suspense>

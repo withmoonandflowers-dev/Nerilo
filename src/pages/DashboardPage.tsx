@@ -204,6 +204,9 @@ const DashboardPage: React.FC = () => {
           <div className="user-info">
             <span>{user?.displayName || user?.email}</span>
             <span className="role-badge">{user?.role}</span>
+            <button onClick={() => navigate('/settings')} className="btn-settings" aria-label="設定">
+              &#x2699;
+            </button>
             <button onClick={handleAuthButtonClick} className="btn-logout" aria-label={isGuest ? '登入帳號' : '登出帳號'}>
               {isGuest ? '登入' : '登出'}
             </button>

@@ -1,0 +1,117 @@
+.settings-page {
+  min-height: 100vh;
+  background: var(--color-bg);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.settings-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.settings-content {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.settings-section {
+  margin-bottom: 32px;
+}
+
+.settings-section h2 {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+}
+
+.settings-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  gap: 12px;
+}
+
+.lang-btn {
+  padding: 8px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.lang-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.toggle-btn {
+  padding: 6px 16px;
+  border-radius: var(--radius-full, 9999px);
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggle-btn.on {
+  background: var(--color-success, #22c55e);
+  color: #fff;
+}
+
+.toggle-btn.off {
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.user-info {
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.user-role {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-full, 9999px);
+}
+
+.btn-logout {
+  margin-top: 12px;
+  padding: 10px 24px;
+  border: 1px solid var(--color-error, #ef4444);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--color-error, #ef4444);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.about-text {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+}

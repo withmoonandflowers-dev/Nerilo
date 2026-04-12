@@ -14,7 +14,7 @@ import {
 import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
 import { featureLog } from '../../utils/featureLog';
 import { logger } from '../../utils/logger';
-import { requestNotificationPermission, notifyNewMessage, incrementUnread } from '../../utils/notifications';
+import { requestNotificationPermission, notifyNewMessage, incrementUnread, playNotificationSound } from '../../utils/notifications';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -40,6 +40,8 @@ const ChatPage: React.FC = () => {
   const initializedRef = useRef(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [roomData, setRoomData] = useState<{ name?: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -320,6 +322,7 @@ const ChatPage: React.FC = () => {
         const senderName = newMsg.from.split('/')[0].substring(0, 8);
         notifyNewMessage(senderName, newMsg.content);
         incrementUnread();
+        playNotificationSound();
       }
     }
     prevMessageCountRef.current = messages.length;
@@ -536,6 +539,11 @@ const ChatPage: React.FC = () => {
     navigate(`/chat/${roomId}`, { replace: true });
   };
 
+  // Compute displayed messages: search filter + display cap
+  const displayedMessages = searchQuery
+    ? messages.filter(m => m.content.toLowerCase().includes(searchQuery.toLowerCase()))
+    : messages.slice(-displayLimit);
+
   return (
     <div className="chat-page" id="main-content">
       <header className="chat-header" role="banner">
@@ -545,13 +553,21 @@ const ChatPage: React.FC = () => {
           </button>
           <h2>{roomData?.name || `聊天室 ${roomId?.substring(0, 8)}`}</h2>
         </div>
-        {connectionState === 'connected' && (
-          <div className="header-right">
+        <div className="header-right">
+          <button
+            className="btn-search-toggle"
+            onClick={() => { setShowSearch(!showSearch); setSearchQuery(''); }}
+            aria-label="搜尋訊息"
+            title="搜尋訊息"
+          >
+            &#x1F50D;
+          </button>
+          {connectionState === 'connected' && (
             <span className="encryption-badge" title="端對端加密 (AES-256-GCM)" aria-label="端對端加密已啟用">
               &#x1F512; E2EE
             </span>
-          </div>
-        )}
+          )}
+        </div>
       </header>
 
       <ConnectionBanner
@@ -559,6 +575,23 @@ const ChatPage: React.FC = () => {
         mode={getConnectionMode()}
         onReconnect={handleReconnect}
       />
+
+      {showSearch && (
+        <div className="search-bar">
+          <input
+            type="text"
+            placeholder="搜尋訊息..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            autoFocus
+          />
+          {searchQuery && (
+            <span className="search-count">
+              {messages.filter(m => m.content.toLowerCase().includes(searchQuery.toLowerCase())).length} 筆結果
+            </span>
+          )}
+        </div>
+      )}
 
       {showConnectionHint && (
         <div className="connection-hint" role="alert">
@@ -584,7 +617,7 @@ const ChatPage: React.FC = () => {
             <p>發送訊息開始聊天吧！</p>
           </div>
         )}
-        {messages.length > displayLimit && (
+        {messages.length > displayLimit && !searchQuery && (
           <button
             className="btn-load-more"
             onClick={() => setDisplayLimit(prev => prev + 100)}
@@ -592,7 +625,7 @@ const ChatPage: React.FC = () => {
             載入更早的訊息（還有 {messages.length - displayLimit} 則）
           </button>
         )}
-        {messages.slice(-displayLimit).map((msg, index, arr) => {
+        {displayedMessages.map((msg, index, arr) => {
           const isOwn = msg.from.startsWith(user?.uid || '');
           const prevMsg = index > 0 ? arr[index - 1] : null;
           const showDateSep = !prevMsg || shouldShowDateSeparator(prevMsg.timestamp, msg.timestamp);
