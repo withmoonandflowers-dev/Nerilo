@@ -17,134 +17,137 @@ npm run ci           # type-check + lint + unit tests
 ## Tech Stack
 
 - **Frontend:** React 18 + TypeScript 5 + Vite 5
-- **Styling:** Tailwind CSS + shadcn/ui
-- **Auth/DB:** Firebase Auth + Firestore (signaling + fallback)
+- **Styling:** CSS Variables + Custom Design Tokens (dark mode support)
+- **Auth/DB:** Firebase Auth + Firebase RTDB (signaling + fallback)
 - **P2P:** WebRTC DataChannel (primary transport)
 - **Crypto:** SubtleCrypto (ECDSA P-256 identity, ECDH key exchange, AES-256-GCM encryption)
-- **Testing:** Vitest (unit) + Playwright (E2E)
+- **i18n:** react-i18next (繁中 + English)
+- **Error Tracking:** Sentry (optional, via VITE_SENTRY_DSN)
+- **Testing:** Vitest (unit, 1039 cases) + Playwright (E2E)
 
 ## Architecture Overview
 
-### Topology Strategy
+### System Architecture
 
-| Participants | Topology | Module |
-|---|---|---|
-| 2 | Star (direct P2P) | `P2PManager` |
-| 3-5 | Full Mesh + Gossip | `MeshGossipManager` |
-| 6-20 | Partial Mesh | `AdaptiveTopologyManager` |
-| >20 | Super-Node | `SuperNodeElection` |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Browser (Client)                         │
+├─────────────────────────────────────────────────────────────────┤
+│  UI Layer (React 18)                                            │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
+│  │ Landing   │ │ Login/   │ │Dashboard │ │ Chat     │          │
+│  │ Page      │ │ Register │ │ Page     │ │ Page     │          │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐           │
+│  │ Settings │ │ Waiting  │ │ ConnectionBanner     │           │
+│  │ Page     │ │ Room     │ │ ShareModal/Toast     │           │
+│  └──────────┘ └──────────┘ └──────────────────────┘           │
+├─────────────────────────────────────────────────────────────────┤
+│  Feature Layer                                                  │
+│  ┌──────────────────────────────────────────────────────┐      │
+│  │ ChatService (E2EE key exchange + encrypt/decrypt)     │      │
+│  │ ChatFeature (payload validation + ledger append)      │      │
+│  │ useChatMessages (binary insert + dedup + HLC sort)    │      │
+│  │ useP2PArchitecture / useStarTopology / useMeshTopology│      │
+│  └──────────────────────────────────────────────────────┘      │
+├─────────────────────────────────────────────────────────────────┤
+│  Core Layer (79 files, ~21K lines)                              │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐      │
+│  │ P2P    │ │ Mesh   │ │ Crypto │ │ Relay  │ │Community│      │
+│  │ WebRTC │ │ Gossip │ │ E2EE   │ │ Sphinx │ │ RBAC   │      │
+│  │ Signal │ │ Topo   │ │ TreeKEM│ │ DHT    │ │ Gov    │      │
+│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘      │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐      │
+│  │ Clock  │ │ Chain  │ │Transport│ │ Ledger│ │ Game   │      │
+│  │ HLC    │ │ Sync   │ │ DHT S&F│ │ Fork  │ │ Engine │      │
+│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘      │
+├─────────────────────────────────────────────────────────────────┤
+│  Infrastructure                                                 │
+│  Firebase Auth │ Firebase RTDB │ IndexedDB │ Sentry │ i18next  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Topology Strategy (with Hysteresis)
+
+| Participants | Topology | Upgrade At | Downgrade At |
+|---|---|---|---|
+| 1-2 | Star (direct P2P) | 3 | — |
+| 3-7 | Full Mesh + Gossip | 8 | 2 |
+| 8-21 | Partial Mesh | 22 | 5 |
+| 22+ | Super-Node | — | 18 |
+
+Hysteresis prevents thrashing at boundary values (e.g., 7-8 users won't flip-flop).
 
 ### Core Layers
 
 ```
 src/core/
-├── adapters/       # Hybrid Node runtime abstraction (see below)
-├── p2p/            # WebRTC connections, signaling, channel bus
-├── mesh/           # Gossip protocol, topology, heartbeat, identity
-├── relay/          # Dual-layer relay infrastructure (see below)
-├── crypto/         # SenderKeyManager (E2EE), TreeKEM, GroupKeyManager
+├── adapters/       # Hybrid Node runtime abstraction
+├── p2p/            # WebRTC connections, signaling, ICE batching, channel bus
+├── mesh/           # Gossip protocol, topology, heartbeat, identity, CSPRNG shuffle
+├── relay/          # Sphinx-Lite onion routing + Kademlia DHT
+├── crypto/         # SenderKeyManager (E2EE), TreeKEM, GroupKeyManager, key zeroization
 ├── incentive/      # Relay credit system (LocalCreditProvider)
-├── community/      # Governance, reports, roles, channels, reputation (see below)
+├── community/      # Governance, reports, roles, channels, reputation
 ├── chain/          # Append-only log sync & merge
-├── clock/          # Hybrid Logical Clock (HLC)
-├── ordering/       # Message ordering (HLC-based)
+├── clock/          # Hybrid Logical Clock (HLC) with drift guard
+├── ordering/       # Message ordering (HLC-based, binary insert)
 ├── transport/      # Multi-channel bus, store-and-forward, DHT storage
-├── ledger/         # Shared ledger engine
+├── ledger/         # Shared ledger engine with fork detection
+├── game/           # Game engine (GameLoop, World, NetworkSync)
 └── metrics/        # Performance metrics
 ```
-
-### Relay Infrastructure (`src/core/relay/`)
-
-Dual-layer design: Sphinx-Lite onion routing + Kademlia DHT.
-
-| Component | Purpose |
-|---|---|
-| `RelayManager` | Orchestrator — coordinates all relay sub-components |
-| `SphinxPacket` | 2-3 hop onion routing (ECDH + AES-GCM per hop) |
-| `KademliaRouter` | XOR-distance DHT, S/Kademlia diversified routing |
-| `PeerScoring` | GossipSub v1.1 multi-dimensional behavior scoring (-100 to +100) |
-| `RateLimiter` | Sliding window per-peer + global rate limits |
-| `RelayScorer` | Node quality: 0.35 latency + 0.25 reliability + 0.20 bandwidth + 0.10 uptime + 0.10 diversity |
-| `MultiPathSelector` | 2-4 independent paths, greedy construction avoiding shared nodes |
-| `MessageAssembler` | First-arrival-wins dedup, 5min TTL, 10K LRU |
-| `PathQualityTracker` | Rolling window feedback loop (50 samples) |
-| `CoverTrafficGenerator` | Poisson-distributed dummy packets, battery-aware |
-| `NATDetector` | ICE candidate analysis for NAT classification |
-| `MessagePadding` | 256-byte block padding to prevent size analysis |
 
 ### E2EE Flow
 
 1. Identity: ECDSA P-256 key pair, persisted in IndexedDB
-2. Key exchange: ECDH P-256 public key broadcast via P2PChannelBus
+2. Key exchange: ECDH P-256 public key broadcast via P2PChannelBus (TOFU warning on key change)
 3. Group encryption: AES-256-GCM sender key, encrypted per-member via ECDH
-4. Auto-rotation: After 100 messages or 1 hour (configurable)
-5. Forward secrecy: Previous epoch keys retained for in-flight message decryption
+4. Replay protection: Mandatory seq counter per sender per epoch
+5. Auto-rotation: After 100 messages or 1 hour (configurable)
+6. Forward secrecy: Previous epoch keys retained for in-flight message decryption
+7. Key zeroization: Raw ECDH shared bits zeroed after HKDF derivation
 
-### Adaptive Key Distribution (`src/core/crypto/`)
+### Security Measures
 
-| Group Size | Strategy | Module | Key Rotation Cost |
-|---|---|---|---|
-| <50 members | SenderKey | `SenderKeyManager` | O(N) ECDH per rotation |
-| >=50 members | TreeKEM | `TreeKEMManager` | O(log N) ECDH per rotation |
+- **RTDB rules:** Field-level write restrictions (ownerUid immutable, signals require from===auth.uid, payload <10KB)
+- **Replay protection:** Mandatory seq field in SenderKey (bypass = rejection)
+- **CSPRNG:** Gossip shuffle + cover traffic timing use crypto.getRandomValues()
+- **Payload validation:** ChatFeature validates all 5 envelope types at runtime
+- **Message size limit:** P2PChannelBus rejects >64KB messages
+- **Signal isolation:** channelLabel + to + sessionStartedAt triple-layer + LRU cap (500)
+- **HLC drift guard:** Remote timestamps clamped to local + 60s max
 
-`GroupKeyManager` auto-selects strategy based on group size with hysteresis (switch up at threshold, switch down at threshold-10).
+### Pages & Routes
 
-**TreeKEM design:** Left-balanced binary tree where members are leaves. Key rotation regenerates the leaf-to-root path and encrypts each path secret to its co-path sibling — O(log N) ECDH operations instead of O(N). Tree rebuilds on member add/remove.
+| Route | Page | Description |
+|---|---|---|
+| `/` | LandingPage | Product landing with feature cards + CTA |
+| `/login` | LoginPage | Email/password login + register + Google OAuth |
+| `/dashboard` | DashboardPage | Room list (my rooms + public rooms) + create room |
+| `/waiting/:roomId` | WaitingRoomPage | Wait for participants + share link/QR |
+| `/chat/:roomId` | ChatPage | Main chat with E2EE, search, notifications |
+| `/settings` | SettingsPage | Language, notifications, account, about |
 
-### Community Layer (`src/core/community/`)
+### User Features
 
-Organizational structure on top of mesh/relay/crypto. A Community contains Channels (each backed by a MeshGossipManager room), Members with Roles, and governance primitives.
-
-| Component | Purpose |
-|---|---|
-| `CommunityManager` | Orchestrator — unified API coordinating all sub-services |
-| `RolePermissionManager` | RBAC enforcement (owner > admin > moderator > member > guest) |
-| `MembershipService` | Member lifecycle: join, leave, invite, kick, ban, role changes |
-| `ChannelRegistry` | Channel CRUD (text, announcement, voice), archive support |
-| `ReportSystem` | Decentralized report + multi-moderator voting (configurable threshold) |
-| `GovernanceVoting` | Community proposals with quorum + approval thresholds, ledger recording |
-| `SocialReputation` | Dual-layer reputation: Network (PeerScoring) + Social (reports, governance) |
-
-**Report Flow:** member files report → moderators vote → 3/5 (configurable) approve → action executed (warn/mute/kick/ban/dismiss)
-
-**Governance Flow:** admin creates proposal → members vote within deadline → quorum + approval threshold checked → passed/rejected/expired
-
-**Dual-Layer Reputation:** `combinedScore = networkScore * 0.5 + socialScore * 0.5` (configurable weights). Network score from PeerScoring, social score from report history + governance participation.
-
-### Incentive System
-
-Phase 1: `LocalCreditProvider` (local credit tracking with `IIncentiveProvider` interface)
-Phase 2: Blockchain-backed provider (future, same interface)
-
-### DHT Persistent Storage (`src/core/transport/`)
-
-Decentralized offline message delivery using Kademlia DHT instead of Firestore.
-
-| Component | Purpose |
-|---|---|
-| `DHTStorage` | In-memory message store with TTL, dedup, per-recipient limits, and DHT protocol handling |
-| `DHTStoreAndForward` | Coordinator: finds K closest nodes via KademliaRouter, replicates messages, merges responses |
-| `StoreAndForward` | Firestore-backed fallback (original, used when DHT has insufficient nodes) |
-
-**Storage strategy:** Messages stored on K=8 closest nodes (XOR distance to recipient). On retrieval, query all K nodes, dedup responses, deliver to recipient. Falls back to Firestore when DHT overlay has <3 nodes.
-
-**Protocol messages:** `DHT_STORE`, `DHT_RETRIEVE`, `DHT_RESPONSE`, `DHT_DELETE` — sent via P2PChannelBus or gossip layer.
-
-### Hybrid Node Architecture (`src/core/adapters/`)
-
-Abstracts browser-specific APIs so the core layer can run on multiple platforms:
-
-| Node Type | Storage | Crypto | Network | Module |
-|---|---|---|---|---|
-| Browser (existing) | IndexedDB | SubtleCrypto | WebRTC | `BrowserRuntime` |
-| Desktop Daemon | SQLite (future) | node:crypto webcrypto | WebSocket/libp2p (future) | `NodeRuntime` |
-| Bootstrap Node | SQLite (future) | node:crypto webcrypto | WebSocket/libp2p (future) | `NodeRuntime` |
-
-**Key interfaces:** `IStorageAdapter`, `ICryptoAdapter`, `INetworkAdapter`, `ITimerAdapter` → combined into `IRuntime`.
-
-**Usage:** `RuntimeRegistry.init(new BrowserRuntime(localId))` at startup. Core modules access `RuntimeRegistry.get()` for platform-agnostic operations.
-
-**MemoryStorageAdapter:** In-memory `Map`-based implementation for tests and Node.js (swap with SQLite adapter when ready).
+| Feature | Status | Details |
+|---|---|---|
+| Text messaging | ✅ | E2EE, delivery status, timestamp |
+| User registration | ✅ | Email/password + Google OAuth |
+| Room management | ✅ | Create/join/leave with custom names |
+| Room sharing | ✅ | Link copy + QR code + native share API |
+| Message persistence | ✅ | IndexedDB (survives page reload) |
+| Message search | ✅ | In-chat search with result count |
+| Browser notifications | ✅ | Web Notification API + tab title unread |
+| Notification sound | ✅ | Web Audio API ping |
+| Encryption indicator | ✅ | E2EE badge in chat header |
+| Connection status | ✅ | 5-state banner with reconnect countdown |
+| Fallback warning | ✅ | Amber warning when using server relay |
+| i18n | ✅ | 繁體中文 + English |
+| Settings | ✅ | Language, notifications, account |
+| Graceful reconnect | ✅ | Soft reconnect without page reload |
+| Mobile responsive | ✅ | Safe area + dvh + touch targets |
 
 ## Conventions
 
@@ -162,16 +165,43 @@ Use `import { logger } from '@/utils/logger'` instead of `console.log`:
 - **Path aliases:** `@/*` maps to `src/*`
 - **Imports:** Use relative paths in core modules, `@/` in feature/page modules
 - **Unused params:** Prefix with `_` (e.g., `_senderId`)
+- **Crypto randomness:** Use `crypto.getRandomValues()` for all security-relevant randomness, never `Math.random()`
 
 ### Testing
 
-- Unit tests: `tests/unit/*.spec.ts` — use Vitest
-- E2E tests: `tests/e2e/*.spec.ts` — use Playwright
-- Integration tests: Firestore emulator required (`npm run test:emulator`)
+- Unit tests: `tests/unit/*.spec.ts` — 67 files, 1039 cases
+- E2E tests: `tests/e2e/*.spec.ts` — Playwright
+- Run: `node ./node_modules/vitest/vitest.mjs run`
+
+### Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `VITE_FIREBASE_*` | Firebase project configuration (7 vars) |
+| `VITE_FALLBACK_TURN_USERNAME` | Metered Open Relay username |
+| `VITE_FALLBACK_TURN_CREDENTIAL` | Metered Open Relay credential |
+| `VITE_TURN_CREDENTIAL_ENDPOINT` | Dynamic TURN credential Cloud Function URL |
+| `VITE_SENTRY_DSN` | Sentry error tracking DSN (optional) |
+
+### Review Pipeline
+
+8 professional review prompts in `prompts/`:
+- architect-review, senior-engineer-review, qa-full-test
+- security-engineer-review, ux-reviewer, devops-sre-review
+- performance-engineer-review, product-manager-review
+- **REVIEW-PIPELINE.md** — SOP for full/daily/single-role reviews
+
+### Automated Monitoring
+
+- **Scheduled:** `nerilo-health-check` — weekday 9am, runs tsc + tests + lint
+- **Skills:** `/fix-errors` (auto-diagnose + fix), `/pre-deploy-check` (quality gate)
 
 ### Key Design Decisions
 
-- **No blockchain yet** — relay incentives use local credits; blockchain is a future option
-- **Firestore as fallback** — when P2P connections fail, messages relay through Firestore
+- **Firebase RTDB (not Firestore)** — lower latency for signaling, flat JSON model
+- **RTDB as fallback** — when P2P connections fail, messages relay through RTDB with amber warning
 - **Fixed-size packets** — 4096-byte relay payloads prevent traffic analysis
+- **ICE candidate batching** — 200ms buffer reduces RTDB writes by ~80%
+- **Binary insert** — O(log N) message insertion instead of O(N log N) full sort
+- **TOFU key verification** — warn on peer ECDH public key change (MITM indicator)
 - **Score-based peer selection** — PeerScoring gates relay eligibility, gossip participation, and disconnect decisions
