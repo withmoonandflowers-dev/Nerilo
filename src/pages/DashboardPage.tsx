@@ -101,12 +101,13 @@ const DashboardPage: React.FC = () => {
       
       // 建立房間（requireAuth: true 確保只允許登入用戶）
       const roomId = await roomService.createRoom(
-        user.uid, 
-        ownerName, 
+        user.uid,
+        ownerName,
         isPrivate,
         [],
         5 * 60 * 1000, // 5 分鐘超時
-        true // 要求已登入
+        true, // 要求已登入
+        newRoomName // 使用者自訂房間名稱
       );
       
       featureLog('dashboard', 'room_created', { roomId });
@@ -312,7 +313,7 @@ const DashboardPage: React.FC = () => {
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJoinRoom(room.roomId); } }}
                   >
                     <div className="room-info">
-                      <h3>房間 {room.roomId.substring(0, 8)}...</h3>
+                      <h3>{room.name || `房間 ${room.roomId.substring(0, 8)}`}</h3>
                       <p>
                         參與者: {room.participants.length} 人 |{' '}
                         {new Date(room.createdAt).toLocaleDateString()}
@@ -357,7 +358,7 @@ const DashboardPage: React.FC = () => {
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJoinRoom(room.roomId); } }}
                 >
                   <div className="room-info">
-                    <h3>房間 {room.roomId.substring(0, 8)}...</h3>
+                    <h3>{room.name || `房間 ${room.roomId.substring(0, 8)}`}</h3>
                     <p>
                       房主：{room.ownerName || room.ownerUid.substring(0, 6)}
                     </p>

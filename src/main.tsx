@@ -1,6 +1,15 @@
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import { logger } from './utils/logger';
+
+// Global unhandled error/rejection reporting
+window.addEventListener('error', (event) => {
+  logger.error('[Global] Unhandled error', { message: event.message, filename: event.filename, lineno: event.lineno });
+});
+window.addEventListener('unhandledrejection', (event) => {
+  logger.error('[Global] Unhandled promise rejection', { reason: String(event.reason) });
+});
 
 /**
  * StrictMode 在開發模式下會 double-invoke effects（mount → unmount → re-mount），

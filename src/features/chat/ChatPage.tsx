@@ -38,6 +38,7 @@ const ChatPage: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const initializedRef = useRef(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
+  const [roomData, setRoomData] = useState<{ name?: string } | null>(null);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,6 +92,7 @@ const ChatPage: React.FC = () => {
           navigate('/dashboard');
           return;
         }
+        setRoomData({ name: room.name });
 
         logger.info('[ChatPage] Room found', {
           roomId,
@@ -495,8 +497,15 @@ const ChatPage: React.FC = () => {
           <button onClick={handleLeaveRoom} className="btn-back" aria-label="返回儀表板">
             ← 返回
           </button>
-          <h2>聊天室: {roomId?.substring(0, 8)}...</h2>
+          <h2>{roomData?.name || `聊天室 ${roomId?.substring(0, 8)}`}</h2>
         </div>
+        {connectionState === 'connected' && (
+          <div className="header-right">
+            <span className="encryption-badge" title="端對端加密 (AES-256-GCM)" aria-label="端對端加密已啟用">
+              &#x1F512; E2EE
+            </span>
+          </div>
+        )}
       </header>
 
       <ConnectionBanner
@@ -522,6 +531,12 @@ const ChatPage: React.FC = () => {
         )}
         {messages.length === 0 && connectionState === 'idle' && (
           <SkeletonMessages />
+        )}
+        {messages.length === 0 && connectionState === 'connected' && (
+          <div className="empty-chat-state" role="status">
+            <p>&#x1F512; 已建立安全連線</p>
+            <p>發送訊息開始聊天吧！</p>
+          </div>
         )}
         {messages.map((msg, index) => {
           const isOwn = msg.from.startsWith(user?.uid || '');

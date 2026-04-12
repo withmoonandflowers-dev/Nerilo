@@ -488,3 +488,37 @@
     font-size: 11px;
   }
 }
+
+/* ── Encryption badge ─────────────────────────────────────────────── */
+
+.encryption-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--color-success, #22c55e);
+  color: #fff;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Empty chat state ─────────────────────────────────────────────── */
+
+.empty-chat-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 24px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.empty-chat-state p:first-child {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}

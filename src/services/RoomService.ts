@@ -27,6 +27,7 @@ function parseRoom(roomId: string, data: any): P2PRoom | null {
   if (!data) return null;
   return {
     roomId,
+    name: data.name || undefined,
     ownerUid: data.ownerUid,
     ownerName: data.ownerName,
     participants: participantsToArray(data.participants),
@@ -66,7 +67,8 @@ export class RoomService {
     isPrivate: boolean,
     participants: string[] = [],
     waitingTimeout: number = 5 * 60 * 1000, // 預設 5 分鐘
-    requireAuth: boolean = true // 是否要求已登入（非匿名）
+    requireAuth: boolean = true, // 是否要求已登入（非匿名）
+    roomName?: string // 使用者自訂房間名稱
   ): Promise<string> {
     // 驗證 ownerUid
     if (!ownerUid || ownerUid.trim() === '') {
@@ -109,6 +111,7 @@ export class RoomService {
     const participantList = participants.length > 0 ? participants : [ownerUid];
 
     const roomData = {
+      name: roomName?.trim() || `${ownerName || '匿名使用者'} 的房間`,
       ownerUid,
       ownerName: ownerName || '匿名使用者',
       participants: participantsToObject(participantList),

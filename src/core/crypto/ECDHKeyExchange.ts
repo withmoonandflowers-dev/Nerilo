@@ -20,7 +20,7 @@ export async function deriveSharedSecret(
     256
   );
 
-  // Import as HKDF key material
+  // Import as HKDF key material, then zeroize raw shared bits
   const hkdfKey = await crypto.subtle.importKey(
     'raw',
     sharedBits,
@@ -28,6 +28,8 @@ export async function deriveSharedSecret(
     false,
     ['deriveKey']
   );
+  // Defense-in-depth: zeroize raw ECDH output from memory
+  new Uint8Array(sharedBits).fill(0);
 
   // HKDF → AES-256-GCM
   const aesKey = await crypto.subtle.deriveKey(
