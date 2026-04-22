@@ -118,7 +118,7 @@ describe('GameLoop — fixed timestep', () => {
 describe('GameLoop — start/stop', () => {
   it('start sets running to true', () => {
     const world = new World();
-    let time = 0;
+    const time = 0;
     const loop = new GameLoop(world, { tickRate: 20 }, () => time);
 
     // Mock requestAnimationFrame for browser env

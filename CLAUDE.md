@@ -193,7 +193,7 @@ Use `import { logger } from '@/utils/logger'` instead of `console.log`:
 
 ### Automated Monitoring
 
-- **Scheduled:** `nerilo-health-check` — weekday 9am, runs tsc + tests + lint
+- **Scheduled:** `nerilo-health-check` — weekdays 9am, runs tsc + tests + lint in parallel, writes `reports/health-YYYY-MM-DD.md`, monitoring-only (no fix, no commit)
 - **Skills:** `/fix-errors` (auto-diagnose + fix), `/pre-deploy-check` (quality gate)
 
 ### Key Design Decisions

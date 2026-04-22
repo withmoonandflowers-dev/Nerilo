@@ -1,0 +1,83 @@
+name: Claude PR Review
+
+# Multi-role automated review: 🔒 security + 🏗 architect + ✅ qa
+# Posts ONE consolidated PR comment with 🔴🟡🟢 tiered findings.
+# Docs-only PRs skipped via paths-ignore; fork PRs skipped (no secret access).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [master, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'reports/**'
+      - 'prompts/**'
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    name: Multi-role review
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude multi-role review
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          prompt: |
+            You are conducting a multi-role review of PR #${{ github.event.pull_request.number }}.
+
+            ## Reviewers (apply each rubric independently to the diff)
+            1. 🔒 Security — `prompts/security-engineer-review.md`
+            2. 🏗 Architect — `prompts/architect-review.md`
+            3. ✅ QA — `prompts/qa-full-test.md`
+
+            ## Scope
+            ONLY the diff of this PR — NOT the full codebase.
+            Use `gh pr diff ${{ github.event.pull_request.number }}` to identify changed files.
+            Read a full file only when you need surrounding context to judge a change.
+
+            ## Output — post exactly ONE PR comment in this format
+
+            ```markdown
+            ## 🤖 Claude Multi-Role Review
+
+            ### 🔴 Critical (blocks merge)
+            - `path/to/file.ts:42` — one-line reason
+            - (write "None" if empty)
+
+            ### 🟡 Suggested (should address)
+            - `path/to/file.ts:88` — one-line reason
+
+            ### 🟢 Notes
+            Brief positives or neutral observations.
+
+            ---
+            *Rubrics applied: 🔒 security · 🏗 architect · ✅ qa*
+            ```
+
+            ## Rules
+            - If any 🔴 item exists, run:
+              `gh pr edit ${{ github.event.pull_request.number }} --add-label needs-revision`
+            - If zero 🔴 items and the label exists, remove it:
+              `gh pr edit ${{ github.event.pull_request.number }} --remove-label needs-revision`
+            - Review-only. NEVER commit, push, or modify PR files.
+            - Cap total comment at 400 lines.
+            - If a rubric file is missing, proceed with the others and note which was skipped.
+            - If a prior bot review comment exists, EDIT it instead of posting a new one (avoid comment spam on re-runs).
+            - Token budget: do not re-read entire files when a function is enough.
