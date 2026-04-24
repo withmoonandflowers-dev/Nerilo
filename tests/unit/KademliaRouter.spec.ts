@@ -3,7 +3,6 @@ import {
   KademliaRouter,
   xorDistance,
   compareDistance,
-  bucketIndex,
 } from '../../src/core/relay/KademliaRouter';
 
 describe('KademliaRouter', () => {

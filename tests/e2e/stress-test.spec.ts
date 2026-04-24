@@ -56,7 +56,7 @@ async function getMemory(page: Page): Promise<number> {
   });
 }
 
-async function getPeerConnectionCount(page: Page): Promise<number> {
+async function _getPeerConnectionCount(page: Page): Promise<number> {
   return page.evaluate(() => {
     // Intercept RTCPeerConnection — 回傳 window 上的追蹤計數
     return (window as any).__rtcCount ?? -1;

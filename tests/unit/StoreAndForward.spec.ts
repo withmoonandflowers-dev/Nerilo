@@ -15,7 +15,7 @@
  *
  * @vitest-environment node
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 // ── 純邏輯等效測試（不需要 Firebase） ──────────────────────────────────────
 

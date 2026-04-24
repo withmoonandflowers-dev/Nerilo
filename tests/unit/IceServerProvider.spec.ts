@@ -14,8 +14,6 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   IceServerProvider,
   resetIceServerProvider,
-  type IceServerProviderConfig,
-  type TurnServerConfig,
 } from '../../src/core/p2p/IceServerProvider';
 
 describe('IceServerProvider', () => {

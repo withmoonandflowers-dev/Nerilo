@@ -272,7 +272,7 @@ export class MultiChannelBus {
     try {
       // 移除現有 sig，以確保簽名內容的確定性
       const parsed = JSON.parse(jsonData) as Record<string, unknown>;
-      const { sig: _sig, ...withoutSig } = parsed; // eslint-disable-line @typescript-eslint/no-unused-vars
+      const { sig: _sig, ...withoutSig } = parsed;  
       const canonicalJson = JSON.stringify(withoutSig);
 
       const sig = await this.signMiddleware(canonicalJson);

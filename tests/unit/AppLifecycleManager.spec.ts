@@ -12,7 +12,7 @@
  *
  * @vitest-environment node
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   AppLifecycleManager,
   type LifecycleEvent,
@@ -21,7 +21,7 @@ import {
 // ── Mock document/window ─────────────────────────────────────────────────
 
 function createMockDoc(initialVisibility: DocumentVisibilityState = 'visible') {
-  const handlers: Map<string, Set<Function>> = new Map();
+  const handlers: Map<string, Set<() => void>> = new Map();
   let visibilityState: DocumentVisibilityState = initialVisibility;
 
   return {
@@ -31,11 +31,11 @@ function createMockDoc(initialVisibility: DocumentVisibilityState = 'visible') {
     set _visibilityState(v: DocumentVisibilityState) {
       visibilityState = v;
     },
-    addEventListener(event: string, handler: Function) {
+    addEventListener(event: string, handler: () => void) {
       if (!handlers.has(event)) handlers.set(event, new Set());
       handlers.get(event)!.add(handler);
     },
-    removeEventListener(event: string, handler: Function) {
+    removeEventListener(event: string, handler: () => void) {
       handlers.get(event)?.delete(handler);
     },
     /** 手動觸發事件 */
@@ -49,15 +49,15 @@ function createMockDoc(initialVisibility: DocumentVisibilityState = 'visible') {
 }
 
 function createMockWin() {
-  const handlers: Map<string, Set<Function>> = new Map();
+  const handlers: Map<string, Set<() => void>> = new Map();
 
   return {
     navigator: { onLine: true },
-    addEventListener(event: string, handler: Function) {
+    addEventListener(event: string, handler: () => void) {
       if (!handlers.has(event)) handlers.set(event, new Set());
       handlers.get(event)!.add(handler);
     },
-    removeEventListener(event: string, handler: Function) {
+    removeEventListener(event: string, handler: () => void) {
       handlers.get(event)?.delete(handler);
     },
     fireEvent(event: string) {
