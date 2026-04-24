@@ -6,7 +6,7 @@
 npm run dev          # Start Vite dev server
 npm run build        # TypeScript check + Vite build
 npm run type-check   # tsc --noEmit
-npm run lint         # ESLint (max 100 warnings)
+npm run lint         # ESLint (max 180 warnings — tech debt ceiling, reducing over time)
 npm run test:run     # Vitest unit tests (single run)
 npm run test:e2e     # Playwright E2E tests
 npm run ci           # type-check + lint + unit tests

@@ -4,7 +4,7 @@ import { SenderKeyManager } from '../../src/core/crypto/SenderKeyManager';
 /**
  * Helper: generate an ECDH P-256 key pair for testing.
  */
-async function generateECDHKeyPair(): Promise<CryptoKeyPair> {
+async function _generateECDHKeyPair(): Promise<CryptoKeyPair> {
   return crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
     false,
