@@ -12,7 +12,7 @@
  *
  * @vitest-environment node
  */
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { ChatService } from '../../src/features/chat/ChatService';
 import { SenderKeyManager } from '../../src/core/crypto/SenderKeyManager';
 import type { P2PEnvelope, ChatMessage } from '../../src/types';
@@ -346,7 +346,7 @@ describe('ChatService E2EE Integration', () => {
 
     it('should handle ECDH_PUBKEY envelope', async () => {
       const aliceBus = new MockChannelBus();
-      const aliceSvc = new ChatService(
+      const _aliceSvc = new ChatService(
         aliceBus as unknown as any,
         'alice-uid',
         'device-1',

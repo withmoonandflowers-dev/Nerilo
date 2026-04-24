@@ -24,7 +24,7 @@ async function createRoom(page: Page): Promise<string> {
   return page.url().split('/waiting/')[1]!;
 }
 
-async function joinChat(page: Page, roomId: string): Promise<void> {
+async function _joinChat(page: Page, roomId: string): Promise<void> {
   await page.goto(`${BASE}/chat/${roomId}`);
   // 等待聊天輸入框出現
   await expect(page.locator('input[type="text"], textarea').first()).toBeVisible({ timeout: 30_000 });
@@ -37,7 +37,7 @@ async function sendMessage(page: Page, text: string): Promise<void> {
   await page.waitForTimeout(300);
 }
 
-async function getVisibleMessages(page: Page): Promise<string[]> {
+async function _getVisibleMessages(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     // 抓取所有可能的訊息元素文字
     const msgs: string[] = [];
