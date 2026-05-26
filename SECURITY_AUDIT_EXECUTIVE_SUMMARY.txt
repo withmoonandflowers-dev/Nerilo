@@ -19,7 +19,7 @@ CRITICAL FINDINGS (MUST FIX IMMEDIATELY)
 1. HARDCODED FIREBASE API KEY IN SOURCE CODE
    File: src/config/firebase.ts (lines 18, 22, 26, 30, 34, 38)
    Impact: CRITICAL - Real production credentials exposed in git history
-   Key: AIzaSyB3JwZFuRYHYkRReoYW94cfJGXDr6B9msY
+   Key: [REDACTED - see .env.local]
    Project: nerilo
    Action Required:
    - Rotate API key in Firebase Console TODAY

@@ -6,7 +6,7 @@
 
 - [ ] **Hardcoded API Key**
   - Location: `src/config/firebase.ts:18,22,26,30,34,38`
-  - Key: `AIzaSyB3JwZFuRYHYkRReoYW94cfJGXDr6B9msY`
+  - Key: `[REDACTED - see .env.local]`
   - Action: Rotate in Firebase Console, update to env vars only
   - Command: `git filter-branch --tree-filter 'git rm --cached env.local' HEAD`
 
@@ -31,7 +31,7 @@
 ```typescript
 // BEFORE: ❌ Hardcoded keys
 const firebaseConfig = {
-  apiKey: 'AIzaSyB3JwZFuRYHYkRReoYW94cfJGXDr6B9msY',  // EXPOSED!
+  apiKey: '[REDACTED - see .env.local]',  // EXPOSED!
   projectId: 'nerilo',
 };
 
