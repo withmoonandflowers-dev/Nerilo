@@ -64,19 +64,23 @@ jobs:
       - name: Install Playwright (Chromium only)
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E (stable subset, no WebRTC-dependent)
+      # vite --mode test forces Firebase to use localhost emulator
+      # (see src/config/firebase.ts). Without emulators, anonymous login
+      # fails and every UI test that waits for `.role-badge` times out.
+      - name: Set up Java (Firebase emulator dependency)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Run E2E (stable subset, no WebRTC-dependent) under Firebase emulators
         run: |
-          npx playwright test \
-            tests/e2e/waiting-room.spec.ts \
-            tests/e2e/room-timeout.spec.ts \
-            tests/e2e/room-closed.spec.ts \
-            tests/e2e/room-management.spec.ts \
-            --timeout=90000
+          npx firebase-tools emulators:exec --only auth,firestore --project nerilo \
+            "npx playwright test tests/e2e/waiting-room.spec.ts tests/e2e/room-timeout.spec.ts tests/e2e/room-closed.spec.ts tests/e2e/room-management.spec.ts --timeout=90000"
         env:
           CI: true
         continue-on-error: true
         # 若 E2E 必須通過才合併：改為 continue-on-error: false
-        # 依賴 Firebase 時可在此加入 secrets 注入 VITE_* 環境變數
 
       - name: Upload Playwright report
         if: always()

@@ -29,17 +29,20 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E tests
-        run: npm run test:e2e
+      # Firebase emulator (auth + firestore) is required because vite runs in
+      # --mode test, which short-circuits Firebase config to localhost emulator
+      # endpoints (see src/config/firebase.ts). Without emulators, the app
+      # cannot authenticate or reach Firestore → ERR_CONNECTION_REFUSED.
+      - name: Set up Java (Firebase emulator dependency)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Run E2E tests under Firebase emulators
+        run: npx firebase-tools emulators:exec --only auth,firestore --project nerilo 'npm run test:e2e'
         env:
           CI: true
-          # 如果需要 Firebase 配置，可以在 GitHub Secrets 中設定
-          # VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-          # VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          # VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-          # VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          # VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          # VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
 
       - name: Upload test results
         if: always()
