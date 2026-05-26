@@ -37,9 +37,8 @@ jobs:
 
       - name: Claude multi-role review
         uses: anthropics/claude-code-action@v1
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             You are conducting a multi-role review of PR #${{ github.event.pull_request.number }}.
 
