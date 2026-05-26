@@ -151,7 +151,7 @@
 **Critical Issues Found:**
 
 1. **Firebase API key hardcoded in source code** (firebase.ts:18, 22, 26, 30, 34, 38)
-   - Real API key exposed: `AIzaSy_REDACTED_ROTATED_KEY`
+   - Real API key exposed: `[REDACTED - see .env.local]`
    - Project ID: `nerilo`
    - This key is already visible in public repo
    - **CRITICAL:** Immediately rotate Firebase project keys and restrict API key usage in Firebase Console
@@ -582,7 +582,7 @@
 
 ### 1. Firebase API Key Exposure (A05)
 - **File:** src/config/firebase.ts:18, 22, 26, 30, 34, 38
-- **Issue:** Real API key `AIzaSy_REDACTED_ROTATED_KEY` hardcoded in source
+- **Issue:** Real API key `[REDACTED - see .env.local]` hardcoded in source
 - **Action:**
   1. Immediately rotate this API key in Firebase Console
   2. Create new API key for web platform
