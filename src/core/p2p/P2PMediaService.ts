@@ -1,6 +1,7 @@
 import type { P2PEnvelope, MediaState } from '../../types';
 import { P2PChannelBus } from './P2PChannelBus';
 import { generateUUID } from '../../utils/uuid';
+import { logger } from '../../utils/logger';
 
 export interface MediaOptions {
   audio: boolean;
@@ -68,7 +69,7 @@ export class P2PMediaService {
     } catch (error) {
       // addTrack 失敗 → 釋放所有 tracks，避免資源洩漏
       stream.getTracks().forEach(t => t.stop());
-      console.error('Error adding tracks to peer connection:', error);
+      logger.error('[P2PMediaService] Error adding tracks to peer connection', error);
       throw error;
     }
 

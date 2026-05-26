@@ -1,5 +1,6 @@
 import { arrayBufferToBase64, base64ToArrayBuffer } from '../../utils/crypto';
 import type { GossipMessage } from '../../types';
+import { logger } from '../../utils/logger';
 
 /**
  * 安全管理器
@@ -59,7 +60,7 @@ export class SecurityManager {
       // 防止 replay attack：拒絕過期訊息
       const age = Date.now() - message.timestamp;
       if (age > SecurityManager.MAX_MESSAGE_AGE_MS || age < -30_000) {
-        console.warn('[SecurityManager] Message rejected: stale or future timestamp', {
+        logger.warn('[SecurityManager] Message rejected: stale or future timestamp', {
           senderId: message.senderId,
           ageMs: age,
         });
@@ -96,7 +97,7 @@ export class SecurityManager {
         messageHash
       );
     } catch (error) {
-      console.error('[SecurityManager] Error verifying message', { error });
+      logger.error('[SecurityManager] Error verifying message', { error });
       return false;
     }
   }

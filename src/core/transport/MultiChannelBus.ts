@@ -1,5 +1,6 @@
 import type { ChannelKind } from '../../types';
 import { FirestoreRelay } from './FirestoreRelay';
+import { logger } from '../../utils/logger';
 
 const HIGH_WATERMARK: Record<ChannelKind, number> = {
   bulk: 16 * 1024 * 1024,  // 16 MB
@@ -112,7 +113,7 @@ export class MultiChannelBus {
    */
   addRelayPeer(peerId: string): void {
     this.relayPeers.add(peerId);
-    console.log('[MultiChannelBus] Peer added to relay fallback', { peerId });
+    logger.info('[MultiChannelBus] Peer added to relay fallback', { peerId });
   }
 
   /** Remove a peer from relay (WebRTC reconnected) */
@@ -140,7 +141,7 @@ export class MultiChannelBus {
         try {
           verified = await this.verifyMiddleware(raw);
         } catch (err) {
-          console.warn('[MultiChannelBus] verifyMiddleware threw, dropping message', {
+          logger.warn('[MultiChannelBus] verifyMiddleware threw, dropping message', {
             peerId,
             kind,
             error: err,
@@ -149,7 +150,7 @@ export class MultiChannelBus {
         }
 
         if (!verified) {
-          console.warn('[MultiChannelBus] Signature verification failed, dropping message', {
+          logger.warn('[MultiChannelBus] Signature verification failed, dropping message', {
             peerId,
             kind,
           });
@@ -188,13 +189,13 @@ export class MultiChannelBus {
       this.firestoreRelay
         .send(this.roomId, peerId, this.localUid, data)
         .catch((err) => {
-          console.warn(`[MultiChannelBus] Relay send failed for peer ${peerId}`, err);
+          logger.warn(`[MultiChannelBus] Relay send failed for peer ${peerId}`, err);
         });
       return;
     }
 
     if (this.paused.has(peerId)) {
-      console.warn(
+      logger.warn(
         `[MultiChannelBus] Peer ${peerId} is paused due to backpressure, dropping ${kind} message`
       );
       return;
@@ -210,7 +211,7 @@ export class MultiChannelBus {
       );
     }
     if (channel.readyState !== 'open') {
-      console.warn(
+      logger.warn(
         `[MultiChannelBus] Channel ${kind} for peer ${peerId} is not open (state: ${channel.readyState})`
       );
       return;
@@ -221,7 +222,7 @@ export class MultiChannelBus {
     // Check backpressure AFTER sending
     if (channel.bufferedAmount > HIGH_WATERMARK[kind]) {
       this.paused.add(peerId);
-      console.warn(
+      logger.warn(
         `[MultiChannelBus] Backpressure: pausing peer ${peerId} on ${kind} channel (buffered: ${channel.bufferedAmount})`
       );
     }
@@ -233,7 +234,7 @@ export class MultiChannelBus {
       try {
         this.send(peerId, kind, data);
       } catch {
-        console.warn(`[MultiChannelBus] Failed to broadcast to peer ${peerId}`);
+        logger.warn(`[MultiChannelBus] Failed to broadcast to peer ${peerId}`);
       }
     }
   }
@@ -281,7 +282,7 @@ export class MultiChannelBus {
       withoutSig.sig = sig;
       return JSON.stringify(withoutSig);
     } catch (err) {
-      console.warn('[MultiChannelBus] prepareSignedJson: signing failed, sending unsigned', err);
+      logger.warn('[MultiChannelBus] prepareSignedJson: signing failed, sending unsigned', err);
       return jsonData;
     }
   }

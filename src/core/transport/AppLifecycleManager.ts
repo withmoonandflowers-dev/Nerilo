@@ -19,6 +19,8 @@
  * - 通知 UI 層更新
  */
 
+import { logger } from '../../utils/logger';
+
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
 export type AppState = 'active' | 'passive' | 'hidden' | 'frozen' | 'terminated';
@@ -181,7 +183,7 @@ export class AppLifecycleManager {
       this.emit('drain-inbox', event);
     }
 
-    console.log('[AppLifecycleManager] State transition', {
+    logger.info('[AppLifecycleManager] State transition', {
       from: prev,
       to: newState,
       offlineDurationMs,
@@ -209,7 +211,7 @@ export class AppLifecycleManager {
       try {
         listener(data);
       } catch (err) {
-        console.error(`[AppLifecycleManager] Error in ${event} listener`, err);
+        logger.error(`[AppLifecycleManager] Error in ${event} listener`, err);
       }
     }
   }

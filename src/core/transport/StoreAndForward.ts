@@ -34,6 +34,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { logger } from '../../utils/logger';
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ export class StoreAndForward {
     };
 
     const docRef = await addDoc(inboxCol, doc);
-    console.log('[StoreAndForward] Message stored', {
+    logger.info('[StoreAndForward] Message stored', {
       roomId,
       to: recipientUid,
       from: fromUid,
@@ -138,11 +139,11 @@ export class StoreAndForward {
           try {
             handler(data.from, data.payload);
           } catch (err) {
-            console.error('[StoreAndForward] Handler error', err);
+            logger.error('[StoreAndForward] Handler error', err);
           }
           // 消費後刪除
           deleteDoc(change.doc.ref).catch((e) =>
-            console.warn('[StoreAndForward] Failed to delete consumed message', e)
+            logger.warn('[StoreAndForward] Failed to delete consumed message', e)
           );
         }
       }
@@ -179,14 +180,14 @@ export class StoreAndForward {
         handler(data.from, data.payload);
         consumed++;
       } catch (err) {
-        console.error('[StoreAndForward] Handler error during drain', err);
+        logger.error('[StoreAndForward] Handler error during drain', err);
       }
       // 消費後刪除
       deleteDoc(doc.ref).catch(() => {});
     }
 
     if (consumed > 0) {
-      console.log('[StoreAndForward] Drained inbox', {
+      logger.info('[StoreAndForward] Drained inbox', {
         roomId,
         uid: myUid,
         consumed,
