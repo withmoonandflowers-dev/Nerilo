@@ -1,6 +1,7 @@
 import { P2PManager } from '../p2p/P2PManager';
 import { P2PChannelBus } from '../p2p/P2PChannelBus';
 import type { GossipMessage } from '../../types';
+import { logger } from '../../utils/logger';
 
 /**
  * Mesh 連線包裝類別
@@ -50,7 +51,7 @@ export class MeshConnection {
           clearTimeout(timeout);
           this.channelBus = bus;
           this.setupMessageHandlers();
-          console.log('[MeshConnection] ChannelBus ready', {
+          logger.info('[MeshConnection] ChannelBus ready', {
             roomId: this.roomId,
             remoteFirebaseUid: this.remoteFirebaseUid,
             meshUserId: this.meshUserId,
@@ -61,7 +62,7 @@ export class MeshConnection {
 
       const timeout = setTimeout(() => {
         clearInterval(checkInterval);
-        console.warn('[MeshConnection] ChannelBus not ready after timeout', {
+        logger.warn('[MeshConnection] ChannelBus not ready after timeout', {
           roomId: this.roomId,
           remoteFirebaseUid: this.remoteFirebaseUid,
           meshUserId: this.meshUserId,
@@ -94,7 +95,7 @@ export class MeshConnection {
           try {
             listener(message);
           } catch (error) {
-            console.error('[MeshConnection] Error in message listener', { error });
+            logger.error('[MeshConnection] Error in message listener', { error });
           }
         });
       }

@@ -9,6 +9,8 @@
  * TURN 憑證有時效性（通常 24h），此 provider 會快取並自動更新。
  */
 
+import { logger } from '../../utils/logger';
+
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
 export interface TurnServerConfig {
@@ -100,7 +102,7 @@ export class IceServerProvider {
           } as RTCIceServer);
         }
       } catch (err) {
-        console.warn('[IceServerProvider] Failed to fetch dynamic TURN credentials, using STUN only', err);
+        logger.warn('[IceServerProvider] Failed to fetch dynamic TURN credentials, using STUN only', err);
       }
     }
 

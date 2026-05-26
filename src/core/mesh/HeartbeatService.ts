@@ -3,6 +3,8 @@
  * 每 30 秒向所有鄰居發送 ping，偵測 peer 斷線並測量延遲 (RTT)
  */
 
+import { logger } from '../../utils/logger';
+
 export type ConnectionQuality = 'excellent' | 'good' | 'fair' | 'poor';
 
 export interface PeerLatencyInfo {
@@ -205,7 +207,7 @@ export class HeartbeatService {
       try {
         handler(peerId);
       } catch (err) {
-        console.error('[HeartbeatService] Unreachable handler error', err);
+        logger.error('[HeartbeatService] Unreachable handler error', err);
       }
     }
   }

@@ -1,6 +1,7 @@
 import type { P2PEnvelope, FileMetadata, FileTransferProgress } from '../../types';
 import { P2PChannelBus } from './P2PChannelBus';
 import { generateUUID } from '../../utils/uuid';
+import { logger } from '../../utils/logger';
 
 export interface FileTransferOptions {
   chunkSize?: number;
@@ -223,7 +224,7 @@ export class P2PFileTransferService {
     for (let i = 0; i < state.metadata.chunkCount; i++) {
       const chunk = state.chunks.get(i);
       if (!chunk) {
-        console.error(`Missing chunk ${i} for file ${fileId}`);
+        logger.error(`[P2PFileTransferService] Missing chunk ${i} for file ${fileId}`);
         state.status = 'failed';
         const callbacks = this.progressCallbacks.get(fileId);
         if (callbacks?.onError) {

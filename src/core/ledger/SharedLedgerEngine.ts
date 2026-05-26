@@ -1,5 +1,6 @@
 import type { LedgerEntry, LedgerFork, LedgerSnapshot } from '../../types';
 import { ForkResolver } from './ForkResolver';
+import { logger } from '../../utils/logger';
 
 const SNAPSHOT_INTERVAL = 1000;
 
@@ -115,7 +116,7 @@ export class SharedLedgerEngine {
         };
         for (const cb of this.forkCallbacks) {
           try { cb(forkEntry); } catch (err) {
-            console.error('[SharedLedgerEngine] Fork callback error', { error: err });
+            logger.error('[SharedLedgerEngine] Fork callback error', { error: err });
           }
         }
         return 'fork_detected';
@@ -132,7 +133,7 @@ export class SharedLedgerEngine {
       };
       for (const cb of this.forkCallbacks) {
         try { cb(fork); } catch (err) {
-          console.error('[SharedLedgerEngine] Fork callback error', { error: err });
+          logger.error('[SharedLedgerEngine] Fork callback error', { error: err });
         }
       }
       return 'fork_detected';
