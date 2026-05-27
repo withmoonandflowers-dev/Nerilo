@@ -8,6 +8,15 @@ export interface ChannelMessage {
 
 export type MessageHandler = (envelope: P2PEnvelope) => void | Promise<void>;
 
+/**
+ * Maximum size (bytes) of an inbound DataChannel message. Anything larger is
+ * dropped before JSON.parse to prevent a malicious peer from OOM'ing the tab
+ * by sending a giant blob. Legitimate envelopes are well under 64 KB — the
+ * 256 KB ceiling leaves room for envelope-wrapped Sphinx packets + chunked
+ * file transfers without admitting trivial DoS.
+ */
+const MAX_INBOUND_MESSAGE_BYTES = 256 * 1024;
+
 export class P2PChannelBus {
   private dataChannel: RTCDataChannel | null = null;
   private messageHandlers: Map<string, Set<MessageHandler>> = new Map();
@@ -33,8 +42,28 @@ export class P2PChannelBus {
 
     this.dataChannel.onmessage = (event) => {
       try {
+        // DoS guard: drop oversized inbound frames before JSON.parse can OOM
+        // the tab. byteLength for ArrayBuffer/Blob, length for string.
+        const data: unknown = event.data;
+        const size =
+          typeof data === 'string'
+            ? data.length
+            : data instanceof ArrayBuffer
+              ? data.byteLength
+              : (data as { size?: number; byteLength?: number })?.size ??
+                (data as { byteLength?: number })?.byteLength ??
+                0;
+        if (size > MAX_INBOUND_MESSAGE_BYTES) {
+          logger.warn('[P2PChannelBus] Dropped oversized DataChannel message', {
+            size,
+            limit: MAX_INBOUND_MESSAGE_BYTES,
+          });
+          this.emitError('system', 'OVERSIZED_MESSAGE', `Message exceeds ${MAX_INBOUND_MESSAGE_BYTES} bytes`);
+          return;
+        }
+
         logger.info('[P2PChannelBus] onmessage received', {
-          dataLength: event.data?.length || 0,
+          dataLength: size,
           readyState: this.dataChannel?.readyState,
         });
         const envelope = JSON.parse(event.data) as P2PEnvelope;

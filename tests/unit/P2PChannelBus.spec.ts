@@ -154,6 +154,22 @@ describe('P2PChannelBus', () => {
       expect((env.payload as { type: string }).type).toBe('PARSE_ERROR');
     });
 
+    it('drops oversized inbound messages and emits OVERSIZED_MESSAGE error (DoS guard)', async () => {
+      const sysHandler = vi.fn();
+      bus.subscribe('system', sysHandler);
+
+      // 300 KB string — over the 256 KB cap
+      const oversized = 'x'.repeat(300 * 1024);
+      channel.onmessage!({ data: oversized });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(sysHandler).toHaveBeenCalled();
+      const env = sysHandler.mock.calls[0][0] as P2PEnvelope;
+      expect(env.type).toBe('ERROR');
+      expect((env.payload as { type: string }).type).toBe('OVERSIZED_MESSAGE');
+    });
+
     it('emits INVALID_ENVELOPE error for envelope missing required fields', async () => {
       const sysHandler = vi.fn();
       bus.subscribe('system', sysHandler);
