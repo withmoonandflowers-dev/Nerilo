@@ -121,6 +121,34 @@ Staging channels can be deleted with:
 firebase hosting:channel:delete staging --project staging
 ```
 
-## Local emulator note
+## Running E2E tests locally
 
-Vite `--mode test` connects to the local Firebase emulators (Auth 9099, Firestore 8080) — see [src/config/firebase.ts](../src/config/firebase.ts). The emulator suite requires `firebase-tools` installed locally; install it and run `firebase emulators:start` before `npm run test:e2e`.
+`firebase-tools` is now a `devDependency`, so emulators are available after `npm install`. Three ways to run:
+
+```bash
+# Full Playwright suite with emulators auto-booted (one shot)
+npm run test:e2e:ci
+
+# Stable subset only (matches what CI runs as a merge gate)
+npm run test:e2e:stable
+
+# Manual: start emulators yourself, leave them running, then run Playwright
+npx firebase emulators:start --only auth,firestore --project nerilo
+npm run test:e2e          # in another terminal
+```
+
+Both `test:e2e:ci` and `test:e2e:stable` use `firebase emulators:exec`, which boots Auth (9099) + Firestore (8080), runs Playwright, and tears down the emulators on exit.
+
+Requirements:
+- **Java 11+** (the emulators need a JRE). On macOS: `brew install temurin`. On Linux: `apt install default-jre`. On Windows: install Temurin from adoptium.net.
+- First emulator run downloads ~150 MB of JARs into `~/.cache/firebase/emulators/`. CI caches this between runs.
+
+## Sentry error reporting
+
+When `VITE_SENTRY_DSN` is set in `.env.staging` or `.env.production`, the app reports unhandled errors and React rendering failures to Sentry. To enable:
+
+1. Create a project at [sentry.io](https://sentry.io) (platform: React).
+2. Copy the DSN into the env file: `VITE_SENTRY_DSN=https://...@sentry.io/...`.
+3. Re-deploy.
+
+Locally and on `localhost` the integration is silently disabled (`beforeSend` filter) so dev errors never reach Sentry even if a DSN leaks into `.env.local`.

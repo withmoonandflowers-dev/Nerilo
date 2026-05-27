@@ -45,12 +45,19 @@ jobs:
         run: npm run test:run
 
   e2e:
-    name: E2E (stable subset)
+    name: E2E (stable subset, emulator-backed)
     runs-on: ubuntu-latest
     needs: quality
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Firebase emulators need a JRE — pin Java 17 explicitly.
+      - name: Setup Java 17 (for Firebase emulators)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -61,22 +68,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache Firebase emulator binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-v1
+
       - name: Install Playwright (Chromium only)
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E (stable subset, no WebRTC-dependent)
-        run: |
-          npx playwright test \
-            tests/e2e/waiting-room.spec.ts \
-            tests/e2e/room-timeout.spec.ts \
-            tests/e2e/room-closed.spec.ts \
-            tests/e2e/room-management.spec.ts \
-            --timeout=90000
+      - name: Run E2E stable subset against emulators
+        run: npm run test:e2e:stable
         env:
-          CI: true
+          CI: 'true'
         continue-on-error: true
-        # 若 E2E 必須通過才合併：改為 continue-on-error: false
-        # 依賴 Firebase 時可在此加入 secrets 注入 VITE_* 環境變數
+        # Now emulator-backed, so anonymous-auth tests can actually pass.
+        # Once green for a few weeks: flip to continue-on-error: false to gate merges.
 
       - name: Upload Playwright report
         if: always()
