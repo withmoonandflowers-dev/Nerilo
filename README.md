@@ -1,194 +1,132 @@
-# Nerilo - Firebase + WebRTC P2P 即時互動平台
+# Nerilo — P2P E2EE Real-Time Chat (Firebase + WebRTC)
 
-## 專案簡介
+Browser-only P2P chat with end-to-end encryption. Firebase handles signaling and fallback only; message content travels over WebRTC DataChannels encrypted with per-room sender keys.
 
-Nerilo 是一個基於 Firebase + WebRTC 的 P2P 即時互動平台，提供文字聊天、音訊/視訊通話、檔案傳送等功能。所有使用者資料（聊天文字、檔案、影音）僅透過 P2P 傳輸，不儲存於伺服器端，確保資料隱私。
+## What this is — and isn't
 
-## 核心特性
+| ✅ Is | ❌ Isn't |
+|---|---|
+| E2EE group chat (AES-256-GCM, ECDH P-256 key exchange) | A polished consumer product |
+| 2–20 peers, mesh + gossip topology auto-selected | A drop-in Signal/Slack replacement |
+| Best-effort sender anonymity via 2–3-hop onion routing | A strong anonymity network (see [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)) |
+| Honest about its limits — read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before relying on it | Audited / certified for high-stakes use |
 
-- 🔒 **資料隱私**：聊天文字、檔案、影音僅透過 P2P 傳輸，不寫入 Firestore
-- 🚀 **即時互動**：文字聊天、音訊/視訊通話、檔案傳送
-- 🔄 **跨裝置同步**：同帳號兩台裝置同時在線可同步
-- 📦 **模組化設計**：共用 P2P 通訊層，易於擴充新功能
-- 🔐 **RBAC 權限控制**：基於 Firebase Auth Custom Claims
-- 📝 **本機儲存**：使用 IndexedDB 儲存聊天紀錄（清除瀏覽器資料即永久遺失）
+## Core features
 
-## 技術架構
+- 🔒 **E2EE messages** — AES-256-GCM sender keys, distributed per-recipient via ECDH P-256. Auto-rotates every 100 messages or 1 hour.
+- 🕸️ **Mesh + gossip** — 2-peer direct, 3–5 full mesh, 6–20 partial mesh, >20 super-node. Auto-migrates on join/leave.
+- 🛰️ **Sphinx-Lite onion routing** — 2–3 hops, fixed 4 KB packets, Poisson cover traffic. Defeats single-relay deanonymization (not global passive adversaries).
+- 📦 **Firestore as signaling + fallback** — message content is encrypted before any Firestore write.
+- 📝 **IndexedDB** persistence — clear browser data to forget everything.
 
-### 前端
-- React 18 + TypeScript
-- Vite
-- React Router
-- Dexie (IndexedDB)
+## Quick start
 
-### 後端
-- Firebase Authentication
-- Cloud Firestore
-- Cloud Functions
-- Firebase Hosting
+### Prerequisites
 
-### P2P 通訊
-- WebRTC (RTCPeerConnection, DataChannel, MediaStream)
+| | Why |
+|---|---|
+| **Node.js 20+** | Tooling. |
+| **Java 17+** (Temurin recommended) | Firebase emulators (required for `npm run test:e2e:ci`). |
+| **Firebase account + 1–2 projects** | One for production (e.g. `nerilo`), one for staging (e.g. `nerilo-staging`) — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 
-## 快速開始
-
-### 前置需求
-
-- Node.js 18+
-- npm 或 yarn
-- Firebase 專案
-
-### 安裝
+### Install
 
 ```bash
-# 安裝依賴
 npm install
-
-# 安裝 Functions 依賴
-cd functions
-npm install
-cd ..
+# Functions project (only if you'll deploy them)
+cd functions && npm install && cd ..
 ```
 
-### 環境變數
+### Configure
 
-建立 `.env.local`：
+Copy the example and fill in the real values from your Firebase project console (Project settings → General → Your apps):
+
+```bash
+cp .env.local.example .env.local
+```
 
 ```env
-VITE_FIREBASE_API_KEY=your-api-key
+VITE_FIREBASE_API_KEY=AIzaSy...
 VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=your-project-id
-VITE_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+VITE_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
-VITE_FIREBASE_APP_ID=your-app-id
+VITE_FIREBASE_APP_ID=1:123456789:web:abcdef
 ```
 
-### 開發
+**Then enable Anonymous auth** in the Firebase Console (Build → Authentication → Sign-in method → Anonymous → Enable). The app falls back to anonymous sign-in for guests; **without this, the first page load hangs with an empty role badge** and no UI feedback. This is the #1 first-time setup mistake — see [Troubleshooting](#troubleshooting).
+
+### Run
 
 ```bash
-# 啟動開發伺服器
-npm run dev
-
-# 啟動 Firebase Emulator（可選）
-firebase emulators:start
+npm run dev                # http://localhost:3000 (dev mode, talks to real Firebase)
+npm run build              # production bundle in dist/
+npm run test:run           # unit tests (Vitest, ~617 tests)
+npm run test:e2e:ci        # E2E tests with Firebase emulators auto-booted
 ```
 
-### 建置
+### Deploy
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full staging + production walkthrough. TL;DR:
 
 ```bash
-npm run build
+npm run deploy:staging:safe      # type-check + lint + tests + Firebase Hosting preview channel
+npm run deploy:production:safe   # same, but live
 ```
 
-### 部署
+Both scripts refuse to run while `.env.staging` / `.env.production` contain `REPLACE_ME_*` placeholders.
 
-```bash
-# 部署 Firestore Rules
-firebase deploy --only firestore:rules
+## Troubleshooting
 
-# 部署 Functions
-firebase deploy --only functions
+| Symptom | Fix |
+|---|---|
+| Page loads, `.role-badge` stays empty, no errors in UI | Anonymous auth not enabled in your Firebase project. Console → Authentication → Sign-in method → Anonymous → Enable. |
+| `auth/network-request-failed` in console | Either your `.env.local` values are wrong, or the API key is restricted to a different referrer. Verify in Firebase Console → Project settings → General. |
+| `auth/configuration-not-found` | `VITE_FIREBASE_AUTH_DOMAIN` mismatch — it must be exactly `<project-id>.firebaseapp.com`. The older `.appspot.com` form (used by some legacy projects) won't work for Auth. |
+| `Failed to load resource: ERR_CONNECTION_REFUSED` to `127.0.0.1:9099` or `127.0.0.1:8080` | App is in test mode and emulators aren't running. Either: a) don't run with `--mode test`, or b) start emulators: `npx firebase emulators:start --only auth,firestore`. |
+| `npm run test:e2e` hangs at "Waiting for http://localhost:4173" | Vite startup blocked. On Windows, the Playwright `webServer.command` already uses `node ./node_modules/vite/bin/vite.js` directly to avoid the npm-shim issue. If you're still seeing this, run `npm run dev:test` in another terminal first and let Playwright reuse it. |
+| `npm run test:e2e:ci` exits with "java: not found" | Install Java 17 (Temurin). Required by Firebase emulators. |
+| `firestore.rules` deploy fails with "Authentication Error" | Run `firebase login` first. |
+| `npm run deploy:staging` errors with "REPLACE_ME_ placeholders" | You haven't filled in `.env.staging` yet. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the Firebase Console walkthrough. |
 
-# 部署 Hosting
-firebase deploy --only hosting
+## Documentation
+
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — staging + production deploy, Firebase project setup, Sentry wiring, local E2E with emulators
+- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — what privacy actually means; adversaries; Sphinx-Lite limits; recommended user practices
+- [docs/PR-5-analysis.md](docs/PR-5-analysis.md) — analysis of the in-flight feature/multi-room-improvements branch
+- [CLAUDE.md](CLAUDE.md) — codebase architecture quick-reference
+
+Older zh-TW design docs in [docs/](docs/) (架構文件, 協議文件, 新功能接入SOP, 上板與部署手冊).
+
+## Architecture (one screen)
+
+```
+src/core/
+├── p2p/          # WebRTC connections, channel bus, signaling, capability negotiation
+├── mesh/         # Gossip protocol, topology selection, heartbeat, identity (ECDSA P-256)
+├── relay/        # Sphinx-Lite onion routing + Kademlia DHT + peer scoring
+├── crypto/       # ECDH P-256 key exchange + AES-256-GCM sender keys
+├── transport/    # Multi-channel bus, store-and-forward, lifecycle
+├── ordering/     # Causal ordering + HLC
+└── metrics/      # MetricsCollector + opt-in console exporter
 ```
 
-## 專案結構
+E2EE flow: ECDH P-256 between peers → derive AES-256-GCM sender key → AES-256-GCM encrypt per message → rotate every 100 messages / 1 hour. See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for what this protects and what it doesn't.
 
-```
-nerilo/
-├── src/
-│   ├── core/
-│   │   └── p2p/          # 共用 P2P 通訊層
-│   ├── features/         # 功能模組
-│   │   └── chat/        # 文字聊天
-│   ├── services/         # 服務層
-│   │   ├── IndexedDBService.ts
-│   │   ├── RoomService.ts
-│   │   └── FirestoreChatFallback.ts
-│   ├── contexts/        # React Context
-│   ├── components/      # 共用元件
-│   ├── pages/           # 頁面
-│   └── types/           # TypeScript 類型定義
-├── functions/           # Cloud Functions
-├── docs/               # 文件（見 docs/README.md 索引）
-│   ├── 架構文件.md
-│   ├── 協議文件.md
-│   ├── 上板與部署手冊.md
-│   ├── 新功能接入SOP.md
-│   └── *.puml         # PlantUML 架構圖
-├── firestore.rules     # Firestore Security Rules
-└── firebase.json       # Firebase 配置
-```
+## Security & privacy
 
-## 核心元件
+**The honest version is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).** Short version:
 
-### 共用 P2P 通訊層
+- ✅ **Content** is unreadable to Firebase, relays, and passive observers.
+- ⚠️ **Metadata** (who is in which room, when, message sizes) leaks to whoever runs the signaling layer.
+- ⚠️ **2–3 onion hops** is not strong anonymity. Don't use this for activism in adversarial jurisdictions.
+- ⚠️ **IndexedDB private keys** are stored at-rest — physical device access or same-origin XSS can extract them.
+- ✅ **Firestore rules** enforce: only-self meshIdentity writes, participant-only signaling reads, ±30 s anti-replay on fallback messages.
 
-- **P2PConnectionManager**：管理 RTCPeerConnection 生命週期
-- **P2PChannelBus**：管理 DataChannel，提供 send/subscribe API
-- **P2PProtocolRegistry**：協議註冊與驗證
-- **P2PFileTransferService**：檔案傳輸服務
-- **P2PMediaService**：媒體服務
+## Contributing
 
-### 功能模組
+See [CONTRIBUTING.md](CONTRIBUTING.md). Tests must pass (`npm run ci`) before PR.
 
-- **ChatService** / **MeshChatService**：文字聊天（星型 / Mesh）
-- **RoomService**：房間與參與者管理
+## License
 
-## 文件
-
-- [架構文件](docs/架構文件.md)
-- [協議文件](docs/協議文件.md)
-- [新功能接入 SOP](docs/新功能接入SOP.md)
-- [上板與部署手冊](docs/上板與部署手冊.md)
-
-## 協議設計
-
-所有 P2P 訊息使用統一的 Envelope 格式：
-
-```typescript
-{
-  v: 1,
-  ns: "chat|file|media|sync|system|feature.xxx",
-  type: "STRING",
-  id: "UUID",
-  ts: 1710000000000,
-  from: "uid/deviceId",
-  to?: "uid/deviceId",
-  replyTo?: "UUID",
-  payload: {},
-  meta?: {}
-}
-```
-
-詳細說明請參考 [協議文件](docs/協議文件.md)。
-
-## 安全原則
-
-### 硬性原則
-
-- ❌ 聊天文字不得寫入 Firestore
-- ❌ 檔案本體不得寫入 Firestore
-- ❌ 影音內容不得寫入 Firestore
-- ✅ Firestore 僅用於 signaling、功能註冊、使用者 profile
-
-### 權限控制
-
-- 基於 Firebase Auth Custom Claims
-- Firestore Security Rules 作為最終裁決者
-- P2P 功能僅 user/admin 可使用
-
-## 瀏覽器支援
-
-- 桌機：Chrome/Edge/Safari 最新兩版
-- 行動裝置：iOS/Android 主流瀏覽器
-
-## 授權
-
-本專案為專案交付範例，請依實際需求調整。
-
-## 聯絡
-
-如有問題或建議，請參考文件或建立 Issue。
-
-
+Project delivery sample — adjust to your needs.
