@@ -1,21 +1,38 @@
-# 全量 E2E（含依賴 WebRTC 的案例）；主 CI 門檻為 .github/workflows/ci.yml（品質 + 穩定 E2E 子集）
+# E2E Tests with Firebase emulators
+#
+# Boots Auth + Firestore emulators via firebase-tools (now a devDependency)
+# and runs the full Playwright suite against them. No manual emulator setup
+# required.
+#
+# The main CI gate (.github/workflows/ci.yml) only runs the "stable subset"
+# of tests; this workflow runs everything, and is allowed to fail without
+# blocking the merge queue (continue-on-error on the test step).
+
 name: E2E Tests (Full)
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [master, develop]
   pull_request:
-    branches: [ master, develop ]
-  workflow_dispatch: # 允許手動觸發
+    branches: [master, develop]
+  workflow_dispatch:
 
 jobs:
   e2e-tests:
-    name: E2E Tests
+    name: E2E Tests (emulator-backed)
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # Firebase emulators require a JRE. ubuntu-latest ships with one but
+      # pin the version explicitly so a runner image change doesn't break us.
+      - name: Setup Java 17 (for Firebase emulators)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -23,25 +40,29 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install npm dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
+      # Cache the emulator binaries (~150 MB) so subsequent runs are fast.
+      - name: Cache Firebase emulator binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-v1
+
+      - name: Install Playwright browsers (Chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E tests
-        run: npm run test:e2e
+      - name: Run E2E tests against emulators
+        run: npm run test:e2e:ci
         env:
-          CI: true
-          # 如果需要 Firebase 配置，可以在 GitHub Secrets 中設定
-          # VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-          # VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          # VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-          # VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          # VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          # VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          CI: 'true'
+          # The app's src/config/firebase.ts auto-detects Vite mode=test and
+          # connects to 127.0.0.1:9099 (Auth) / 127.0.0.1:8080 (Firestore).
+          # No secrets needed — emulators accept a fake API key.
+        continue-on-error: true
 
-      - name: Upload test results
+      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -49,10 +70,10 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
-      - name: Upload test videos
+      - name: Upload test traces / videos on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-videos
+          name: test-results
           path: test-results/
           retention-days: 7

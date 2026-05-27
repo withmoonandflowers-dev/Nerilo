@@ -9,8 +9,11 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   // 自動啟動開發伺服器
+  // Use node-direct invocation so this works on Windows (where Node subprocesses
+  // can't always resolve the npm shim) AND on Linux CI. See memory note:
+  // windows_node_invocation.md
   webServer: {
-    command: 'npm run dev:test',
+    command: 'node ./node_modules/vite/bin/vite.js --port 4173 --strictPort --mode test',
     url: 'http://localhost:4173',
     reuseExistingServer: !process.env.CI, // CI 環境中不重用現有伺服器
     timeout: 120_000, // 給伺服器更多時間啟動
