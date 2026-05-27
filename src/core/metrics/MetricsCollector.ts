@@ -29,6 +29,23 @@ export interface DeliveryStats {
   p99LatencyMs: number;
 }
 
+export interface MetricsSnapshot {
+  /** Number of distinct peer/channel pairs with traffic recently */
+  activeChannels: number;
+  /** Messages-per-second across all channels (last update) */
+  msgsPerSec: number;
+  /** Cumulative latency percentiles in milliseconds */
+  latency: { p50: number; p95: number; p99: number; avg: number; samples: number };
+  /** Counts of hop length seen in recent gossip traces (hops → count) */
+  hopDistribution: Record<number, number>;
+  /** Per-channel bufferedAmount snapshot — peer:kind → bytes */
+  buffer: Record<string, number>;
+  /** Reachability % (1 - dedup/total) */
+  reachabilityPercent: number;
+  /** Cumulative counters */
+  totals: { sent: number; received: number; deduplicated: number; backpressure: number };
+}
+
 export interface MeshTopologySnapshot {
   localPeerId: string;
   strategy: string;
@@ -117,6 +134,56 @@ export class MetricsCollector {
 
   getBackpressureCount(): number {
     return this.backpressureCount;
+  }
+
+  /**
+   * Aggregate snapshot suitable for periodic console export or a /metrics
+   * debug panel. Combines latency percentiles, hop distribution, channel
+   * buffer state, and throughput into a single shape.
+   */
+  getSnapshot(): MetricsSnapshot {
+    const sorted = [...this.latencies].sort((a, b) => a - b);
+    const pct = (p: number) =>
+      sorted.length > 0 ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : 0;
+    const avg = sorted.length > 0 ? sorted.reduce((s, v) => s + v, 0) / sorted.length : 0;
+
+    const hopDistribution: Record<number, number> = {};
+    for (const t of this.gossipTraces) {
+      hopDistribution[t.hopCount] = (hopDistribution[t.hopCount] ?? 0) + 1;
+    }
+
+    const channels = Array.from(this.channelMetrics.values());
+    const buffer: Record<string, number> = {};
+    let msgsPerSec = 0;
+    for (const c of channels) {
+      buffer[`${c.peerId}:${c.kind}`] = c.bufferedAmount;
+      msgsPerSec += c.messagesPerSecond;
+    }
+
+    const total = this.sentCount + this.receivedCount;
+    const reachabilityPercent =
+      total > 0 ? Math.round(((total - this.dedupCount) / total) * 10000) / 100 : 100;
+
+    return {
+      activeChannels: channels.length,
+      msgsPerSec: Math.round(msgsPerSec * 100) / 100,
+      latency: {
+        p50: pct(0.5),
+        p95: pct(0.95),
+        p99: pct(0.99),
+        avg: Math.round(avg * 100) / 100,
+        samples: sorted.length,
+      },
+      hopDistribution,
+      buffer,
+      reachabilityPercent,
+      totals: {
+        sent: this.sentCount,
+        received: this.receivedCount,
+        deduplicated: this.dedupCount,
+        backpressure: this.backpressureCount,
+      },
+    };
   }
 
   // ── Reset ─────────────────────────────────────────────────────────────────
