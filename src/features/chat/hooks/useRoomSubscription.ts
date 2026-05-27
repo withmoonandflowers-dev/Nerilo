@@ -7,6 +7,7 @@
 import { useRef, useCallback, useMemo } from 'react';
 import type { IRoomService } from '../../../ports';
 import type { P2PRoom } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 export interface RoomSubscriptionCallbacks {
   onRoomClosed: () => void;
@@ -37,7 +38,7 @@ export function useRoomSubscription(options: UseRoomSubscriptionOptions) {
       const lastCount = lastParticipantCountRef.current;
 
       if (room.status === 'open' && lastCount >= 2 && currentCount < lastCount && lastCount > 0) {
-        console.warn('[useRoomSubscription] Participant count decreased, forcing server read', {
+        logger.warn('[useRoomSubscription] Participant count decreased, forcing server read', {
           roomId,
           cachedCount: currentCount,
           lastCount,
@@ -46,7 +47,7 @@ export function useRoomSubscription(options: UseRoomSubscriptionOptions) {
         if (serverRoom && serverRoom.participants.length !== currentCount) {
           const serverCount = serverRoom.participants.length;
           const effective = room.status === 'open' && serverCount < 2 ? 2 : serverCount;
-          console.log('[useRoomSubscription] Server room data differs, using server data', {
+          logger.info('[useRoomSubscription] Server room data differs, using server data', {
             roomId,
             cachedCount: currentCount,
             serverCount,
@@ -58,7 +59,7 @@ export function useRoomSubscription(options: UseRoomSubscriptionOptions) {
       }
 
       if (room.status === 'open' && currentCount < 2) {
-        console.log('[useRoomSubscription] Room has', currentCount, 'participant(s) but status is open (likely sync delay)', {
+        logger.info('[useRoomSubscription] Room has', currentCount, 'participant(s) but status is open (likely sync delay)', {
           roomId,
         });
         lastParticipantCountRef.current = 2;
@@ -99,7 +100,7 @@ export function useRoomSubscription(options: UseRoomSubscriptionOptions) {
           return;
         }
 
-        console.log('[useRoomSubscription] Room updated via subscription', {
+        logger.info('[useRoomSubscription] Room updated via subscription', {
           roomId,
           status: updatedRoom.status,
           participants: updatedRoom.participants.length,

@@ -7,6 +7,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { ChatMessage, CausalMessage, DeliveryStatus } from '../../../types';
 import { HybridLogicalClock } from '../../../core/clock/HybridLogicalClock';
 import { CausalOrderingBuffer } from '../../../core/ordering/CausalOrderingBuffer';
+import { logger } from '../../../utils/logger';
 
 /** Sort messages using HLC timestamps with fallback to plain timestamp */
 function sortByHLC(messages: ChatMessage[]): ChatMessage[] {
@@ -42,7 +43,7 @@ export function useChatMessages() {
     const buffer = causalBufferRef.current;
     buffer.onDeliver((msg, forced) => {
       if (forced) {
-        console.warn('[useChatMessages] Force-delivered out-of-order message', {
+        logger.warn('[useChatMessages] Force-delivered out-of-order message', {
           messageId: msg.messageId,
         });
       }

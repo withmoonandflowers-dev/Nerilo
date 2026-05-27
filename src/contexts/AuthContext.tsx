@@ -68,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const anonymousUser = await signInAnonymously(auth);
           await loadUserData(anonymousUser.user);
         } catch (error) {
-          console.error('Anonymous login error:', error);
+          logger.error('[Auth] Anonymous login error', error);
           setUser(null);
           setLoading(false);
         }
@@ -111,7 +111,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         customClaims: tokenResult.claims,
       });
     } catch (error) {
-      console.error('Error loading user data:', error);
+      logger.error('[Auth] Error loading user data', error);
       setUser({
         uid: firebaseUser.uid,
         email: firebaseUser.email,
@@ -128,7 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       await loadUserData(userCredential.user);
     } catch (error) {
-      console.error('Login error:', error);
+      logger.error('[Auth] Login error', error);
       throw error;
     }
   };
@@ -140,7 +140,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userCredential = await signInWithPopup(auth, provider);
       await loadUserData(userCredential.user);
     } catch (error: unknown) {
-      console.error('Google login error:', error);
+      logger.error('[Auth] Google login error', error);
 
       // 若被瀏覽器擋掉 popup，改用 redirect 流程
       if ((error as { code?: string })?.code === 'auth/popup-blocked') {
@@ -158,7 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signOut(auth);
       setUser(null);
     } catch (error) {
-      console.error('Logout error:', error);
+      logger.error('[Auth] Logout error', error);
       throw error;
     }
   };
