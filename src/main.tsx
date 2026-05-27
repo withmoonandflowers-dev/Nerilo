@@ -1,6 +1,10 @@
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { autoStartMetricsExporter } from './core/metrics/MetricsExporter';
 import './index.css';
+
+// No-op unless ?metrics=1 / localStorage['nerilo.metrics']='1' / window.__NERILO_METRICS__=true.
+autoStartMetricsExporter();
 
 /**
  * StrictMode 在開發模式下會 double-invoke effects（mount → unmount → re-mount），
