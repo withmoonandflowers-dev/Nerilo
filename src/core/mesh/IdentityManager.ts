@@ -6,9 +6,28 @@ const IDB_STORE = 'keypairs';
 const IDB_KEY = 'mesh_default';
 
 /**
- * IndexedDB 封裝：安全儲存密鑰對
- * 比 localStorage 安全，因為 IndexedDB 可儲存非字串型態（CryptoKey 物件）
- * 且 non-extractable keys 無法被 JS 讀取原始金鑰材料
+ * IndexedDB-backed key-pair storage.
+ *
+ * What this DOES guarantee:
+ *  - The in-memory CryptoKey for the private key is imported with
+ *    extractable=false, so JS that holds the CryptoKey reference cannot
+ *    call exportKey() on it.
+ *  - Migration from legacy localStorage automatically clears the old
+ *    key material.
+ *
+ * What this does NOT guarantee — be honest about it:
+ *  - The raw PKCS8 bytes ARE persisted to IndexedDB unencrypted (see
+ *    saveKeyPairToStorage below). The "extractable=false" flag only
+ *    protects the CryptoKey object handed back to JS; anyone who can
+ *    read the IndexedDB store (same-origin XSS, malicious browser
+ *    extension, physical device access, DevTools) can read those bytes
+ *    and re-import them with extractable=true to sign arbitrary messages.
+ *  - This is intentional for persistence — losing the key on every page
+ *    reload would be unusable — but it means the long-term identity is
+ *    only as safe as the device.
+ *
+ * See docs/THREAT_MODEL.md ("Known limitations" #4) for the full analysis
+ * and recommended user practices (hardware-locked device, browser updates).
  */
 function openIdentityDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -50,12 +69,16 @@ interface StoredKeyPair {
 }
 
 /**
- * 身分管理器
- * 負責生成和管理密鑰對，以及計算使用者 ID
+ * Identity manager — generates and persists the long-term ECDSA P-256
+ * key pair, and derives a stable userId = sha256(spki(pubKey))[:32].
  *
- * 安全改善：
- * - 密鑰儲存在 IndexedDB（非 localStorage）
- * - 匯入時使用 extractable=false 防止 JS 讀取原始金鑰
+ * Security posture (read alongside the IndexedDB-storage notes above):
+ * - Keys live in IndexedDB rather than localStorage, so they're scoped to
+ *   the origin's IndexedDB sandbox and survive across reloads.
+ * - The CryptoKey returned for the private key is non-extractable, so
+ *   code holding the in-memory key cannot exportKey() it.
+ * - The persisted PKCS8 bytes are NOT encrypted at rest — see the file-
+ *   level docstring above and docs/THREAT_MODEL.md for the threat model.
  */
 export class IdentityManager {
   private keyPair: CryptoKeyPair | null = null;
@@ -138,8 +161,14 @@ export class IdentityManager {
   }
 
   /**
-   * 從 IndexedDB 載入密鑰對
-   * 匯入時設 extractable=false，防止 XSS 攻擊者讀取原始金鑰
+   * Load the keypair from IndexedDB.
+   *
+   * The private CryptoKey is imported with extractable=false, which
+   * prevents code that already holds the CryptoKey object from calling
+   * exportKey() on it. This is NOT a defence against an attacker who can
+   * read the underlying IndexedDB store — they can just re-import the
+   * stored PKCS8 bytes with extractable=true. See the file-level
+   * docstring and docs/THREAT_MODEL.md.
    */
   private async loadKeyPairFromStorage(): Promise<CryptoKeyPair | null> {
     try {
