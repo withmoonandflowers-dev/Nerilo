@@ -1,7 +1,11 @@
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { autoStartMetricsExporter } from './core/metrics/MetricsExporter';
+import { initSentry } from './config/sentry';
 import './index.css';
+
+// No-op when VITE_SENTRY_DSN is unset.
+initSentry();
 
 // No-op unless ?metrics=1 / localStorage['nerilo.metrics']='1' / window.__NERILO_METRICS__=true.
 autoStartMetricsExporter();
