@@ -41,6 +41,26 @@
   font-size: 20px;
 }
 
+/* E2EE indicator — appears next to the room title when chat is connected */
+.e2ee-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-badge);
+  white-space: nowrap;
+}
+.e2ee-indicator-p2p {
+  background: #E8F5EE; /* light green */
+  color: #0F6E56;
+}
+.e2ee-indicator-fallback {
+  background: #FFF4E5; /* light amber */
+  color: #854F0B;
+}
+
 .connection-status {
   padding: 6px 12px;
   border-radius: var(--radius-badge);

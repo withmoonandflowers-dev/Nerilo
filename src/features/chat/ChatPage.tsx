@@ -488,6 +488,14 @@ const ChatPage: React.FC = () => {
     window.location.reload();
   };
 
+  // E2EE 狀態指示：P2P 連線 = 端到端加密；Firestore 備援 = 加密傳輸中（含 sender key）
+  const e2eeMode: 'p2p' | 'fallback' | null =
+    connectionState === 'connected'
+      ? 'p2p'
+      : getConnectionMode() === 'firestore'
+        ? 'fallback'
+        : null;
+
   return (
     <div className="chat-page" id="main-content">
       <header className="chat-header" role="banner">
@@ -496,6 +504,26 @@ const ChatPage: React.FC = () => {
             ← 返回
           </button>
           <h2>聊天室: {roomId?.substring(0, 8)}...</h2>
+          {e2eeMode === 'p2p' && (
+            <span
+              className="e2ee-indicator e2ee-indicator-p2p"
+              role="status"
+              aria-label="端到端加密已啟用"
+              title="訊息以 AES-256-GCM 加密，僅房間成員可解讀。詳見 docs/THREAT_MODEL.md。"
+            >
+              <span aria-hidden="true">🔒</span> 端到端加密
+            </span>
+          )}
+          {e2eeMode === 'fallback' && (
+            <span
+              className="e2ee-indicator e2ee-indicator-fallback"
+              role="status"
+              aria-label="備援模式：訊息仍以端到端金鑰加密，但透過伺服器中繼"
+              title="P2P 未連線；訊息經由 Firestore 中繼，但內容仍以同一把 sender key 加密。"
+            >
+              <span aria-hidden="true">🔓</span> 備援模式（加密傳輸中）
+            </span>
+          )}
         </div>
       </header>
 
