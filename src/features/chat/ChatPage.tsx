@@ -13,6 +13,7 @@ import {
 } from '../../services/FirestoreChatFallback';
 import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
 import { featureLog } from '../../utils/featureLog';
+import { logger } from '../../utils/logger';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -80,18 +81,18 @@ const ChatPage: React.FC = () => {
       try {
         const uid = user.uid;
         featureLog('chat', 'init', { roomId, uid });
-        console.log('[ChatPage] init started', { roomId, uid });
+        logger.info('[ChatPage] init started', { roomId, uid });
 
         // 1. 檢查房間是否存在
         const room = await roomService.getRoom(roomId);
         if (!isMounted()) return; // guard: cleanup ran while awaiting
         if (!room) {
-          console.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
+          logger.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
           navigate('/dashboard');
           return;
         }
 
-        console.log('[ChatPage] Room found', {
+        logger.info('[ChatPage] Room found', {
           roomId,
           status: room.status,
           participants: room.participants.length,
@@ -100,18 +101,18 @@ const ChatPage: React.FC = () => {
 
         // 2. 檢查房間狀態
         if (room.status === 'closed') {
-          console.warn('[ChatPage] Room is closed, navigating to dashboard', { roomId });
+          logger.warn('[ChatPage] Room is closed, navigating to dashboard', { roomId });
           navigate('/dashboard');
           return;
         }
 
         // 3. 加入房間
-        console.log('[ChatPage] Calling joinRoom', { roomId, uid });
+        logger.info('[ChatPage] Calling joinRoom', { roomId, uid });
         try {
           await roomService.joinRoom(roomId, uid);
           if (!isMounted()) return; // guard: cleanup ran during joinRoom (retry loop)
           featureLog('chat', 'room_joined', { roomId, uid });
-          console.log('[ChatPage] joinRoom completed', { roomId, uid });
+          logger.info('[ChatPage] joinRoom completed', { roomId, uid });
           setHasJoinedRoom(true);
 
           // 等待 Firestore 同步更新
@@ -122,14 +123,14 @@ const ChatPage: React.FC = () => {
           const roomAfterJoin = await roomService.getRoom(roomId, true);
           if (!isMounted()) return;
           if (!roomAfterJoin) {
-            console.warn('[ChatPage] Room not found after join, navigating to dashboard', { roomId });
+            logger.warn('[ChatPage] Room not found after join, navigating to dashboard', { roomId });
             navigate('/dashboard');
             return;
           }
 
           // 如果房間狀態仍然是 waiting，且參與者數量 < 2，轉到等待頁面
           if (roomAfterJoin.status === 'waiting' && roomAfterJoin.participants.length < 2) {
-            console.log('[ChatPage] Room still waiting after join, navigating to waiting page', {
+            logger.info('[ChatPage] Room still waiting after join, navigating to waiting page', {
               roomId,
               participantCount: roomAfterJoin.participants.length,
             });
@@ -138,7 +139,7 @@ const ChatPage: React.FC = () => {
           }
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : '';
-          console.error('[ChatPage] joinRoom failed', { roomId, uid, error: errMsg });
+          logger.error('[ChatPage] joinRoom failed', { roomId, uid, error: errMsg });
           if (!isMounted()) return;
           if (errMsg === '房間已關閉') {
             navigate('/dashboard');
@@ -173,13 +174,13 @@ const ChatPage: React.FC = () => {
             if (currentTopo === decision.type) return;
 
             featureLog('chat', 'architecture_decided', { roomId, type: decision.type, from: currentTopo });
-            console.log('[ChatPage] P2P topology', {
+            logger.info('[ChatPage] P2P topology', {
               roomId, currentTopo, newTopo: decision.type, effectiveCount,
             });
 
             // ★ MIGRATION: Star → Mesh（第 3 人加入時觸發）
             if (currentTopo === 'star' && decision.type === 'mesh') {
-              console.log('[ChatPage] Migrating Star → Mesh', { roomId, effectiveCount });
+              logger.info('[ChatPage] Migrating Star → Mesh', { roomId, effectiveCount });
               starTopology.cleanup();
               setConnectionState('connecting');
               await meshTopology.initialize(roomId, uid, setConnectionState, addMessage);
@@ -190,18 +191,18 @@ const ChatPage: React.FC = () => {
             // FIRST INIT（currentTopo === null）
             if (currentTopo === null) {
               if (decision.type === 'mesh') {
-                console.log('[ChatPage] Initializing Mesh topology', { roomId, uid, effectiveCount });
+                logger.info('[ChatPage] Initializing Mesh topology', { roomId, uid, effectiveCount });
                 await meshTopology.initialize(roomId, uid, setConnectionState, addMessage);
               } else {
                 const isInitiator = room.ownerUid === uid;
-                console.log('[ChatPage] Initializing Star topology', { roomId, uid, isInitiator });
+                logger.info('[ChatPage] Initializing Star topology', { roomId, uid, isInitiator });
                 await starTopology.initialize(roomId, uid, isInitiator, setConnectionState, addMessage);
               }
               currentTopologyRef.current = decision.type;
             }
             // mesh → star: 不降級（避免震盪），保持 mesh 運作
           } catch (error) {
-            console.error('[ChatPage] Error initializing P2P', { roomId, error });
+            logger.error('[ChatPage] Error initializing P2P', { roomId, error });
             setConnectionState('failed');
           } finally {
             migrationInProgressRef.current = false;
@@ -213,15 +214,15 @@ const ChatPage: React.FC = () => {
         // 5. 訂閱房間變化
         await roomSubscription.subscribe(roomId, {
           onRoomClosed: () => {
-            console.warn('[ChatPage] Room is closed, navigating to dashboard', { roomId });
+            logger.warn('[ChatPage] Room is closed, navigating to dashboard', { roomId });
             navigate('/dashboard');
           },
           onRoomWaiting: () => {
-            console.log('[ChatPage] Room is still waiting, navigating to waiting page', { roomId });
+            logger.info('[ChatPage] Room is still waiting, navigating to waiting page', { roomId });
             navigate(`/waiting/${roomId}`);
           },
           onRoomOpen: async (room, effectiveParticipantCount) => {
-            console.log('[ChatPage] Room is open via subscription', {
+            logger.info('[ChatPage] Room is open via subscription', {
               roomId,
               effectiveParticipantCount,
             });
@@ -229,7 +230,7 @@ const ChatPage: React.FC = () => {
             await initializeP2P(room, effectiveParticipantCount);
           },
           onRoomNotFound: () => {
-            console.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
+            logger.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
             navigate('/dashboard');
           },
         });
@@ -244,7 +245,7 @@ const ChatPage: React.FC = () => {
 
           // 房間為 open 表示至少已有 2 人；若讀到 0 或 1 視為 Firestore 同步延遲
           if (effectiveCount < 2) {
-            console.log('[ChatPage] Initial room has', effectiveCount, 'participant(s) but status is open (likely sync delay)', {
+            logger.info('[ChatPage] Initial room has', effectiveCount, 'participant(s) but status is open (likely sync delay)', {
               roomId,
             });
             effectiveCount = 2;
@@ -255,7 +256,7 @@ const ChatPage: React.FC = () => {
           }
         }
       } catch (error) {
-        console.error('[ChatPage] Error initializing chat:', error);
+        logger.error('[ChatPage] Error initializing chat:', error);
         setConnectionState('failed');
       }
     };
@@ -269,7 +270,7 @@ const ChatPage: React.FC = () => {
       meshTopology.cleanup();
 
       if (roomId && user) {
-        roomService.leaveRoom(roomId, user.uid).catch(console.error);
+        roomService.leaveRoom(roomId, user.uid).catch((err) => logger.error('[ChatPage] leaveRoom failed', err));
       }
 
       // 清除 StrictMode 防重入旗標，讓 re-mount（開發模式下的雙重渲染）能正常重新初始化
@@ -344,7 +345,7 @@ const ChatPage: React.FC = () => {
           await starTopology.sendMessage(content);
           featureLog('chat', 'message_sent', { roomId, channel: 'p2p_star' });
         } else {
-          console.warn('[ChatPage] No chat service available');
+          logger.warn('[ChatPage] No chat service available');
           updateMessageStatus(tempId, 'failed');
           return;
         }
@@ -356,7 +357,7 @@ const ChatPage: React.FC = () => {
       // Mark as delivered after a short delay (simulates P2P ack)
       setTimeout(() => updateMessageStatus(tempId, 'delivered'), 1500);
     } catch (error) {
-      console.error('[ChatPage] Error sending message:', error);
+      logger.error('[ChatPage] Error sending message:', error);
       updateMessageStatus(tempId, 'failed');
     }
   };

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { useToast } from '../../contexts/ToastContext';
+import { logger } from '../../utils/logger';
 import './ShareModal.css';
 
 interface ShareModalProps {
@@ -27,7 +28,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ roomId, roomName, isOpen
         width: 180,
         margin: 2,
         color: { dark: '#333333', light: '#ffffff' },
-      }).catch((err: Error) => console.error('[ShareModal] QR generation failed', err));
+      }).catch((err: Error) => logger.error('[ShareModal] QR generation failed', err));
     }
   }, [isOpen, shareUrl]);
 
@@ -68,7 +69,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ roomId, roomName, isOpen
     } catch (err) {
       // User cancelled or share failed — ignore AbortError
       if (err instanceof Error && err.name !== 'AbortError') {
-        console.error('[ShareModal] Share failed', err);
+        logger.error('[ShareModal] Share failed', err);
       }
     }
   }, [shareTitle, shareUrl]);

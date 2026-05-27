@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { logger } from '../utils/logger';
 // firebase/functions 已移除 — 目前未使用 Cloud Functions（ICE servers 改用直連 STUN）
 // 未來若需要 httpsCallable()，再 import { getFunctions } from 'firebase/functions'
 
@@ -53,7 +54,7 @@ if (IS_DEV && !IS_TEST_MODE) {
     (key) => !import.meta.env[key] || import.meta.env[key] === `your-${key.toLowerCase()}`
   );
   if (missing.length > 0) {
-    console.warn(
+    logger.warn(
       `[Firebase] 缺少環境變數，請確認 .env.local 已正確設定：\n  ${missing.join('\n  ')}\n` +
       `可參考 .env.local.example 範本。`
     );
@@ -69,9 +70,9 @@ if (IS_TEST_MODE) {
   try {
     connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
-    console.log('[Firebase] Connected to emulators (test mode)');
+    logger.info('[Firebase] Connected to emulators (test mode)');
   } catch (err) {
-    console.warn('[Firebase] Failed to connect to emulators:', err);
+    logger.warn('[Firebase] Failed to connect to emulators', err);
   }
 }
 
