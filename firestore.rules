@@ -29,6 +29,15 @@ service cloud.firestore {
         && identity.pubKey.size() <= 512;
     }
 
+    // 任何 update 都只能影響到 meshIdentities[auth.uid] 這個 key。
+    // 沒有此檢查時，惡意參與者（甚至房主）可以覆寫他人的 ECDH 公鑰，造成 MITM。
+    function meshIdentitiesChangeIsValid() {
+      let oldMI = resource.data.get('meshIdentities', {});
+      let newMI = request.resource.data.get('meshIdentities', {});
+      // affectedKeys() 包含新增、修改、刪除的 key。要求 ⊆ {auth.uid}。
+      return newMI.diff(oldMI).affectedKeys().hasOnly([request.auth.uid]);
+    }
+
     // Features collection - 功能註冊表
     match /features/{featureId} {
       // 所有人可讀取 enabled=true 的功能
@@ -66,8 +75,9 @@ service cloud.firestore {
         (request.auth.token.firebase.sign_in_provider != "anonymous" ||
          request.resource.data.e2eTestMode == true);
 
-      // 更新：允許房主更新房間，或使用者加入/更新自己的身分
-      allow update: if isAuthenticated() && (
+      // 更新：允許房主更新房間，或使用者加入/更新自己的身分。
+      // 任何更新都不得修改其他使用者的 meshIdentities 條目（防 MITM）。
+      allow update: if isAuthenticated() && meshIdentitiesChangeIsValid() && (
         // 房主可以更新房間
         (request.auth.uid == resource.data.ownerUid) ||
         // 使用者加入房間：更新後必須在 participants 中，且房間非 closed
@@ -92,7 +102,12 @@ service cloud.firestore {
       //   4. 必須帶有 createdAt 時間戳
       //   5. createdAt 不得為未來時間（±30 秒容差）
       match /signals/{signalId} {
-        allow read: if isAuthenticated();
+        // 只有該房間的參與者（或房主）能讀取 signaling — 防止任意登入用戶
+        // 爬取所有房間的 ICE 候選 / SDP 來建立使用者圖譜。
+        allow read: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants ||
+          request.auth.uid == get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.ownerUid
+        );
         allow create: if isAuthenticated()
           && request.resource.data.from == request.auth.uid
           && request.resource.data.type in ['offer', 'answer', 'ice']
@@ -109,8 +124,21 @@ service cloud.firestore {
       // Messages subcollection - 備援聊天訊息（P2P 未連線時使用）
       // 允許參與者刪除（離開房間時清理個人訊息）
       match /messages/{messageId} {
-        allow read, create: if isAuthenticated() &&
+        allow read: if isAuthenticated() &&
           request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
+        // 建立：必須是參與者、from 必須等於 auth.uid、且 createdAt 必須在
+        // 30 秒內（防 replay）。createdAt 為 timestamp 或 number 皆可。
+        allow create: if isAuthenticated() &&
+          request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants &&
+          request.resource.data.from == request.auth.uid &&
+          (
+            (request.resource.data.createdAt is timestamp &&
+             request.resource.data.createdAt > request.time - duration.value(30, 's') &&
+             request.resource.data.createdAt < request.time + duration.value(30, 's')) ||
+            (request.resource.data.createdAt is number &&
+             request.resource.data.createdAt > (request.time.toMillis() - 30000) &&
+             request.resource.data.createdAt < (request.time.toMillis() + 30000))
+          );
         allow update: if false;
         allow delete: if isAuthenticated()
           && resource.data.from == request.auth.uid;
