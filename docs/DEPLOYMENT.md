@@ -31,11 +31,27 @@ Nerilo deploys to Firebase Hosting. There are two targets — **staging** and **
    # fill in the VITE_FIREBASE_* values for each
    ```
    `.env.staging` and `.env.production` are gitignored — never commit real credentials.
-3. **Firebase project aliases** are already set in `.firebaserc`:
+3. **Firebase project aliases** are set in `.firebaserc`:
    ```json
-   { "default": "nerilo", "production": "nerilo", "staging": "nerilo" }
+   { "default": "nerilo", "production": "nerilo", "staging": "nerilo-staging" }
    ```
-   Today both aliases point at the same Firebase project (`nerilo`); the isolation comes from the preview channel. When a separate `nerilo-staging` Firebase project is provisioned, swap the `staging` alias value and update `.env.staging` to point at it.
+   `production` points at the live Firebase project; `staging` points at a **separate** project (`nerilo-staging`) so beta users hit an isolated Auth + Firestore backend. The staging project still needs to be created — see "First-time staging project setup" below.
+
+## First-time staging project setup
+
+The `nerilo-staging` Firebase project must be created in the Firebase Console before `npm run deploy:staging` can succeed. Do this once per developer / per environment:
+
+1. Open [console.firebase.google.com](https://console.firebase.google.com), click **Add project**, name it `nerilo-staging`. Disable Analytics (not needed for staging).
+2. Once the project is provisioned, click **Add app → Web** (`</>`), register the app as "Nerilo staging", and copy the 6 config values shown.
+3. **Enable Anonymous auth**: Build → Authentication → Sign-in method → Anonymous → Enable. The Nerilo app falls back to anonymous auth for guest users; without this, the first page load fails.
+4. **Enable Cloud Firestore**: Build → Firestore Database → Create database → Production mode → pick a region (e.g. `asia-east1`).
+5. **Deploy Firestore rules** to the staging project so they match production:
+   ```bash
+   firebase deploy --only firestore:rules --project staging
+   ```
+6. Copy [.env.staging.example](../.env.staging.example) to `.env.staging` and paste the 6 `VITE_FIREBASE_*` values from step 2.
+7. (Optional) Create a Sentry project and paste the DSN into `VITE_SENTRY_DSN` if you want crash reports from staging.
+8. Run `npm run deploy:staging`. The deploy script refuses to run while any `REPLACE_ME_` placeholders remain.
 
 ## Deploy to staging
 

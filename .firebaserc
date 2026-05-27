@@ -2,7 +2,7 @@
   "projects": {
     "default": "nerilo",
     "production": "nerilo",
-    "staging": "nerilo"
+    "staging": "nerilo-staging"
   },
   "targets": {},
   "etags": {}
