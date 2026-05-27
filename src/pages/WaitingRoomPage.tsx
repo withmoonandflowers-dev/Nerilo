@@ -5,6 +5,7 @@ import { useServices } from '../contexts/ServicesContext';
 import { useToast } from '../contexts/ToastContext';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
+import { logger } from '../utils/logger';
 import { ConnectionIndicator } from '../components/ConnectionBanner/ConnectionBanner';
 import { Skeleton } from '../components/Skeleton/Skeleton';
 import { ShareModal } from '../components/ShareModal/ShareModal';
@@ -27,13 +28,13 @@ const WaitingRoomPage: React.FC = () => {
 
     const unsubscribe = roomService.subscribeRoom(roomId, (updatedRoom) => {
       if (!updatedRoom) {
-        console.warn('[WaitingRoomPage] Room not found, navigating to dashboard', { roomId });
+        logger.warn('[WaitingRoomPage] Room not found, navigating to dashboard', { roomId });
         navigate('/dashboard');
         return;
       }
 
       featureLog('waiting', 'room_subscribed', { roomId, status: updatedRoom.status, participants: updatedRoom.participants.length });
-      console.log('[WaitingRoomPage] Room updated', {
+      logger.info('[WaitingRoomPage] Room updated', {
         roomId,
         status: updatedRoom.status,
         participants: updatedRoom.participants.length,
@@ -44,7 +45,7 @@ const WaitingRoomPage: React.FC = () => {
 
       // 如果房間狀態是 closed，導航回 dashboard
       if (updatedRoom.status === 'closed') {
-        console.warn('[WaitingRoomPage] Room is closed, navigating to dashboard', { roomId });
+        logger.warn('[WaitingRoomPage] Room is closed, navigating to dashboard', { roomId });
         navigate('/dashboard');
         return;
       }
@@ -54,7 +55,7 @@ const WaitingRoomPage: React.FC = () => {
       // 如果房間狀態變為 open，自動轉到聊天頁面（允許單人進入）
       if (updatedRoom.status === 'open') {
         featureLog('waiting', 'room_open_redirect', { roomId, participants: updatedRoom.participants.length });
-        console.log('[WaitingRoomPage] Room is open, navigating to chat', {
+        logger.info('[WaitingRoomPage] Room is open, navigating to chat', {
           roomId,
           participants: updatedRoom.participants.length,
         });
@@ -64,7 +65,7 @@ const WaitingRoomPage: React.FC = () => {
 
       // 檢查是否超時
       if (roomService.isRoomTimeout(updatedRoom)) {
-        console.log('[WaitingRoomPage] Room timeout detected', { roomId });
+        logger.info('[WaitingRoomPage] Room timeout detected', { roomId });
         setIsTimeout(true);
       }
     });
@@ -79,20 +80,20 @@ const WaitingRoomPage: React.FC = () => {
     const checkRoomStatus = async () => {
       const currentRoom = await roomService.getRoom(roomId);
       if (!currentRoom) {
-        console.warn('[WaitingRoomPage] Periodic check: Room not found', { roomId });
+        logger.warn('[WaitingRoomPage] Periodic check: Room not found', { roomId });
         navigate('/dashboard');
         return;
       }
 
       if (currentRoom.status === 'closed') {
-        console.warn('[WaitingRoomPage] Periodic check: Room is closed', { roomId });
+        logger.warn('[WaitingRoomPage] Periodic check: Room is closed', { roomId });
         navigate('/dashboard');
         return;
       }
 
       // 如果房間狀態為 open，自動轉到聊天頁面（允許單人進入）
       if (currentRoom.status === 'open') {
-        console.log('[WaitingRoomPage] Periodic check: Room is open, navigating to chat', {
+        logger.info('[WaitingRoomPage] Periodic check: Room is open, navigating to chat', {
           roomId,
           participants: currentRoom.participants.length,
         });
@@ -131,7 +132,7 @@ const WaitingRoomPage: React.FC = () => {
     if (isTimeout && room && room.status === 'waiting') {
       // 超時後自動關閉房間
       if (user && room.ownerUid === user.uid) {
-        roomService.closeRoom(roomId!, user.uid).catch(console.error);
+        roomService.closeRoom(roomId!, user.uid).catch((err) => logger.error('[WaitingRoomPage] closeRoom failed', err));
       }
     }
   }, [isTimeout, room, user, roomId, roomService]);
@@ -250,7 +251,7 @@ const WaitingRoomPage: React.FC = () => {
                           await roomService.activateRoom(roomId, user.uid);
                           navigate(`/chat/${roomId}`);
                         } catch (error) {
-                          console.error('[WaitingRoomPage] Failed to activate room', error);
+                          logger.error('[WaitingRoomPage] Failed to activate room', error);
                           toast.error('啟動房間失敗，請稍後再試');
                         }
                       }
