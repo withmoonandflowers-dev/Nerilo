@@ -17,6 +17,9 @@ export class P2PFileTransferService {
   private chunkSize: number;
   private activeTransfers: Map<string, FileTransferState> = new Map();
   private progressCallbacks: Map<string, FileTransferOptions> = new Map();
+  private incomingFileListeners: Set<(info: { metadata: FileMetadata; from: string }) => void> = new Set();
+  private anyProgressListeners: Set<(progress: FileTransferProgress & { direction: 'send' | 'recv'; metadata: FileMetadata }) => void> = new Set();
+  private anyCompleteListeners: Set<(info: { fileId: string; direction: 'send' | 'recv'; file: File | null; metadata: FileMetadata }) => void> = new Set();
 
   constructor(channelBus: P2PChannelBus, localUid: string, deviceId: string, chunkSize = 64 * 1024) {
     this.channelBus = channelBus;
@@ -53,6 +56,7 @@ export class P2PFileTransferService {
       chunkIndex: 0,
       status: 'pending',
       bytesTransferred: 0,
+      direction: 'send',
     };
 
     this.activeTransfers.set(fileId, state);
@@ -152,6 +156,15 @@ export class P2PFileTransferService {
     if (callbacks?.onComplete) {
       callbacks.onComplete(fileId);
     }
+
+    // Notify generic complete listeners (for send side)
+    this.anyCompleteListeners.forEach((l) => {
+      try {
+        l({ fileId, direction: state.direction, file: state.file, metadata: state.metadata });
+      } catch (err) {
+        logger.warn('[P2PFileTransferService] any-complete listener threw', err);
+      }
+    });
   }
 
   private async handleFileMessage(envelope: P2PEnvelope): Promise<void> {
@@ -182,9 +195,17 @@ export class P2PFileTransferService {
       status: 'pending',
       bytesTransferred: 0,
       chunks: new Map(),
+      direction: 'recv',
     };
 
     this.activeTransfers.set(metadata.fileId, state);
+    state.status = 'transferring';
+
+    // Notify hook listeners of incoming file
+    const info = { metadata, from: envelope.from };
+    this.incomingFileListeners.forEach((l) => {
+      try { l(info); } catch (err) { logger.warn('[P2PFileTransferService] incoming file listener threw', err); }
+    });
   }
 
   private async handleFileChunk(envelope: P2PEnvelope): Promise<void> {
@@ -247,6 +268,15 @@ export class P2PFileTransferService {
     if (callbacks?.onComplete) {
       callbacks.onComplete(fileId);
     }
+
+    // Notify generic complete listeners (for receive side)
+    this.anyCompleteListeners.forEach((l) => {
+      try {
+        l({ fileId, direction: state.direction, file, metadata: state.metadata });
+      } catch (err) {
+        logger.warn('[P2PFileTransferService] any-complete listener threw', err);
+      }
+    });
   }
 
   private async handleFileCancel(envelope: P2PEnvelope): Promise<void> {
@@ -303,12 +333,46 @@ export class P2PFileTransferService {
 
   private updateProgress(fileId: string): void {
     const progress = this.getProgress(fileId);
+    const state = this.activeTransfers.get(fileId);
     if (progress) {
       const callbacks = this.progressCallbacks.get(fileId);
       if (callbacks?.onProgress) {
         callbacks.onProgress(progress);
       }
+      if (state) {
+        this.anyProgressListeners.forEach((l) => {
+          try {
+            l({ ...progress, direction: state.direction, metadata: state.metadata });
+          } catch (err) {
+            logger.warn('[P2PFileTransferService] any-progress listener threw', err);
+          }
+        });
+      }
     }
+  }
+
+  /** Notify when remote signals a new incoming file (FILE_META received). */
+  onIncomingFile(listener: (info: { metadata: FileMetadata; from: string }) => void): () => void {
+    this.incomingFileListeners.add(listener);
+    return () => {
+      this.incomingFileListeners.delete(listener);
+    };
+  }
+
+  /** Notify on every progress tick (send or receive). */
+  onAnyProgress(listener: (progress: FileTransferProgress & { direction: 'send' | 'recv'; metadata: FileMetadata }) => void): () => void {
+    this.anyProgressListeners.add(listener);
+    return () => {
+      this.anyProgressListeners.delete(listener);
+    };
+  }
+
+  /** Notify when any transfer completes (send or receive). */
+  onAnyComplete(listener: (info: { fileId: string; direction: 'send' | 'recv'; file: File | null; metadata: FileMetadata }) => void): () => void {
+    this.anyCompleteListeners.add(listener);
+    return () => {
+      this.anyCompleteListeners.delete(listener);
+    };
   }
 
   cleanup(fileId: string): void {
@@ -326,6 +390,7 @@ interface FileTransferState {
   status: 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled';
   bytesTransferred: number;
   chunks?: Map<number, Uint8Array>;
+  direction: 'send' | 'recv';
 }
 
 
