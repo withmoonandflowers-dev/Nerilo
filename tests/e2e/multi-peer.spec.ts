@@ -7,7 +7,7 @@
  * See docs/E2E_TEST_PLAN.md § P1.9.
  */
 
-import { test, expect } from '@playwright/test';
+import { test } from '@playwright/test';
 import {
   setupUser,
   teardown,
