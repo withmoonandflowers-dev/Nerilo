@@ -5,6 +5,19 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import {
+  IconPhone,
+  IconVideo,
+  IconPhoneOff,
+  IconPhoneIncoming,
+  IconMicrophone,
+  IconMicrophoneOff,
+  IconVideoOff,
+  IconPaperclip,
+  IconFile,
+  IconDownload,
+  IconX,
+} from '@tabler/icons-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useServices } from '../../contexts/ServicesContext';
 import {
@@ -19,10 +32,31 @@ import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
 import { useRoomSubscription } from './hooks/useRoomSubscription';
 import { useChatMessages } from './hooks/useChatMessages';
+import { useMediaCall, type CallType } from './hooks/useMediaCall';
+import { useFileTransfer, type ReceivedFile } from './hooks/useFileTransfer';
 import { ConnectionBanner } from '../../components/ConnectionBanner/ConnectionBanner';
 import { SkeletonMessages, ConnectingAnimation } from '../../components/Skeleton/Skeleton';
 import { formatTimestamp, shouldShowDateSeparator, formatDateSeparator } from '../../utils/formatTimestamp';
 import './ChatPage.css';
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function formatCallDuration(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function isImageMime(type: string): boolean {
+  return type.startsWith('image/');
+}
 
 const ChatPage: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
@@ -53,6 +87,49 @@ const ChatPage: React.FC = () => {
   const meshTopology = useMeshTopology({ chatStorage });
   const roomSubscription = useRoomSubscription({ roomService });
   const { messages, addMessage, setMessagesList, updateMessageStatus } = useChatMessages();
+
+  // Derive media + file services from the active star P2PManager. These are
+  // null while connecting / when on mesh topology / when on fallback; the
+  // call and paperclip buttons are disabled in those states.
+  const p2pManager = starTopology.getState().p2pManager;
+  const mediaService = p2pManager?.getMediaService() ?? null;
+  const channelBus = p2pManager?.getChannelBus() ?? null;
+  const fileTransferService = p2pManager?.getFileTransferService() ?? null;
+  const deviceId = p2pManager?.getDeviceId() ?? '';
+  const localId = user ? `${user.uid}/${deviceId || 'na'}` : '';
+
+  const mediaCall = useMediaCall({ mediaService, channelBus, localId });
+  const fileTransfer = useFileTransfer({ fileTransferService });
+
+  // File preview / selection (before sending)
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!pendingFile) {
+      setPendingPreviewUrl(null);
+      return;
+    }
+    if (isImageMime(pendingFile.type)) {
+      const url = URL.createObjectURL(pendingFile);
+      setPendingPreviewUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } else {
+      setPendingPreviewUrl(null);
+    }
+  }, [pendingFile]);
+
+  // Local + remote stream attachment to <video> elements.
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (localVideoRef.current) localVideoRef.current.srcObject = mediaCall.localStream;
+  }, [mediaCall.localStream]);
+  useEffect(() => {
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = mediaCall.remoteStream;
+  }, [mediaCall.remoteStream]);
+
+  const canCall = mediaService !== null && channelBus !== null && mediaCall.state === 'idle';
 
   // 避免在 React StrictMode（開發環境）下重複初始化同一個 room + uid
   const initKey = user && roomId ? `room-${roomId}-uid-${user.uid}` : null;
@@ -496,6 +573,14 @@ const ChatPage: React.FC = () => {
         ? 'fallback'
         : null;
 
+  const handleStartCall = async (type: CallType) => {
+    try {
+      await mediaCall.startCall(type);
+    } catch (err) {
+      logger.error('[ChatPage] startCall failed', err);
+    }
+  };
+
   return (
     <div className="chat-page" id="main-content">
       <header className="chat-header" role="banner">
@@ -525,7 +610,143 @@ const ChatPage: React.FC = () => {
             </span>
           )}
         </div>
+        <div className="header-right">
+          <button
+            type="button"
+            className="btn-call"
+            onClick={() => handleStartCall('audio')}
+            disabled={!canCall}
+            aria-label="撥打語音通話"
+            title={canCall ? '撥打語音通話' : '需要 P2P 連線才能通話'}
+          >
+            <IconPhone size={20} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="btn-call"
+            onClick={() => handleStartCall('video')}
+            disabled={!canCall}
+            aria-label="撥打視訊通話"
+            title={canCall ? '撥打視訊通話' : '需要 P2P 連線才能通話'}
+          >
+            <IconVideo size={20} aria-hidden="true" />
+          </button>
+        </div>
       </header>
+
+      {/* Incoming call banner */}
+      {mediaCall.state === 'ringing' && (
+        <div className="incoming-call-banner" role="alert" aria-live="assertive">
+          <div className="incoming-call-info">
+            <IconPhoneIncoming size={20} aria-hidden="true" />
+            <span>來電：{mediaCall.callType === 'video' ? '視訊通話' : '語音通話'}</span>
+          </div>
+          <div className="incoming-call-actions">
+            <button
+              type="button"
+              className="btn-call-decline"
+              onClick={() => mediaCall.declineCall()}
+              aria-label="拒絕來電"
+            >
+              拒絕
+            </button>
+            <button
+              type="button"
+              className="btn-call-accept"
+              onClick={() => mediaCall.answerCall().catch((err) => logger.error('[ChatPage] answerCall failed', err))}
+              aria-label="接聽來電"
+            >
+              接聽
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Outgoing-call (ringing remote) status */}
+      {mediaCall.state === 'requesting' && (
+        <div className="incoming-call-banner outgoing" role="status">
+          <div className="incoming-call-info">
+            <IconPhone size={20} aria-hidden="true" />
+            <span>正在呼叫對方…</span>
+          </div>
+          <button
+            type="button"
+            className="btn-call-decline"
+            onClick={() => mediaCall.endCall()}
+            aria-label="取消呼叫"
+          >
+            取消
+          </button>
+        </div>
+      )}
+
+      {/* Active call overlay */}
+      {mediaCall.state === 'connected' && (
+        <div
+          className={`call-overlay ${mediaCall.callType === 'video' ? 'video-call' : 'audio-call'}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={mediaCall.callType === 'video' ? '視訊通話中' : '語音通話中'}
+        >
+          <div className="call-remote">
+            {mediaCall.callType === 'video' ? (
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                aria-label="對方畫面"
+              />
+            ) : (
+              <div className="audio-call-avatar" aria-hidden="true">
+                <IconPhone size={64} />
+              </div>
+            )}
+            <div className="call-duration" aria-live="polite">
+              {formatCallDuration(mediaCall.callDurationMs)}
+            </div>
+          </div>
+          {mediaCall.callType === 'video' && (
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="call-local-preview"
+              aria-label="本地預覽"
+            />
+          )}
+          <div className="call-controls">
+            <button
+              type="button"
+              className={`call-control ${mediaCall.audioMuted ? 'active' : ''}`}
+              onClick={mediaCall.toggleMute}
+              aria-label={mediaCall.audioMuted ? '取消靜音' : '靜音'}
+              aria-pressed={mediaCall.audioMuted}
+            >
+              {mediaCall.audioMuted ? <IconMicrophoneOff size={24} /> : <IconMicrophone size={24} />}
+            </button>
+            {mediaCall.callType === 'video' && (
+              <button
+                type="button"
+                className={`call-control ${mediaCall.videoMuted ? 'active' : ''}`}
+                onClick={mediaCall.toggleCamera}
+                aria-label={mediaCall.videoMuted ? '開啟鏡頭' : '關閉鏡頭'}
+                aria-pressed={mediaCall.videoMuted}
+              >
+                {mediaCall.videoMuted ? <IconVideoOff size={24} /> : <IconVideo size={24} />}
+              </button>
+            )}
+            <button
+              type="button"
+              className="call-control call-end"
+              onClick={() => mediaCall.endCall()}
+              aria-label="掛斷通話"
+            >
+              <IconPhoneOff size={24} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <ConnectionBanner
         connectionState={connectionState}
@@ -605,6 +826,45 @@ const ChatPage: React.FC = () => {
           );
         })}
 
+        {/* Received-file cards — rendered after text messages, before typing indicator */}
+        {fileTransfer.receivedFiles.map((received: ReceivedFile) => (
+          <div key={`file-${received.fileId}`} className="message other file-message">
+            <div className="message-content">
+              {isImageMime(received.fileType) ? (
+                <a
+                  href={received.objectUrl}
+                  download={received.file.name}
+                  className="file-card image"
+                  aria-label={`下載圖片 ${received.file.name}`}
+                >
+                  <img src={received.objectUrl} alt={received.file.name} />
+                  <div className="file-card-meta">
+                    <span className="file-name">{received.file.name}</span>
+                    <span className="file-size">{formatFileSize(received.file.size)}</span>
+                  </div>
+                </a>
+              ) : (
+                <a
+                  href={received.objectUrl}
+                  download={received.file.name}
+                  className="file-card"
+                  aria-label={`下載檔案 ${received.file.name}`}
+                >
+                  <IconFile size={32} aria-hidden="true" />
+                  <div className="file-card-meta">
+                    <span className="file-name">{received.file.name}</span>
+                    <span className="file-size">{formatFileSize(received.file.size)}</span>
+                  </div>
+                  <IconDownload size={20} aria-hidden="true" />
+                </a>
+              )}
+            </div>
+            <div className="message-meta">
+              <span className="message-time">{formatTimestamp(received.receivedAt)}</span>
+            </div>
+          </div>
+        ))}
+
         {/* Typing indicator */}
         {remoteTyping && (
           <div className="message other typing-indicator-wrapper">
@@ -639,23 +899,128 @@ const ChatPage: React.FC = () => {
         {connectionState !== 'connected' && (
           <p className="fallback-notice">目前使用備援連線，訊息經由伺服器傳送</p>
         )}
-        <textarea
-          ref={textareaRef}
-          value={inputValue}
-          onChange={handleTextareaChange}
-          onKeyDown={handleKeyDown}
-          placeholder="輸入訊息..."
-          rows={1}
-          aria-label="輸入訊息，Enter 傳送，Shift+Enter 換行"
-        />
-        <button
-          onClick={handleSend}
-          disabled={!inputValue.trim()}
-          className="send-button"
-          aria-label="傳送訊息"
-        >
-          傳送
-        </button>
+
+        {/* In-flight transfers */}
+        {fileTransfer.transfers.length > 0 && (
+          <div className="transfer-list" role="list" aria-label="檔案傳輸中">
+            {fileTransfer.transfers.map((t) => (
+              <div key={t.fileId} className={`transfer-item ${t.status}`} role="listitem">
+                <IconFile size={20} aria-hidden="true" />
+                <div className="transfer-meta">
+                  <span className="transfer-name">
+                    {t.direction === 'send' ? '傳送中：' : '接收中：'}
+                    {t.fileName}
+                  </span>
+                  <span className="transfer-progress">
+                    {formatFileSize(t.bytesTransferred)} / {formatFileSize(t.totalBytes)}
+                    {' · '}
+                    {Math.round(t.percentage)}%
+                  </span>
+                </div>
+                <div
+                  className="transfer-bar"
+                  role="progressbar"
+                  aria-valuenow={Math.round(t.percentage)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`${t.fileName} 傳輸進度 ${Math.round(t.percentage)}%`}
+                >
+                  <div className="transfer-bar-fill" style={{ width: `${t.percentage}%` }} />
+                </div>
+                {t.direction === 'send' && t.status === 'transferring' && (
+                  <button
+                    type="button"
+                    className="transfer-cancel"
+                    onClick={() => fileTransfer.cancelTransfer(t.fileId)}
+                    aria-label="取消傳輸"
+                  >
+                    <IconX size={16} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* File preview (before sending) */}
+        {pendingFile && (
+          <div className="pending-file-preview" role="region" aria-label="準備傳送的檔案">
+            {pendingPreviewUrl ? (
+              <img src={pendingPreviewUrl} alt={pendingFile.name} className="pending-file-image" />
+            ) : (
+              <IconFile size={32} aria-hidden="true" />
+            )}
+            <div className="pending-file-meta">
+              <span className="file-name">{pendingFile.name}</span>
+              <span className="file-size">{formatFileSize(pendingFile.size)}</span>
+            </div>
+            <button
+              type="button"
+              className="pending-file-cancel"
+              onClick={() => setPendingFile(null)}
+              aria-label="取消傳送此檔案"
+            >
+              <IconX size={18} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="pending-file-send"
+              onClick={async () => {
+                if (!pendingFile || !fileTransfer.isReady) return;
+                try {
+                  await fileTransfer.sendFile(pendingFile);
+                } catch (err) {
+                  logger.error('[ChatPage] sendFile failed', err);
+                } finally {
+                  setPendingFile(null);
+                }
+              }}
+              disabled={!fileTransfer.isReady}
+            >
+              傳送檔案
+            </button>
+          </div>
+        )}
+
+        <div className="chat-input-row">
+          <input
+            ref={fileInputRef}
+            type="file"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) setPendingFile(file);
+              e.target.value = ''; // allow re-selecting the same file
+            }}
+          />
+          <button
+            type="button"
+            className="btn-attach"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!fileTransfer.isReady}
+            aria-label="附加檔案"
+            title={fileTransfer.isReady ? '附加檔案' : '需要 P2P 連線才能傳檔'}
+          >
+            <IconPaperclip size={20} aria-hidden="true" />
+          </button>
+          <textarea
+            ref={textareaRef}
+            value={inputValue}
+            onChange={handleTextareaChange}
+            onKeyDown={handleKeyDown}
+            placeholder="輸入訊息..."
+            rows={1}
+            aria-label="輸入訊息，Enter 傳送，Shift+Enter 換行"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!inputValue.trim()}
+            className="send-button"
+            aria-label="傳送訊息"
+          >
+            傳送
+          </button>
+        </div>
       </div>
     </div>
   );

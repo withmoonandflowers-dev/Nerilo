@@ -23,6 +23,8 @@ export class P2PMediaService {
   };
   private stateListeners: Set<(state: MediaState) => void> = new Set();
   private streamListeners: Set<(stream: MediaStream | null) => void> = new Set();
+  private incomingCallListeners: Set<(info: { hasVideo: boolean; hasAudio: boolean; from: string }) => void> = new Set();
+  private mediaEndListeners: Set<() => void> = new Set();
 
   constructor(
     channelBus: P2PChannelBus,
@@ -151,11 +153,55 @@ export class P2PMediaService {
     };
   }
 
+  /** Notify when remote peer signals they have started media (MEDIA_READY received). */
+  onIncomingCall(listener: (info: { hasVideo: boolean; hasAudio: boolean; from: string }) => void): () => void {
+    this.incomingCallListeners.add(listener);
+    return () => {
+      this.incomingCallListeners.delete(listener);
+    };
+  }
+
+  /** Notify when remote peer ends media (MEDIA_END received). */
+  onMediaEnd(listener: () => void): () => void {
+    this.mediaEndListeners.add(listener);
+    return () => {
+      this.mediaEndListeners.delete(listener);
+    };
+  }
+
+  /** Send MEDIA_END to remote, signalling we have stopped our media. */
+  async sendMediaEnd(): Promise<void> {
+    const envelope: P2PEnvelope = {
+      v: 1,
+      ns: 'media',
+      type: 'MEDIA_END',
+      id: generateUUID(),
+      ts: Date.now(),
+      from: `${this.localUid}/${this.deviceId}`,
+      payload: {},
+    };
+    try {
+      await this.channelBus.send(envelope);
+    } catch (err) {
+      logger.warn('[P2PMediaService] sendMediaEnd failed', err);
+    }
+  }
+
   private async handleMediaMessage(envelope: P2PEnvelope): Promise<void> {
     switch (envelope.type) {
-      case 'MEDIA_READY':
-        // 遠端媒體已準備，可以開始顯示
+      case 'MEDIA_READY': {
+        // 遠端媒體已準備
+        const payload = (envelope.payload || {}) as { audioEnabled?: boolean; videoEnabled?: boolean };
+        const info = {
+          hasAudio: !!payload.audioEnabled,
+          hasVideo: !!payload.videoEnabled,
+          from: envelope.from,
+        };
+        this.incomingCallListeners.forEach((l) => {
+          try { l(info); } catch (err) { logger.warn('[P2PMediaService] incoming call listener threw', err); }
+        });
         break;
+      }
       case 'MEDIA_TOGGLE': {
         // 遠端媒體狀態變更
         const { audioMuted, videoMuted } = envelope.payload as Partial<MediaState>;
@@ -172,6 +218,9 @@ export class P2PMediaService {
         // 遠端結束媒體
         this.remoteStream = null;
         this.notifyStreamListeners(null);
+        this.mediaEndListeners.forEach((l) => {
+          try { l(); } catch (err) { logger.warn('[P2PMediaService] media end listener threw', err); }
+        });
         break;
     }
   }

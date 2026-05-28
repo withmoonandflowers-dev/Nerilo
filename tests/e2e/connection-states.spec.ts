@@ -19,7 +19,6 @@ import {
   teardown,
   createRoom,
   joinRoom,
-  expectChatReady,
   sendMessage,
   expectMessageReceived,
   uniqueMessage,
