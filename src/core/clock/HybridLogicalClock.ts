@@ -54,10 +54,9 @@ export class HybridLogicalClock {
   receive(remote: HLCTimestamp): HLCTimestamp {
     const physicalNow = Date.now();
 
-    // Guard against extreme clock drift
+    // Guard against extreme clock drift — clamp remote wallTime
     if (remote.wallTime - physicalNow > MAX_DRIFT_MS) {
-      // Clamp to local time + drift limit instead of rejecting entirely
-      // This avoids breaking the causal chain while limiting drift impact
+      remote = { ...remote, wallTime: physicalNow + MAX_DRIFT_MS };
     }
 
     const prevWallTime = this.wallTime;

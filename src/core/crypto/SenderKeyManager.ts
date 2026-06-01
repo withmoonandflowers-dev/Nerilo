@@ -21,6 +21,16 @@ export interface EncryptedPayload {
   iv: string; // Base64
   /** Epoch of the sender key used */
   senderKeyEpoch: number;
+  /**
+   * Monotonic counter within epoch for replay protection.
+   *
+   * Optional for backwards compatibility with callers that haven't been
+   * updated yet (ChatService, EncryptedChatPayload). When present,
+   * decryptMessage rejects payloads with seq <= last-seen for the same
+   * (senderId, epoch). Future work: make this mandatory once all callers
+   * are migrated.
+   */
+  seq?: number;
 }
 
 export interface SenderKeyDistribution {
@@ -61,6 +71,12 @@ export class SenderKeyManager {
   /** Peer public keys cache for redistribution after rotation */
   private cachedMembers: PeerPublicKey[] = [];
 
+  // ── Replay protection ──────────────────────────────────────────────────
+  /** Monotonic sequence counter per epoch (reset on key rotation) */
+  private seqCounter = 0;
+  /** Per-peer per-epoch last-seen sequence number: "peerId:epoch" → lastSeq */
+  private peerSeqCounters = new Map<string, number>();
+
   constructor(private readonly localUserId: string) {}
 
   /**
@@ -92,6 +108,7 @@ export class SenderKeyManager {
       ['encrypt', 'decrypt']
     );
     this.currentEpoch++;
+    this.seqCounter = 0; // Reset seq on new epoch
     return this.currentSenderKey;
   }
 
@@ -177,6 +194,8 @@ export class SenderKeyManager {
     if (existing) {
       this.previousPeerKeys.set(distribution.senderId, existing);
     }
+    // No need to reset replay counter — it's scoped per (senderId:epoch)
+    // Old epoch counters will be cleaned up naturally
     this.peerSenderKeys.set(distribution.senderId, {
       epoch: distribution.epoch,
       key: senderKey,
@@ -292,21 +311,36 @@ export class SenderKeyManager {
     );
 
     this.messagesSinceRotation++;
+    const seq = this.seqCounter++;
 
     return {
       ciphertext: bufferToBase64(ciphertext),
       iv: bufferToBase64(iv.buffer as ArrayBuffer),
       senderKeyEpoch: this.currentEpoch,
+      seq,
     };
   }
 
   /**
    * Decrypt a message from a peer using their sender key.
+   * Validates seq counter to prevent replay attacks.
    */
   async decryptMessage(
     payload: EncryptedPayload,
     senderId: string
   ): Promise<string> {
+    // Replay protection: verify seq is strictly increasing per sender per epoch
+    if (typeof payload.seq === 'number') {
+      const seqKey = `${senderId}:${payload.senderKeyEpoch}`;
+      const lastSeq = this.peerSeqCounters.get(seqKey) ?? -1;
+      if (payload.seq <= lastSeq) {
+        throw new Error(
+          `Replay detected from ${senderId}: seq ${payload.seq} <= last ${lastSeq}`
+        );
+      }
+      this.peerSeqCounters.set(seqKey, payload.seq);
+    }
+
     // Try current key first
     let entry = this.peerSenderKeys.get(senderId);
 
@@ -365,6 +399,8 @@ export class SenderKeyManager {
     this.onRotationCallback = null;
     this.messagesSinceRotation = 0;
     this.lastRotationAt = 0;
+    this.seqCounter = 0;
+    this.peerSeqCounters.clear();
   }
 }
 
@@ -380,7 +416,12 @@ function bufferToBase64(buffer: ArrayBuffer): string {
 }
 
 function base64ToBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error('Invalid base64 input');
+  }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
