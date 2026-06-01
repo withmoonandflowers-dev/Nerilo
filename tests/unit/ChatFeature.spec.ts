@@ -107,6 +107,54 @@ describe('ChatFeature', () => {
     });
   });
 
+  // ── Payload validation (malicious/malformed payloads) ────────────
+
+  describe('handleEnvelope - invalid payload rejection', () => {
+    it('drops MSG_SEND with missing messageId', async () => {
+      const env = makeEnvelope('chat:MSG_SEND', { text: 'hello' });
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.appendLedger).not.toHaveBeenCalled();
+      expect(ctx.logger.warn).toHaveBeenCalled();
+    });
+
+    it('drops MSG_SEND with non-string text', async () => {
+      const env = makeEnvelope('chat:MSG_SEND', { messageId: 'msg-1', text: 123 });
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.appendLedger).not.toHaveBeenCalled();
+      expect(ctx.logger.warn).toHaveBeenCalled();
+    });
+
+    it('drops MSG_SEND with null payload', async () => {
+      const env = makeEnvelope('chat:MSG_SEND', null);
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.appendLedger).not.toHaveBeenCalled();
+    });
+
+    it('drops MSG_EDIT with missing editedAt', async () => {
+      const env = makeEnvelope('chat:MSG_EDIT', { messageId: 'msg-1', newText: 'edited' });
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.appendLedger).not.toHaveBeenCalled();
+    });
+
+    it('drops MSG_DELETE with non-number deletedAt', async () => {
+      const env = makeEnvelope('chat:MSG_DELETE', { messageId: 'msg-1', deletedAt: 'now' });
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.appendLedger).not.toHaveBeenCalled();
+    });
+
+    it('drops REACT with missing emoji', async () => {
+      const env = makeEnvelope('chat:REACT', { messageId: 'msg-1', userId: 'u1' });
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.appendLedger).not.toHaveBeenCalled();
+    });
+
+    it('drops TYPING with non-boolean isTyping', async () => {
+      const env = makeEnvelope('chat:TYPING', { userId: 'u1', isTyping: 'yes' });
+      await ChatFeature.handleEnvelope!(env);
+      expect(ctx.logger.warn).toHaveBeenCalled();
+    });
+  });
+
   describe('handleEnvelope - unknown type', () => {
     it('ignores unknown envelope types gracefully', async () => {
       const env = makeEnvelope('chat:UNKNOWN_TYPE', {});

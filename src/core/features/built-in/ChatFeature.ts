@@ -29,6 +29,38 @@ export interface ChatTypingPayload {
   isTyping: boolean;
 }
 
+// ── Runtime payload validators ──────────────────────────────────────────────
+
+function isValidChatSend(p: unknown): p is ChatSendPayload {
+  if (!p || typeof p !== 'object') return false;
+  const obj = p as Record<string, unknown>;
+  return typeof obj.messageId === 'string' && typeof obj.text === 'string';
+}
+
+function isValidChatEdit(p: unknown): p is ChatEditPayload {
+  if (!p || typeof p !== 'object') return false;
+  const obj = p as Record<string, unknown>;
+  return typeof obj.messageId === 'string' && typeof obj.newText === 'string' && typeof obj.editedAt === 'number';
+}
+
+function isValidChatDelete(p: unknown): p is ChatDeletePayload {
+  if (!p || typeof p !== 'object') return false;
+  const obj = p as Record<string, unknown>;
+  return typeof obj.messageId === 'string' && typeof obj.deletedAt === 'number';
+}
+
+function isValidChatReact(p: unknown): p is ChatReactPayload {
+  if (!p || typeof p !== 'object') return false;
+  const obj = p as Record<string, unknown>;
+  return typeof obj.messageId === 'string' && typeof obj.emoji === 'string' && typeof obj.userId === 'string';
+}
+
+function isValidChatTyping(p: unknown): p is ChatTypingPayload {
+  if (!p || typeof p !== 'object') return false;
+  const obj = p as Record<string, unknown>;
+  return typeof obj.userId === 'string' && typeof obj.isTyping === 'boolean';
+}
+
 let _ctx: FeatureContext | null = null;
 const typingCallbacks: Array<(payload: ChatTypingPayload) => void> = [];
 
@@ -62,36 +94,50 @@ export const ChatFeature: FeatureModule = {
 
     switch (env.type) {
       case 'chat:MSG_SEND': {
-        const payload = env.payload as ChatSendPayload;
-        await _ctx.appendLedger('chat:message', payload);
+        if (!isValidChatSend(env.payload)) {
+          _ctx.logger.warn('[ChatFeature] Invalid MSG_SEND payload, dropping', { from: env.from });
+          return;
+        }
+        await _ctx.appendLedger('chat:message', env.payload);
         break;
       }
 
       case 'chat:MSG_EDIT': {
-        const payload = env.payload as ChatEditPayload;
-        await _ctx.appendLedger('chat:edit', payload);
+        if (!isValidChatEdit(env.payload)) {
+          _ctx.logger.warn('[ChatFeature] Invalid MSG_EDIT payload, dropping', { from: env.from });
+          return;
+        }
+        await _ctx.appendLedger('chat:edit', env.payload);
         break;
       }
 
       case 'chat:MSG_DELETE': {
-        const payload = env.payload as ChatDeletePayload;
-        await _ctx.appendLedger('chat:delete', payload);
+        if (!isValidChatDelete(env.payload)) {
+          _ctx.logger.warn('[ChatFeature] Invalid MSG_DELETE payload, dropping', { from: env.from });
+          return;
+        }
+        await _ctx.appendLedger('chat:delete', env.payload);
         break;
       }
 
       case 'chat:TYPING': {
-        // Typing indicators are not persisted to the ledger
-        const payload = env.payload as ChatTypingPayload;
-        _ctx.logger.info('[ChatFeature] typing indicator', { from: env.from, isTyping: payload.isTyping });
+        if (!isValidChatTyping(env.payload)) {
+          _ctx.logger.warn('[ChatFeature] Invalid TYPING payload, dropping', { from: env.from });
+          return;
+        }
+        _ctx.logger.info('[ChatFeature] typing indicator', { from: env.from, isTyping: env.payload.isTyping });
         for (const cb of typingCallbacks) {
-          cb(payload);
+          cb(env.payload);
         }
         break;
       }
 
       case 'chat:REACT': {
-        const payload = env.payload as ChatReactPayload;
-        await _ctx.appendLedger('chat:react', payload);
+        if (!isValidChatReact(env.payload)) {
+          _ctx.logger.warn('[ChatFeature] Invalid REACT payload, dropping', { from: env.from });
+          return;
+        }
+        await _ctx.appendLedger('chat:react', env.payload);
         break;
       }
 
