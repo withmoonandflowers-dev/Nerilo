@@ -25,6 +25,18 @@ module.exports = {
       },
     ],
   },
+  overrides: [
+    {
+      // Test files frequently use `any` for partial mocks, stub services,
+      // and casts from real types to test fixtures. Enforcing the rule
+      // there buries real product-code issues under noise from legitimate
+      // test-only `any` usage. Product code (src/) still warns on `any`.
+      files: ['tests/**/*.ts', 'tests/**/*.tsx'],
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'off',
+      },
+    },
+  ],
 };
 
 
