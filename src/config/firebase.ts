@@ -74,6 +74,12 @@ if (IS_TEST_MODE) {
   } catch (err) {
     logger.warn('[Firebase] Failed to connect to emulators', err);
   }
+  // Expose to window for Playwright E2E security tests that need to make
+  // direct Firestore calls (e.g. verify a non-participant can't read a
+  // room, or that fallback messages are encrypted). Test mode only.
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __nerilo_test__?: unknown }).__nerilo_test__ = { app, auth, db };
+  }
 }
 
 export default app;
