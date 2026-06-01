@@ -16,6 +16,7 @@
  */
 
 import { metricsCollector, type MetricsSnapshot } from './MetricsCollector';
+import { initRemoteTelemetry, type RemoteTelemetry } from './RemoteTelemetry';
 
 const DEFAULT_INTERVAL_MS = 10_000;
 
@@ -26,6 +27,12 @@ export interface MetricsExporterOptions {
   source?: { getSnapshot: () => MetricsSnapshot };
   /** Override the sink (used by tests). Default: console.table + console.log. */
   sink?: (snapshot: MetricsSnapshot) => void;
+  /**
+   * Override the remote telemetry sink (used by tests). Default routes to
+   * the RemoteTelemetry singleton which is a no-op unless
+   * VITE_TELEMETRY_ENDPOINT is set and the user hasn't opted out.
+   */
+  remote?: Pick<RemoteTelemetry, 'record'> | null;
 }
 
 function defaultSink(snapshot: MetricsSnapshot): void {
@@ -92,10 +99,14 @@ export function startMetricsExporter(options: MetricsExporterOptions = {}): { st
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const source = options.source ?? metricsCollector;
   const sink = options.sink ?? defaultSink;
+  // Default remote = the singleton. Tests pass `remote: null` to disable.
+  const remote = options.remote === undefined ? initRemoteTelemetry() : options.remote;
 
   const id = setInterval(() => {
     try {
-      sink(source.getSnapshot());
+      const snapshot = source.getSnapshot();
+      sink(snapshot);
+      remote?.record(snapshot);
     } catch {
       // never let metrics export crash the host app
     }
