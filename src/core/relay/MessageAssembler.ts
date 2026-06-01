@@ -23,6 +23,10 @@ const SEEN_MAX_ENTRIES = 10_000;
 const CLEANUP_INTERVAL_MS = 60_000; // 1 minute
 /** Maximum time to wait for all fragments before timeout */
 const FRAGMENT_TIMEOUT_MS = 30_000; // 30 seconds
+/** Maximum pending fragment assemblies (prevents memory DoS) */
+const MAX_PENDING_FRAGMENTS = 1000;
+/** Maximum fragments per message (prevents totalFragments abuse) */
+const MAX_FRAGMENTS_PER_MESSAGE = 100;
 
 /** Callback for assembled message delivery */
 export type MessageHandler = (messageId: string, payload: Uint8Array, pathId: string) => void;
@@ -138,9 +142,33 @@ export class MessageAssembler {
       };
     }
 
+    // Validate totalFragments to prevent memory abuse
+    if (totalFragments > MAX_FRAGMENTS_PER_MESSAGE) {
+      return {
+        messageId,
+        receivedFragments: 0,
+        totalFragments,
+        winningPathId: pathId,
+        firstArrivalAt: now,
+        isComplete: false,
+      };
+    }
+
     // Get or create fragment state
     let state = this.fragmentStates.get(messageId);
     if (!state) {
+      // Reject if too many pending assemblies (DoS protection)
+      if (this.fragmentStates.size >= MAX_PENDING_FRAGMENTS) {
+        return {
+          messageId,
+          receivedFragments: 0,
+          totalFragments,
+          winningPathId: pathId,
+          firstArrivalAt: now,
+          isComplete: false,
+        };
+      }
+
       state = {
         fragments: new Map(),
         totalFragments,
@@ -313,7 +341,12 @@ export class MessageAssembler {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error('Invalid base64 input');
+  }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
