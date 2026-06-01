@@ -98,16 +98,19 @@ describe('HybridLogicalClock', () => {
 
     it('should handle clock drift gracefully (remote far in future)', () => {
       const clock = new HybridLogicalClock('node-b');
+      const now = Date.now();
 
       const remote: HLCTimestamp = {
-        wallTime: Date.now() + 120_000, // 2 min in future
+        wallTime: now + 120_000, // 2 min in future
         logical: 0,
         nodeId: 'node-a',
       };
 
       // Should not throw, should merge
       const merged = clock.receive(remote);
-      expect(merged.wallTime).toBeGreaterThanOrEqual(Date.now());
+      expect(merged.wallTime).toBeGreaterThanOrEqual(now);
+      // Drift guard should clamp to at most now + MAX_DRIFT_MS (60s)
+      expect(merged.wallTime).toBeLessThanOrEqual(now + 60_000 + 50); // +50ms tolerance
     });
 
     it('should maintain monotonicity after receive', () => {
