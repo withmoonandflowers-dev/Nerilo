@@ -244,9 +244,15 @@ export class SharedLedgerEngine {
       // Restore chain from snapshot chunks if entries not provided
       let restoredEntries = entries;
       if (restoredEntries.length === 0 && snapshot.chunks.length > 0) {
-        restoredEntries = snapshot.chunks.flatMap((chunk) =>
-          JSON.parse(atob(chunk)) as LedgerEntry[]
-        );
+        restoredEntries = snapshot.chunks.flatMap((chunk) => {
+          let decoded: string;
+          try {
+            decoded = atob(chunk);
+          } catch {
+            throw new Error('Invalid base64 input');
+          }
+          return JSON.parse(decoded) as LedgerEntry[];
+        });
       }
 
       this.chain = restoredEntries.slice(0, snapshot.upToIndex + 1);
