@@ -176,7 +176,11 @@ export class MultiChannelBus {
     this.paused.delete(peerId);
   }
 
-  send(peerId: string, kind: ChannelKind, data: string | ArrayBuffer): void {
+  /**
+   * Send data to a peer. Returns false if the message was dropped
+   * (backpressure, channel not open, relay failure).
+   */
+  send(peerId: string, kind: ChannelKind, data: string | ArrayBuffer): boolean {
     // Relay fallback: if peer is on relay and data is a string (control/chat), route via Firestore
     if (
       this.relayPeers.has(peerId) &&
@@ -191,14 +195,14 @@ export class MultiChannelBus {
         .catch((err) => {
           logger.warn(`[MultiChannelBus] Relay send failed for peer ${peerId}`, err);
         });
-      return;
+      return true; // Relay send attempted (async)
     }
 
     if (this.paused.has(peerId)) {
       logger.warn(
         `[MultiChannelBus] Peer ${peerId} is paused due to backpressure, dropping ${kind} message`
       );
-      return;
+      return false; // DROPPED: backpressure
     }
     const peerChannels = this.channels.get(peerId);
     if (!peerChannels) {
@@ -214,7 +218,7 @@ export class MultiChannelBus {
       logger.warn(
         `[MultiChannelBus] Channel ${kind} for peer ${peerId} is not open (state: ${channel.readyState})`
       );
-      return;
+      return false; // DROPPED: channel not open
     }
 
     channel.send(data as string);
@@ -226,6 +230,8 @@ export class MultiChannelBus {
         `[MultiChannelBus] Backpressure: pausing peer ${peerId} on ${kind} channel (buffered: ${channel.bufferedAmount})`
       );
     }
+
+    return true; // Successfully sent
   }
 
   broadcast(kind: ChannelKind, data: string | ArrayBuffer, exclude?: string): void {

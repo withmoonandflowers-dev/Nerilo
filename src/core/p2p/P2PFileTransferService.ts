@@ -223,7 +223,12 @@ export class P2PFileTransferService {
     }
 
     // 解碼 base64
-    const binaryString = atob(data);
+    let binaryString: string;
+    try {
+      binaryString = atob(data);
+    } catch {
+      throw new Error('Invalid base64 input');
+    }
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
