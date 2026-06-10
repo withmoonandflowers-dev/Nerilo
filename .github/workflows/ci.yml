@@ -11,7 +11,9 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: '20'
+  # Node 24 = npm 11, matching the dev machine that generates package-lock.json.
+  # npm 10 (Node 20, EOL 2026-04) fails `npm ci` on union ranges like "^0.27.0 || ^0.28.0".
+  NODE_VERSION: '24'
 
 jobs:
   quality:
