@@ -36,10 +36,10 @@ export interface MetricsExporterOptions {
 }
 
 function defaultSink(snapshot: MetricsSnapshot): void {
-  // eslint-disable-next-line no-console
+   
   console.groupCollapsed(`[Nerilo metrics] ${new Date().toISOString()}`);
 
-  // eslint-disable-next-line no-console
+   
   console.table({
     activeChannels: snapshot.activeChannels,
     msgsPerSec: snapshot.msgsPerSec,
@@ -50,20 +50,20 @@ function defaultSink(snapshot: MetricsSnapshot): void {
     backpressure: snapshot.totals.backpressure,
   });
 
-  // eslint-disable-next-line no-console
+   
   console.table(snapshot.latency);
 
   if (Object.keys(snapshot.hopDistribution).length > 0) {
-    // eslint-disable-next-line no-console
+     
     console.table(snapshot.hopDistribution);
   }
 
   if (Object.keys(snapshot.buffer).length > 0) {
-    // eslint-disable-next-line no-console
+     
     console.table(snapshot.buffer);
   }
 
-  // eslint-disable-next-line no-console
+   
   console.groupEnd();
 }
 
