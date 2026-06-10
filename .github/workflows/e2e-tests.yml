@@ -21,6 +21,7 @@ jobs:
   e2e-tests:
     name: E2E Tests (emulator-backed)
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # a hung download must not burn 6h of Actions minutes
 
     steps:
       - name: Checkout code
@@ -37,7 +38,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install npm dependencies
@@ -50,8 +51,17 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
+      # Cache browsers — the CDN download is the most hang-prone step in CI
+      # (2026-06-10: three consecutive runs hung here for 18-100+ minutes).
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install Playwright browsers (Chromium)
         run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
 
       - name: Run E2E tests against emulators
         run: npm run test:e2e:ci
