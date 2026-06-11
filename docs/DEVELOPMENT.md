@@ -6,9 +6,10 @@
 npm run dev          # Start Vite dev server
 npm run build        # TypeScript check + Vite build
 npm run type-check   # tsc --noEmit
-npm run lint         # ESLint (max 180 warnings — tech debt ceiling, reducing over time)
+npm run lint         # ESLint (max 10 warnings; tests exempt from no-explicit-any)
 npm run test:run     # Vitest unit tests (single run)
-npm run test:e2e     # Playwright E2E tests
+npm run test:e2e     # Playwright E2E tests (local, needs emulators)
+npm run test:e2e:ci  # Full E2E under Firebase emulators (what CI runs)
 npm run ci           # type-check + lint + unit tests
 ```
 
@@ -41,15 +42,21 @@ src/core/
 ├── p2p/            # WebRTC connections, signaling, channel bus
 ├── mesh/           # Gossip protocol, topology, heartbeat, identity
 ├── relay/          # Dual-layer relay infrastructure (see below)
-├── crypto/         # SenderKeyManager (E2EE), ECDH key exchange
+├── crypto/         # SenderKeyManager (E2EE), ECDH, TreeKEM + GroupKeyManager
 ├── incentive/      # Relay credit system (LocalCreditProvider)
 ├── chain/          # Append-only log sync & merge
 ├── clock/          # Hybrid Logical Clock (HLC)
 ├── ordering/       # Message ordering (HLC-based)
-├── transport/      # Multi-channel bus, store-and-forward, lifecycle
+├── transport/      # Multi-channel bus, store-and-forward, DHT storage
 ├── ledger/         # Shared ledger engine
-└── metrics/        # Performance metrics
+├── metrics/        # Performance metrics + remote telemetry (opt-out)
+├── game/           # Game engine (ECS World, GameLoop) + Game Transport SDK
+├── community/      # Roles, membership, channels, governance, reputation
+└── adapters/       # Browser/Node runtime abstraction
 ```
+
+Note: `game/`, `community/`, `adapters/`, TreeKEM, and DHT storage are **dormant
+modules** — fully tested but not yet wired into app flows (mined from PR #5).
 
 ### Relay Infrastructure (`src/core/relay/`)
 
@@ -112,3 +119,10 @@ Use `import { logger } from '@/utils/logger'` instead of `console.log`:
 - **Firestore as fallback** — when P2P connections fail, messages relay through Firestore
 - **Fixed-size packets** — 4096-byte relay payloads prevent traffic analysis
 - **Score-based peer selection** — PeerScoring gates relay eligibility, gossip participation, and disconnect decisions
+
+## CI/CD
+
+- **Every PR / master push**: `ci.yml` quality gate (type-check + lint + unit tests, Node 24) + emulator-backed E2E (soft gate, `continue-on-error`)
+- **Every master push auto-deploys** hosting + Firestore rules/indexes to https://nerilo.web.app via `firebase-deploy.yml` (first successful run 2026-06-11)
+- **Cloud Functions are NOT deployed** — never were in production; first deploy requires Blaze plan + Cloud Build API (steps in PR #15). CI still compile-validates `functions/`
+- E2E in CI runs against Firebase emulators (Java 17 + cached emulator/Playwright binaries) — no live Firebase, no secrets needed
