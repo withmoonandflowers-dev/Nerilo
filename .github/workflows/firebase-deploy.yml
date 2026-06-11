@@ -1,9 +1,9 @@
-# Firebase 自動部署：push 到 main 後自動建置並部署到 Firebase Hosting + Functions + Firestore
+# Firebase 自動部署：push 到 master 後自動建置並部署到 Firebase Hosting + Functions + Firestore
 name: Deploy to Firebase
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch: # 允許手動觸發
 
 env:
