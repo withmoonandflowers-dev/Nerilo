@@ -137,10 +137,14 @@ jobs:
       - name: Write Firebase service account
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_NERILO }}' > /tmp/sa.json
 
-      - name: Deploy to Firebase (Hosting + Functions + Firestore rules)
+      # Functions deliberately excluded: they have never been deployed to
+      # production (historical manual deploys were hosting-only), and a first
+      # functions deploy requires the Cloud Build API + Blaze billing plan —
+      # a cost decision. Re-add 'functions' here once that's made.
+      - name: Deploy to Firebase (Hosting + Firestore rules)
         run: >
           npx firebase-tools deploy
-          --only hosting,functions,firestore:rules,firestore:indexes
+          --only hosting,firestore:rules,firestore:indexes
           --project nerilo
           --non-interactive
         env:
