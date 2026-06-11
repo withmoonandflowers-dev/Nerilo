@@ -105,39 +105,7 @@ jobs:
           path: playwright-report/
           retention-days: 14
 
-  deploy:
-    name: Deploy Hosting
-    runs-on: ubuntu-latest
-    needs: [quality, e2e]
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-    environment: production
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-        env:
-          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
-
-      - name: Deploy to Firebase Hosting
-        run: npx firebase deploy --only hosting --token "$FIREBASE_TOKEN"
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        # 需在 GitHub repo Settings → Secrets 新增 FIREBASE_TOKEN（firebase login:ci 取得）
-        # 若暫不自動部署，可刪除此 job 或改為 workflow_dispatch 手動觸發
-        continue-on-error: true
+  # Deploy is handled by firebase-deploy.yml (service-account auth on master push).
+  # The legacy token-based deploy job that lived here was never functional
+  # (FIREBASE_TOKEN secret never set, gated on the soft E2E job) and would have
+  # double-deployed alongside firebase-deploy.yml once E2E goes green.
