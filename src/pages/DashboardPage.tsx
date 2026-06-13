@@ -340,8 +340,20 @@ const DashboardPage: React.FC = () => {
 
             <div className="rooms-list">
               {rooms.length === 0 ? (
-                <div className="empty-state">
-                  <p>{user ? '還沒有房間，建立一個新房間開始聊天吧！' : '還沒有房間，登入後可以建立新房間'}</p>
+                <div className="empty-state empty-state-rich">
+                  <div className="empty-state-icon" aria-hidden="true">💬</div>
+                  <h3 className="empty-state-title">還沒有房間</h3>
+                  <p className="empty-state-desc">
+                    建立一個房間，把連結傳給朋友，就能開始端對端加密聊天
+                  </p>
+                  {!showCreateRoom && (
+                    <button
+                      className="btn-primary"
+                      onClick={() => setShowCreateRoom(true)}
+                    >
+                      + 建立新房間
+                    </button>
+                  )}
                 </div>
               ) : (
                 rooms.map((room) => (

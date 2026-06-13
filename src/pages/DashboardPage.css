@@ -132,6 +132,39 @@
   color: var(--color-text-tertiary);
 }
 
+/* Rich empty state with icon + CTA (P2 #5 — first-impression guidance) */
+.empty-state-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+}
+
+.empty-state-icon {
+  font-size: 2.5rem;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.empty-state-title {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--color-text-primary);
+}
+
+.empty-state-desc {
+  margin: 0 0 12px;
+  max-width: 320px;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.empty-state-rich .btn-primary {
+  min-height: 44px;
+}
+
 /* 房間區塊 */
 .rooms-section {
   background: var(--color-surface);
