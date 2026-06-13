@@ -71,6 +71,8 @@ const ChatPage: React.FC = () => {
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const [showFirstMsgCoach, setShowFirstMsgCoach] = useState(false);
   const [roomName, setRoomName] = useState<string | undefined>(undefined);
+  /** 遞增即觸發 init effect 重跑（優雅重連，保留訊息歷史，取代整頁 reload） */
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -368,7 +370,7 @@ const ChatPage: React.FC = () => {
       currentTopologyRef.current = null;
       migrationInProgressRef.current = false;
     };
-  }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList]);
+  }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList, reconnectNonce]);
 
   // Firestore 備援：訂閱房間訊息，P2P 未連線時對方經 Firestore 送的訊息也能顯示
   // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied
@@ -582,8 +584,12 @@ const ChatPage: React.FC = () => {
   };
 
   const handleReconnect = () => {
-    // Reload the page to re-initialize P2P
-    window.location.reload();
+    // 優雅重連：重置連線狀態並遞增 nonce，觸發 init effect 的 cleanup→re-run，
+    // 重建 P2P 連線但保留已收到的訊息歷史（取代整頁 window.location.reload）。
+    featureLog('chat', 'manual_reconnect', { roomId });
+    setConnectionState('idle');
+    currentTopologyRef.current = null;
+    setReconnectNonce((n) => n + 1);
   };
 
   // E2EE 狀態指示：P2P 連線 = 端到端加密；Firestore 備援 = 加密傳輸中（含 sender key）
