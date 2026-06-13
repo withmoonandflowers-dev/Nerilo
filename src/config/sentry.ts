@@ -9,6 +9,16 @@
  * When VITE_SENTRY_DSN is unset (e.g. local dev), initSentry() is a no-op
  * and captureError() silently drops the error. No setup is required to
  * develop without Sentry.
+ *
+ * Self-hosting (future option, no code change needed):
+ *   This integration is DSN-driven, so swapping Sentry's hosted cloud for
+ *   a self-hosted backend is a one-secret change — no edits here.
+ *   - GlitchTip (lightweight, Sentry-protocol compatible, runs on a small
+ *     VPS) is the easiest path: point VITE_SENTRY_DSN at its DSN.
+ *   - Official self-hosted Sentry (Docker) also works but is resource-heavy.
+ *   Rationale to defer: keep the free hosted tier until real traffic
+ *   approaches its limits; self-hosting trades that for data ownership +
+ *   maintenance. See memory `nerilo-pending-work-snapshot`.
  */
 
 import * as Sentry from '@sentry/react';
