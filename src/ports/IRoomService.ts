@@ -11,7 +11,8 @@ export interface IRoomService {
     isPrivate: boolean,
     participants?: string[],
     waitingTimeout?: number,
-    requireAuth?: boolean
+    requireAuth?: boolean,
+    roomName?: string
   ): Promise<string>;
 
   closeAllUserRooms(ownerUid: string): Promise<void>;

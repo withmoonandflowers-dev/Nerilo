@@ -7,6 +7,7 @@ import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
 import { logger } from '../utils/logger';
 import { ConnectionIndicator } from '../components/ConnectionBanner/ConnectionBanner';
+import { roomDisplayName } from '../utils/roomDisplayName';
 import { Skeleton } from '../components/Skeleton/Skeleton';
 import { ShareModal } from '../components/ShareModal/ShareModal';
 import './WaitingRoomPage.css';
@@ -209,7 +210,7 @@ const WaitingRoomPage: React.FC = () => {
       <div className="waiting-room-container" role="main" aria-label="等待連線">
         <div className="waiting-room-header">
           <h1>等待連線</h1>
-          <p className="room-id">房間 ID: {roomId?.substring(0, 8)}...</p>
+          <p className="room-id">{roomDisplayName(room)}</p>
           <ConnectionIndicator participantCount={participantCount} />
         </div>
 
@@ -260,6 +261,7 @@ const WaitingRoomPage: React.FC = () => {
 
               <ShareModal
                 roomId={roomId || ''}
+                roomName={room.roomName}
                 isOpen={showShareModal}
                 onClose={() => setShowShareModal(false)}
               />

@@ -31,7 +31,8 @@ export class RoomService {
     isPrivate: boolean,
     participants: string[] = [],
     waitingTimeout: number = 5 * 60 * 1000, // 預設 5 分鐘
-    requireAuth: boolean = true // 是否要求已登入（非匿名）
+    requireAuth: boolean = true, // 是否要求已登入（非匿名）
+    roomName?: string // 使用者自訂房間名稱（選填）
   ): Promise<string> {
     // 驗證 ownerUid
     if (!ownerUid || ownerUid.trim() === '') {
@@ -74,6 +75,9 @@ export class RoomService {
     // TTL: waiting rooms expire in 5 min, open rooms in 30 min
     const WAITING_TTL_MS = 5 * 60 * 1000;
 
+    // 房名清理：去頭尾空白、上限 50 字；空字串視為未命名（不寫入該欄位）
+    const cleanRoomName = roomName?.trim().slice(0, 50);
+
     const roomData: Omit<P2PRoom, 'roomId'> = {
       ownerUid,
       ownerName: ownerName || '匿名使用者',
@@ -85,6 +89,7 @@ export class RoomService {
       waitingStartedAt: now,
       lastActiveAt: now,
       ttlExpireAt: now + WAITING_TTL_MS,
+      ...(cleanRoomName ? { roomName: cleanRoomName } : {}),
     };
 
     const firestoreData: Record<string, unknown> = {

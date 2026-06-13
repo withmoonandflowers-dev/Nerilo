@@ -5,8 +5,8 @@ import { RoomService } from './RoomService';
 import type { IRoomService } from '../ports';
 
 export const roomServiceAdapter: IRoomService = {
-  createRoom: (ownerUid, ownerName, isPrivate, participants, waitingTimeout, requireAuth) =>
-    RoomService.createRoom(ownerUid, ownerName, isPrivate, participants ?? [], waitingTimeout, requireAuth),
+  createRoom: (ownerUid, ownerName, isPrivate, participants, waitingTimeout, requireAuth, roomName) =>
+    RoomService.createRoom(ownerUid, ownerName, isPrivate, participants ?? [], waitingTimeout, requireAuth, roomName),
 
   closeAllUserRooms: (ownerUid) => RoomService.closeAllUserRooms(ownerUid),
 
