@@ -69,6 +69,8 @@ jobs:
           VITE_TURN_URLS: ${{ secrets.VITE_TURN_URLS }}
           VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME }}
           VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
+          # Sentry 上線錯誤追蹤 — 未設定時 initSentry() 為 no-op
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
