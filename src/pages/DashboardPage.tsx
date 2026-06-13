@@ -54,15 +54,21 @@ const DashboardPage: React.FC = () => {
     setShowWelcome(false);
   };
 
-  const handleWelcomeCreateRoom = () => {
-    dismissWelcome('create');
-    // Option A：guest 無法建房，引導登入並說明原因
+  // 統一的「建立房間」入口（歡迎彈窗 / 標題按鈕 / 空狀態 CTA 共用）。
+  // Option A：guest 不能擁有房間 → 一律導向登入並說明原因，
+  // 不讓 guest 進到一個 submit 被禁用、手機上又看不到 tooltip 的死路表單。
+  const goCreateRoom = () => {
     if (!user || isGuest) {
       toast.info('登入後房間才屬於你，也才能管理它');
       navigate('/login');
       return;
     }
     setShowCreateRoom(true);
+  };
+
+  const handleWelcomeCreateRoom = () => {
+    dismissWelcome('create');
+    goCreateRoom();
   };
 
   const handleWelcomeHaveInvite = () => {
@@ -282,7 +288,7 @@ const DashboardPage: React.FC = () => {
             {user && (
               <button
                 className="btn-primary"
-                onClick={() => setShowCreateRoom(!showCreateRoom)}
+                onClick={() => (showCreateRoom ? setShowCreateRoom(false) : goCreateRoom())}
                 aria-expanded={showCreateRoom}
                 aria-label={showCreateRoom ? '取消建立房間' : '建立新房間'}
               >
@@ -349,7 +355,7 @@ const DashboardPage: React.FC = () => {
                   {!showCreateRoom && (
                     <button
                       className="btn-primary"
-                      onClick={() => setShowCreateRoom(true)}
+                      onClick={goCreateRoom}
                     >
                       + 建立新房間
                     </button>
