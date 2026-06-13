@@ -35,7 +35,8 @@ import { useChatMessages } from './hooks/useChatMessages';
 import { useMediaCall, type CallType } from './hooks/useMediaCall';
 import { useFileTransfer, type ReceivedFile } from './hooks/useFileTransfer';
 import { ConnectionBanner } from '../../components/ConnectionBanner/ConnectionBanner';
-import { SkeletonMessages, ConnectingAnimation } from '../../components/Skeleton/Skeleton';
+import { ConnectionProgress } from '../../components/ConnectionProgress/ConnectionProgress';
+import { SkeletonMessages } from '../../components/Skeleton/Skeleton';
 import { formatTimestamp, shouldShowDateSeparator, formatDateSeparator } from '../../utils/formatTimestamp';
 import './ChatPage.css';
 
@@ -67,6 +68,7 @@ const ChatPage: React.FC = () => {
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [showConnectionHint, setShowConnectionHint] = useState(false);
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
+  const [showFirstMsgCoach, setShowFirstMsgCoach] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -550,6 +552,21 @@ const ChatPage: React.FC = () => {
     }
   }, [connectionState]);
 
+  // Onboarding Phase 2：第一則訊息 coachmark。
+  // 首次連上線且尚無訊息時，提示「端對端加密」這個賣點（每瀏覽器只顯示一次）。
+  useEffect(() => {
+    if (connectionState !== 'connected' || messages.length > 0) return;
+    try {
+      if (!localStorage.getItem('nerilo_first_msg_coach')) {
+        setShowFirstMsgCoach(true);
+        localStorage.setItem('nerilo_first_msg_coach', '1');
+        featureLog('onboarding', 'first_message_coachmark_shown', { roomId });
+      }
+    } catch {
+      // localStorage 不可用時略過
+    }
+  }, [connectionState, messages.length, roomId]);
+
   const getConnectionMode = (): string | null => {
     if (connectionState !== 'connected') {
       return connectionState === 'idle' ? null : 'firestore';
@@ -767,10 +784,16 @@ const ChatPage: React.FC = () => {
 
       <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll} role="log" aria-label="聊天訊息" aria-live="polite">
         {messages.length === 0 && connectionState === 'connecting' && (
-          <ConnectingAnimation text="正在建立 P2P 連線..." />
+          <ConnectionProgress state={connectionState} />
         )}
         {messages.length === 0 && connectionState === 'idle' && (
           <SkeletonMessages />
+        )}
+        {messages.length === 0 && connectionState === 'connected' && showFirstMsgCoach && (
+          <div className="first-msg-coach" role="status">
+            <span className="first-msg-coach-icon" aria-hidden="true">🔒</span>
+            <p>你們的訊息端對端加密，連我們也看不到。傳出第一則試試。</p>
+          </div>
         )}
         {messages.map((msg, index) => {
           const isOwn = msg.from.startsWith(user?.uid || '');
