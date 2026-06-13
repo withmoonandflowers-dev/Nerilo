@@ -7,6 +7,7 @@ import { useToast } from '../contexts/ToastContext';
 import { SkeletonRoomCard, SkeletonFeatureCard } from '../components/Skeleton/Skeleton';
 import { ShareModal } from '../components/ShareModal/ShareModal';
 import { WelcomeModal } from '../components/WelcomeModal/WelcomeModal';
+import { roomDisplayName } from '../utils/roomDisplayName';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
 import { logger } from '../utils/logger';
@@ -131,7 +132,7 @@ const DashboardPage: React.FC = () => {
 
     setIsCreating(true);
     try {
-      // 目前房間名稱為選填，暫存於前端（未寫入 Firestore）
+      // 房間名稱為選填，會寫入 Firestore 並顯示在房間卡片/標題（見 roomDisplayName）
       const ownerName = user.displayName || user.email || '使用者';
       logger.info('[Dashboard] Creating room', {
         uid: user.uid,
@@ -142,12 +143,13 @@ const DashboardPage: React.FC = () => {
       
       // 建立房間（requireAuth: true 確保只允許登入用戶）
       const roomId = await roomService.createRoom(
-        user.uid, 
-        ownerName, 
+        user.uid,
+        ownerName,
         isPrivate,
         [],
         5 * 60 * 1000, // 5 分鐘超時
-        true // 要求已登入
+        true, // 要求已登入
+        newRoomName // 使用者自訂房名（選填）
       );
       
       featureLog('dashboard', 'room_created', { roomId });
@@ -353,7 +355,7 @@ const DashboardPage: React.FC = () => {
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleJoinRoom(room.roomId); } }}
                   >
                     <div className="room-info">
-                      <h3>房間 {room.roomId.substring(0, 8)}...</h3>
+                      <h3>{roomDisplayName(room)}</h3>
                       <p>
                         參與者: {room.participants.length} 人 |{' '}
                         {new Date(room.createdAt).toLocaleDateString()}
