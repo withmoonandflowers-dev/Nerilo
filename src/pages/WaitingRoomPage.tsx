@@ -151,6 +151,31 @@ const WaitingRoomPage: React.FC = () => {
 
   const handleOpenShare = () => setShowShareModal(true);
 
+  const inviteUrl = roomId ? `${window.location.origin}/chat/${roomId}` : '';
+
+  const handleCopyInvite = async () => {
+    if (!inviteUrl) return;
+    featureLog('onboarding', 'invite_copied', { roomId });
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      toast.success('邀請連結已複製，傳給朋友吧！');
+    } catch {
+      // clipboard 不可用時退回分享彈窗
+      setShowShareModal(true);
+    }
+  };
+
+  const handleSelfTest = async () => {
+    if (!inviteUrl) return;
+    featureLog('onboarding', 'self_test_clicked', { roomId });
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      toast.info('連結已複製，在另一個瀏覽器或無痕視窗貼上即可自己先試');
+    } catch {
+      toast.info('複製此頁網址，在另一個瀏覽器或無痕視窗貼上即可自己先試');
+    }
+  };
+
   const formatTime = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
@@ -216,15 +241,21 @@ const WaitingRoomPage: React.FC = () => {
               )}
 
               <div className="share-section">
-                <h3>分享房間連結</h3>
+                <h3>聊天需要兩個人</h3>
+                <p className="share-reassure">
+                  把連結傳給朋友，對方點開就自動加入，不用註冊
+                </p>
                 <div className="share-buttons">
+                  <button onClick={handleCopyInvite} className="btn-primary btn-invite">
+                    <span aria-hidden="true">&#x1F517;</span> 複製邀請連結
+                  </button>
                   <button onClick={handleOpenShare} className="btn-secondary">
-                    &#x1F4E4; 分享房間
+                    <span aria-hidden="true">&#x1F4E4;</span> 用其他方式分享
                   </button>
                 </div>
-                <p className="share-hint">
-                  複製連結、掃描 QR Code 或使用其他方式邀請好友
-                </p>
+                <button type="button" className="self-test-link" onClick={handleSelfTest}>
+                  想先自己試試？用另一個瀏覽器開連結 →
+                </button>
               </div>
 
               <ShareModal
