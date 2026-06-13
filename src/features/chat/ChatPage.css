@@ -230,6 +230,31 @@
 }
 
 /* ── Date Separator ── */
+/* Onboarding Phase 2: first-message coachmark */
+.first-msg-coach {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin: 24px auto;
+  padding: 14px 16px;
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  border-radius: var(--radius-lg);
+}
+
+.first-msg-coach-icon {
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+.first-msg-coach p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-success-text);
+  line-height: 1.5;
+}
+
 .date-separator {
   display: flex;
   align-items: center;
