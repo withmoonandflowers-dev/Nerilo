@@ -106,17 +106,45 @@
   margin: 0 0 16px 0;
 }
 
+.share-reassure {
+  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 16px 0;
+  line-height: 1.5;
+}
+
 .share-buttons {
   display: flex;
   gap: 12px;
   justify-content: center;
+  flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.btn-invite {
+  min-height: 44px;
 }
 
 .share-hint {
   font-size: 0.9rem;
   color: var(--color-text-secondary);
   margin: 0;
+}
+
+.self-test-link {
+  display: inline-block;
+  background: none;
+  border: none;
+  padding: 8px 4px;
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.self-test-link:hover {
+  text-decoration: underline;
 }
 
 .ready-message {

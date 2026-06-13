@@ -8,7 +8,7 @@
 
 const PREFIX = 'NERILO';
 
-export type FeatureId = 'chat' | 'dashboard' | 'waiting' | 'auth';
+export type FeatureId = 'chat' | 'dashboard' | 'waiting' | 'auth' | 'onboarding';
 
 /**
  * 輸出格式：[NERILO:feature:action] optional JSON payload
