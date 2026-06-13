@@ -6,6 +6,7 @@ import { useServices } from '../contexts/ServicesContext';
 import { useToast } from '../contexts/ToastContext';
 import { SkeletonRoomCard, SkeletonFeatureCard } from '../components/Skeleton/Skeleton';
 import { ShareModal } from '../components/ShareModal/ShareModal';
+import { WelcomeModal } from '../components/WelcomeModal/WelcomeModal';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
 import { logger } from '../utils/logger';
@@ -23,10 +24,50 @@ const DashboardPage: React.FC = () => {
   const [isPrivate, setIsPrivate] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [shareRoomId, setShareRoomId] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
   const navigate = useNavigate();
   const toast = useToast();
 
   const isGuest = user?.role === 'guest';
+
+  // Onboarding 第一階段：首次造訪顯示歡迎彈窗（每個瀏覽器只顯示一次）
+  const ONBOARDED_KEY = 'nerilo_onboarded';
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(ONBOARDED_KEY)) {
+        setShowWelcome(true);
+        featureLog('onboarding', 'welcome_shown', {});
+      }
+    } catch {
+      // localStorage 不可用（隱私模式）時略過，不阻擋使用
+    }
+  }, []);
+
+  const dismissWelcome = (reason: 'create' | 'invite' | 'later') => {
+    try {
+      localStorage.setItem(ONBOARDED_KEY, '1');
+    } catch {
+      // 略過
+    }
+    featureLog('onboarding', 'welcome_dismissed', { reason });
+    setShowWelcome(false);
+  };
+
+  const handleWelcomeCreateRoom = () => {
+    dismissWelcome('create');
+    // Option A：guest 無法建房，引導登入並說明原因
+    if (!user || isGuest) {
+      toast.info('登入後房間才屬於你，也才能管理它');
+      navigate('/login');
+      return;
+    }
+    setShowCreateRoom(true);
+  };
+
+  const handleWelcomeHaveInvite = () => {
+    dismissWelcome('invite');
+    toast.info('把朋友傳給你的邀請連結貼到網址列即可加入，或從下方公開房間選擇');
+  };
 
   const filteredFeatures = searchFeatures(searchKeyword);
 
@@ -421,6 +462,13 @@ const DashboardPage: React.FC = () => {
           onClose={() => setShareRoomId(null)}
         />
       )}
+
+      <WelcomeModal
+        isOpen={showWelcome}
+        onCreateRoom={handleWelcomeCreateRoom}
+        onHaveInvite={handleWelcomeHaveInvite}
+        onClose={() => dismissWelcome('later')}
+      />
     </div>
   );
 };
