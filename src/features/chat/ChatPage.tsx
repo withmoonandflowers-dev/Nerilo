@@ -38,6 +38,7 @@ import { ConnectionBanner } from '../../components/ConnectionBanner/ConnectionBa
 import { ConnectionProgress } from '../../components/ConnectionProgress/ConnectionProgress';
 import { SkeletonMessages } from '../../components/Skeleton/Skeleton';
 import { formatTimestamp, shouldShowDateSeparator, formatDateSeparator } from '../../utils/formatTimestamp';
+import { roomDisplayName } from '../../utils/roomDisplayName';
 import './ChatPage.css';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ const ChatPage: React.FC = () => {
   const [showConnectionHint, setShowConnectionHint] = useState(false);
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const [showFirstMsgCoach, setShowFirstMsgCoach] = useState(false);
+  const [roomName, setRoomName] = useState<string | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -170,6 +172,8 @@ const ChatPage: React.FC = () => {
           navigate('/dashboard');
           return;
         }
+
+        setRoomName(room.roomName);
 
         logger.info('[ChatPage] Room found', {
           roomId,
@@ -605,7 +609,7 @@ const ChatPage: React.FC = () => {
           <button onClick={handleLeaveRoom} className="btn-back" aria-label="返回儀表板">
             ← 返回
           </button>
-          <h2>聊天室: {roomId?.substring(0, 8)}...</h2>
+          <h2>{roomDisplayName({ roomName, roomId })}</h2>
           {e2eeMode === 'p2p' && (
             <span
               className="e2ee-indicator e2ee-indicator-p2p"

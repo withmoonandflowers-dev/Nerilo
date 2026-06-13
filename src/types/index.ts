@@ -16,6 +16,7 @@ export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'failed' | '
 // P2P 房間
 export interface P2PRoom {
   roomId: string;
+  roomName?: string; // 使用者自訂房間名稱（選填，顯示在房間卡片/標題）
   ownerUid: string;
   ownerName?: string; // 房主顯示名稱（顯示在公開房列表）
   participants: string[];
