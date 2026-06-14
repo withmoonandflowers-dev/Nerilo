@@ -43,7 +43,7 @@ const LoginPage: React.FC = () => {
       }
       navigate('/dashboard');
     } catch (err: unknown) {
-      setError(friendlyAuthError(err));
+      setError(friendlyAuthError(err, mode));
     } finally {
       setLoading(false);
     }
