@@ -13,6 +13,32 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import type { User, UserRole } from '../types';
 import { logger } from '../utils/logger';
+import { captureError } from '../config/sentry';
+
+/**
+ * 從 Firebase Auth 錯誤抽出可診斷的完整細節（code + 後端原始回應）。
+ * Firebase 常把後端的 INVALID_LOGIN_CREDENTIALS 等具體錯誤包成籠統的
+ * auth/internal-error，真正原因藏在 customData.serverResponse 裡。
+ */
+function authErrorDetail(error: unknown): Record<string, unknown> {
+  const e = error as { code?: string; message?: string; customData?: Record<string, unknown> };
+  const server = e?.customData?.serverResponse ?? e?.customData?._serverResponse;
+  return {
+    code: e?.code ?? 'unknown',
+    message: e?.message ?? String(error),
+    serverResponse: server,
+  };
+}
+
+/**
+ * 統一的登入錯誤紀錄：寫入 logger（含完整細節）+ 上報 Sentry（production 可驗證）。
+ * 這讓每一次登入失敗都產生精確、可追溯的紀錄，而不是只有畫面上籠統的 internal-error。
+ */
+function logAuthFailure(method: string, error: unknown): void {
+  const detail = authErrorDetail(error);
+  logger.error(`[Auth] ${method} failed`, detail);
+  captureError(error, { authMethod: method, ...detail });
+}
 
 interface AuthContextType {
   user: User | null;
@@ -128,7 +154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       await loadUserData(userCredential.user);
     } catch (error) {
-      logger.error('[Auth] Login error', error);
+      logAuthFailure('email', error);
       throw error;
     }
   };
@@ -140,15 +166,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userCredential = await signInWithPopup(auth, provider);
       await loadUserData(userCredential.user);
     } catch (error: unknown) {
-      logger.error('[Auth] Google login error', error);
+      const code = (error as { code?: string })?.code;
 
-      // 若被瀏覽器擋掉 popup，改用 redirect 流程
-      if ((error as { code?: string })?.code === 'auth/popup-blocked') {
+      // 若被瀏覽器擋掉 popup，改用 redirect 流程（這是正常 fallback，不算失敗）
+      if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request') {
+        logger.info('[Auth] Google popup blocked, falling back to redirect');
         await signInWithRedirect(auth, provider);
-        // 重新導向回來後，onAuthStateChanged 會自動載入使用者，不需要在這裡再處理
         return;
       }
 
+      // 使用者自己關掉 popup，不上報（非系統錯誤）
+      if (code === 'auth/popup-closed-by-user') {
+        logger.info('[Auth] Google popup closed by user');
+        throw error;
+      }
+
+      logAuthFailure('google', error);
       throw error;
     }
   };
