@@ -10,8 +10,11 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { user, loginWithEmail, loginWithGoogle } = useAuth();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const { user, loginWithEmail, registerWithEmail, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+
+  const isRegister = mode === 'register';
 
   // 已登入（非遊客）時直接進入儀表板，避免重複登入
   React.useEffect(() => {
@@ -20,14 +23,24 @@ const LoginPage: React.FC = () => {
     }
   }, [user, navigate]);
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
+  const toggleMode = () => {
+    setMode((m) => (m === 'login' ? 'register' : 'login'));
+    setError('');
+  };
+
+  const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      await loginWithEmail(email, password);
-      featureLog('auth', 'login', { method: 'email' });
+      if (isRegister) {
+        await registerWithEmail(email, password);
+        featureLog('auth', 'register', { method: 'email' });
+      } else {
+        await loginWithEmail(email, password);
+        featureLog('auth', 'login', { method: 'email' });
+      }
       navigate('/dashboard');
     } catch (err: unknown) {
       setError(friendlyAuthError(err));
@@ -65,7 +78,7 @@ const LoginPage: React.FC = () => {
           <p className="subtitle">端對端加密的 P2P 聊天</p>
         </div>
 
-        <form onSubmit={handleEmailLogin} className="login-form">
+        <form onSubmit={handleEmailSubmit} className="login-form">
           <div className="form-group">
             <label htmlFor="email">電子郵件</label>
             <input
@@ -75,6 +88,7 @@ const LoginPage: React.FC = () => {
               onChange={(e) => setEmail(e.target.value)}
               required
               disabled={loading}
+              autoComplete="email"
             />
           </div>
 
@@ -86,15 +100,25 @@ const LoginPage: React.FC = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={isRegister ? 6 : undefined}
               disabled={loading}
+              autoComplete={isRegister ? 'new-password' : 'current-password'}
             />
+            {isRegister && <span className="field-hint">密碼至少 6 個字元</span>}
           </div>
 
           {error && <div className="error-message" role="alert">{error}</div>}
 
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? '登入中...' : '登入'}
+            {loading ? (isRegister ? '註冊中...' : '登入中...') : isRegister ? '註冊' : '登入'}
           </button>
+
+          <p className="auth-toggle">
+            {isRegister ? '已經有帳號了？' : '還沒有帳號？'}
+            <button type="button" className="auth-toggle-link" onClick={toggleMode}>
+              {isRegister ? '改用登入' : '建立新帳號'}
+            </button>
+          </p>
         </form>
 
         <div className="divider">
