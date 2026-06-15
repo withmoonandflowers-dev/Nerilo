@@ -15,8 +15,30 @@ export interface User {
 }
 
 /**
+ * Dismiss the first-run WelcomeModal if it is showing.
+ *
+ * A fresh browser context has no `nerilo_onboarded` localStorage flag, so a
+ * newly-landed user gets the onboarding modal. Its overlay is `aria-modal` and
+ * intercepts pointer events, so anything behind it on the dashboard (create
+ * room, logout, …) is un-clickable until the modal is closed. Clicking
+ * "之後再說" closes it and sets the flag, so it won't reappear in the same
+ * context. Tolerant: a no-op if the modal isn't present.
+ */
+export async function dismissWelcomeModal(page: Page): Promise<void> {
+  const dismiss = page.locator('.welcome-btn-dismiss');
+  try {
+    await dismiss.waitFor({ state: 'visible', timeout: 5_000 });
+  } catch {
+    return; // modal not shown (flag already set, or feature disabled)
+  }
+  await dismiss.click();
+  await expect(page.locator('.welcome-modal-overlay')).toHaveCount(0);
+}
+
+/**
  * Spin up an isolated browser context and land on /dashboard with anonymous
- * auth completed (waits for the role badge to read 'guest' or 'user').
+ * auth completed (waits for the role badge to read 'guest' or 'user'), then
+ * dismiss the first-run onboarding modal so the dashboard UI is interactable.
  */
 export async function setupUser(browser: Browser): Promise<User> {
   const ctx = await browser.newContext();
@@ -24,6 +46,7 @@ export async function setupUser(browser: Browser): Promise<User> {
   await page.goto('/dashboard');
   await expect(page.locator('.role-badge')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('.role-badge')).toContainText(/guest|user/, { timeout: 5_000 });
+  await dismissWelcomeModal(page);
   return { ctx, page };
 }
 
@@ -43,7 +66,9 @@ export async function teardown(...users: User[]): Promise<void> {
 /** Create a new room from the dashboard. Returns the roomId. */
 export async function createRoom(page: Page): Promise<string> {
   await page.getByRole('button', { name: '+ 建立新房間' }).click();
-  await page.getByRole('button', { name: '建立房間' }).click();
+  // exact: the open form's confirm button is "建立房間", but the header toggle's
+  // aria-label becomes "取消建立房間" (a superstring) — a non-exact match hits both.
+  await page.getByRole('button', { name: '建立房間', exact: true }).click();
   await expect(page).toHaveURL(/\/waiting\/.+/, { timeout: 10_000 });
   const match = page.url().match(/\/waiting\/(.+)/);
   if (!match) throw new Error('Could not extract roomId from waiting URL');
@@ -56,17 +81,21 @@ export async function joinRoom(page: Page, roomId: string): Promise<void> {
 }
 
 /**
- * Wait for the chat page to show '已連線' on the given pages. Uses a generous
+ * Wait for the chat page to reach a "ready to chat" state. Uses a generous
  * timeout because WebRTC ICE gathering can legitimately take 30-60 s under
- * emulator conditions. Falls through if the Firestore fallback banner appears
- * instead — both are "ready to chat" states.
+ * emulator conditions before falling back to the Firestore relay.
+ *
+ * The ConnectionBanner's `.connection-banner-text` is the single authoritative
+ * status element: it settles on 'P2P 已連線' (direct) or '備援模式' (relay) —
+ * both are ready states. Targeting that one element (instead of a free-text
+ * search) avoids strict-mode ambiguity with the chat's E2EE indicator, which
+ * also contains the substring '備援模式'.
  */
 export async function expectChatReady(page: Page, timeoutMs = 30_000): Promise<void> {
   await expect(page).toHaveURL(/\/chat\/.+/, { timeout: 15_000 });
-  await Promise.race([
-    expect(page.getByText('已連線')).toBeVisible({ timeout: timeoutMs }),
-    expect(page.getByText('備援模式')).toBeVisible({ timeout: timeoutMs }),
-  ]);
+  await expect(page.locator('.connection-banner-text')).toHaveText(/已連線|備援模式/, {
+    timeout: timeoutMs,
+  });
 }
 
 /** Send a chat message and wait for the input to clear (= dispatched). */

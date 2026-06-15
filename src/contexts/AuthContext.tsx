@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -58,6 +58,13 @@ const SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  /**
+   * 明確登出旗標（用 ref，不受 onAuthStateChanged 閉包過期影響）。
+   * onAuthStateChanged 的 effect 是 [] deps，閉包裡的 `user` 永遠是初始 null，
+   * 若用 `!user` 判斷會導致「登出後立刻又自動匿名登入」（登不出去）。
+   * 改用此旗標：true=使用者主動登出 → 不再自動匿名；false=初次載入 → 自動匿名。
+   */
+  const explicitLogoutRef = useRef(false);
 
   // ── Session timeout：偵測使用者閒置，超時後自動登出 ──────────────
   useEffect(() => {
@@ -67,6 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(async () => {
         logger.warn('[Auth] Session timeout — auto logout');
+        explicitLogoutRef.current = true; // 閒置登出也算主動登出，不要自動重新匿名
         try { await signOut(auth); } catch { /* ignore */ }
       }, SESSION_TIMEOUT_MS);
     };
@@ -88,10 +96,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         uid: firebaseUser?.uid,
       });
       if (firebaseUser) {
+        // 任何真正的登入（含登出後重新 email/Google 登入）都清掉登出旗標
+        explicitLogoutRef.current = false;
         await loadUserData(firebaseUser);
-      } else if (!user) {
-        // 只在初次載入（user 尚未設定）時自動匿名登入
-        // 使用者主動登出後不會自動重新匿名登入，讓使用者能真正回到未登入狀態
+      } else if (!explicitLogoutRef.current) {
+        // 初次載入（非主動登出）→ 自動匿名登入，讓訪客能直接瀏覽
         try {
           const anonymousUser = await signInAnonymously(auth);
           await loadUserData(anonymousUser.user);
@@ -101,7 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setLoading(false);
         }
       } else {
-        // 使用者主動登出
+        // 使用者主動登出 → 真正回到未登入狀態，不自動重新匿名
         setUser(null);
         setLoading(false);
       }
@@ -200,6 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async (): Promise<void> => {
     try {
+      explicitLogoutRef.current = true; // 防止 onAuthStateChanged 又自動匿名登入
       await signOut(auth);
       setUser(null);
     } catch (error) {
