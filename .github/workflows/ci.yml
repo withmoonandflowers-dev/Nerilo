@@ -86,7 +86,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright (Chromium only)
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
         timeout-minutes: 10
 
       - name: Run E2E stable subset against emulators
