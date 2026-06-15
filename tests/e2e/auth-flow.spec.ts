@@ -17,6 +17,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { dismissWelcomeModal } from './_helpers/users';
 
 const PASSWORD = 'Test123456';
 const uniqueEmail = (tag: string) =>
@@ -61,6 +62,7 @@ test.describe('auth flow @stable', () => {
       await switchToRegister(page);
       await submitEmailForm(page, email, PASSWORD);
       await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
+      await dismissWelcomeModal(page); // first-run modal would block the logout click
 
       // Logout (returns to /login; no auto re-anonymous after explicit logout)
       await page.locator('.btn-logout').click();
@@ -103,6 +105,7 @@ test.describe('auth flow @stable', () => {
       await switchToRegister(page);
       await submitEmailForm(page, email, PASSWORD);
       await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
+      await dismissWelcomeModal(page); // first-run modal would block the logout click
 
       // Logout, then try to REGISTER the same email again → already-in-use
       await page.locator('.btn-logout').click();
