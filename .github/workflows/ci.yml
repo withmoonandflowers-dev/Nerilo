@@ -55,12 +55,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Firebase emulators need a JRE — pin Java 17 explicitly.
-      - name: Setup Java 17 (for Firebase emulators)
+      # Firebase emulators need a JRE — pin Java 21 explicitly (firebase-tools 15+ requires JDK 21+).
+      - name: Setup Java 21 (for Firebase emulators)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Node
         uses: actions/setup-node@v4

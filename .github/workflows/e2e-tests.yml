@@ -29,11 +29,11 @@ jobs:
 
       # Firebase emulators require a JRE. ubuntu-latest ships with one but
       # pin the version explicitly so a runner image change doesn't break us.
-      - name: Setup Java 17 (for Firebase emulators)
+      - name: Setup Java 21 (for Firebase emulators)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
