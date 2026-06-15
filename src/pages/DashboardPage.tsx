@@ -31,6 +31,16 @@ const DashboardPage: React.FC = () => {
 
   const isGuest = user?.role === 'guest';
 
+  // 是否允許 guest 建立房間。正式環境一律不允許（導向登入）；
+  // 測試 / E2E 環境（mode=test、VITE_ALLOW_GUEST_CREATE_ROOM、或 __PLAYWRIGHT_TEST__）放行。
+  // 單一事實來源，給「入口」(goCreateRoom) 與「實際建立」(handleCreateRoom) 共用，
+  // 避免兩處判斷不一致 → 入口擋下 guest、建立流程卻放行的死路。
+  const guestCreateAllowed =
+    import.meta.env.MODE === 'test' ||
+    (import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM as string | undefined) === 'true' ||
+    (typeof window !== 'undefined' &&
+      (window as unknown as Record<string, unknown>).__PLAYWRIGHT_TEST__ === true);
+
   // Onboarding 第一階段：首次造訪顯示歡迎彈窗（每個瀏覽器只顯示一次）
   const ONBOARDED_KEY = 'nerilo_onboarded';
   useEffect(() => {
@@ -58,7 +68,7 @@ const DashboardPage: React.FC = () => {
   // Option A：guest 不能擁有房間 → 一律導向登入並說明原因，
   // 不讓 guest 進到一個 submit 被禁用、手機上又看不到 tooltip 的死路表單。
   const goCreateRoom = () => {
-    if (!user || isGuest) {
+    if (!user || (isGuest && !guestCreateAllowed)) {
       toast.info('登入後房間才屬於你，也才能管理它');
       navigate('/login');
       return;
@@ -118,13 +128,9 @@ const DashboardPage: React.FC = () => {
       return;
     }
 
-    // 安全檢查：只允許已登入的用戶建立房間（不允許匿名/guest 用戶）
-    // 在測試環境中，允許 guest 用戶建立房間（用於 E2E 測試）
-    const isTestEnv = import.meta.env.MODE === 'test' || 
-                      (import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM as string | undefined) === 'true' ||
-                      (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__PLAYWRIGHT_TEST__ === true);
-    
-    if (!isTestEnv && (user.role === 'guest' || !user.uid)) {
+    // 安全檢查：只允許已登入的用戶建立房間（不允許匿名/guest 用戶）。
+    // 測試環境（guestCreateAllowed）放行 guest，供 E2E 測試使用。
+    if (!guestCreateAllowed && (user.role === 'guest' || !user.uid)) {
       logger.warn('[Dashboard] Guest user attempted to create room', {
         uid: user.uid,
         role: user.role,
@@ -315,8 +321,8 @@ const DashboardPage: React.FC = () => {
                 <button
                   className="btn-create"
                   onClick={handleCreateRoom}
-                  disabled={isCreating || !user || (user.role === 'guest' && import.meta.env.MODE !== 'test' && (import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM as string) !== 'true')}
-                  title={user?.role === 'guest' && import.meta.env.MODE !== 'test' && (import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM as string) !== 'true' ? '建立房間需要登入' : ''}
+                  disabled={isCreating || !user || (user.role === 'guest' && !guestCreateAllowed)}
+                  title={user?.role === 'guest' && !guestCreateAllowed ? '建立房間需要登入' : ''}
                 >
                   {isCreating ? '建立中...' : '建立房間'}
                 </button>
