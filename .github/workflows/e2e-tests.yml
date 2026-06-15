@@ -21,14 +21,17 @@ jobs:
   e2e-tests:
     name: E2E Tests (emulator-backed)
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # a hung download must not burn 6h of Actions minutes
+    timeout-minutes: 45
+    # Official Playwright image: browsers + system deps pre-baked, so we never
+    # hit the flaky `playwright install` CDN download. Tag MUST match @playwright/test.
+    container:
+      image: mcr.microsoft.com/playwright:v1.57.0-noble
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Firebase emulators require a JRE. ubuntu-latest ships with one but
-      # pin the version explicitly so a runner image change doesn't break us.
+      # Firebase emulators require a JRE — firebase-tools 15+ needs JDK 21+.
       - name: Setup Java 21 (for Firebase emulators)
         uses: actions/setup-java@v4
         with:
@@ -50,18 +53,6 @@ jobs:
         with:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
-
-      # Cache browsers — the CDN download is the most hang-prone step in CI
-      # (2026-06-10: three consecutive runs hung here for 18-100+ minutes).
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-
-      - name: Install Playwright browsers (Chromium)
-        run: npx playwright install chromium
-        timeout-minutes: 10
 
       - name: Run E2E tests against emulators
         run: npm run test:e2e:ci
