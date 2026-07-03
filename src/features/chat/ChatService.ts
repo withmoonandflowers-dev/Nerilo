@@ -35,6 +35,11 @@ export class ChatService {
   private typingListeners: Set<(data: { userId: string; isTyping: boolean }) => void> = new Set();
   private hlc: HybridLogicalClock;
 
+  // 因果排序：追蹤因果前緣（未被後續訊息覆蓋的訊息 ID），
+  // 作為新訊息的 deps 填入，讓對端的 CausalOrderingBuffer 能還原因果順序。
+  private causalFrontier: string[] = [];
+  private readonly MAX_DEPS = 8;
+
   // E2EE（可選）
   private senderKeyManager: SenderKeyManager | null;
   private peerECDHKeys: PeerECDHKeyMap = new Map();
@@ -130,6 +135,8 @@ export class ChatService {
 
     const messageId = generateUUID();
     const hlcTimestamp = this.hlc.now();
+    // 因果依賴 = 當前因果前緣（發送這則前「最新」的已知訊息）
+    const deps = [...this.causalFrontier];
     const message: ChatMessage = {
       messageId,
       from: `${this.localUid}/${this.deviceId}`,
@@ -137,6 +144,7 @@ export class ChatService {
       content,
       timestamp: Date.now(),
       hlc: hlcTimestamp,
+      deps,
     };
 
     // 本機存入明文
@@ -153,6 +161,7 @@ export class ChatService {
         to,
         timestamp: message.timestamp,
         hlc: hlcTimestamp,
+        deps,
         encrypted: {
           ciphertext: encrypted.ciphertext,
           iv: encrypted.iv,
@@ -184,10 +193,28 @@ export class ChatService {
 
     await this.channelBus.send(envelope);
 
+    // 推進因果前緣：這則訊息覆蓋了它的 deps
+    this.advanceFrontier(messageId, deps);
+
     // 通知本機監聽器
     this.messageListeners.forEach((listener) => listener(message));
 
     return messageId;
+  }
+
+  /**
+   * 推進因果前緣：newId 覆蓋（因果上晚於）deps 中的所有訊息，
+   * 因此把 deps 從前緣移除、把 newId 加入。前緣大小上限 MAX_DEPS。
+   */
+  private advanceFrontier(newId: string, deps: string[]): void {
+    const depSet = new Set(deps);
+    this.causalFrontier = this.causalFrontier.filter((id) => !depSet.has(id));
+    if (!this.causalFrontier.includes(newId)) {
+      this.causalFrontier.push(newId);
+    }
+    if (this.causalFrontier.length > this.MAX_DEPS) {
+      this.causalFrontier = this.causalFrontier.slice(-this.MAX_DEPS);
+    }
   }
 
   async editMessage(messageId: string, newContent: string): Promise<void> {
@@ -328,6 +355,7 @@ export class ChatService {
           content: plaintext,
           timestamp: encPayload.timestamp,
           hlc: encPayload.hlc,
+          deps: encPayload.deps,
         };
       } catch (err) {
         logger.error('[ChatService][E2EE] Failed to decrypt message', {
@@ -335,7 +363,7 @@ export class ChatService {
           epoch: encPayload.encrypted?.senderKeyEpoch,
           error: err,
         });
-        // 無法解密時以佔位訊息通知使用者
+        // 無法解密時以佔位訊息通知使用者（deps 仍保留，維持排序）
         message = {
           messageId: encPayload.messageId,
           from: encPayload.from,
@@ -343,6 +371,7 @@ export class ChatService {
           content: '[無法解密此訊息]',
           timestamp: encPayload.timestamp,
           hlc: encPayload.hlc,
+          deps: encPayload.deps,
         };
       }
     } else {
@@ -354,6 +383,9 @@ export class ChatService {
     if (message.hlc) {
       this.hlc.receive(message.hlc);
     }
+
+    // 推進因果前緣，讓本地之後送出的訊息 deps 涵蓋這則收到的訊息
+    this.advanceFrontier(message.messageId, message.deps ?? []);
 
     await this.chatStorage.saveChatMessage(message, this.roomId);
     this.messageListeners.forEach((listener) => listener(message));
