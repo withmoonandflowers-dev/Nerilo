@@ -376,9 +376,19 @@ const ChatPage: React.FC = () => {
   // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied
   useEffect(() => {
     if (!roomId || !user || !hasJoinedRoom) return;
-    const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage);
+    const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, {
+      localUid: user.uid,
+      // 到訊當下再解析 chatService，金鑰交換完成後即可解密
+      decrypt: (payload, senderId) => {
+        const chatService = starTopology.getState().chatService;
+        if (!chatService) {
+          return Promise.reject(new Error('ChatService not ready'));
+        }
+        return chatService.decryptFromFallback(payload, senderId);
+      },
+    });
     return () => unsubscribe();
-  }, [roomId, user, addMessage, hasJoinedRoom]);
+  }, [roomId, user, addMessage, hasJoinedRoom, starTopology]);
 
   // Scroll detection: track if user is near bottom
   const handleScroll = useCallback(() => {
@@ -435,7 +445,19 @@ const ChatPage: React.FC = () => {
           return;
         }
       } else {
-        await sendMessageViaFirestore(roomId, user.uid, content);
+        if (architecture.isStar()) {
+          // ADR-0004：星型房的備援一律密文；金鑰未就緒時擲錯（訊息標記失敗、可重送），
+          // 不得默默降級明文
+          const chatService = starTopology.getState().chatService;
+          if (!chatService) {
+            throw new Error('E2EE 金鑰尚未建立（P2P 交換未完成），無法經備援通道傳送');
+          }
+          const encrypted = await chatService.encryptForFallback(content);
+          await sendMessageViaFirestore(roomId, user.uid, { encrypted });
+        } else {
+          // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文
+          await sendMessageViaFirestore(roomId, user.uid, { content });
+        }
         featureLog('chat', 'message_sent', { roomId, channel: 'firestore_fallback' });
       }
       updateMessageStatus(tempId, 'sent');
@@ -592,13 +614,28 @@ const ChatPage: React.FC = () => {
     setReconnectNonce((n) => n + 1);
   };
 
-  // E2EE 狀態指示：P2P 連線 = 端到端加密；Firestore 備援 = 加密傳輸中（含 sender key）
-  const e2eeMode: 'p2p' | 'fallback' | null =
-    connectionState === 'connected'
-      ? 'p2p'
-      : getConnectionMode() === 'firestore'
-        ? 'fallback'
-        : null;
+  // E2EE 狀態指示（ADR-0004 決策 4）：真值來源是 ChatService 的實際金鑰狀態，
+  // 不是連線狀態。mesh 房間尚未支援 E2EE，誠實標示為傳輸層加密。
+  const e2eeMode: 'p2p' | 'fallback' | 'exchanging' | 'mesh-dtls' | null = (() => {
+    if (architecture.isMesh()) return 'mesh-dtls';
+    const chatService = starTopology.getState().chatService;
+    const keysReady = !!chatService && chatService.isE2EEEnabled && chatService.isE2EEReady;
+    if (connectionState === 'connected') {
+      return keysReady ? 'p2p' : 'exchanging';
+    }
+    if (getConnectionMode() === 'firestore') {
+      return keysReady ? 'fallback' : 'exchanging';
+    }
+    return null;
+  })();
+
+  // 金鑰交換完成的瞬間沒有 React 事件可觸發 re-render，以低頻輪詢補上
+  const [, forceE2EERefresh] = useState(0);
+  useEffect(() => {
+    if (e2eeMode !== 'exchanging') return;
+    const timer = setInterval(() => forceE2EERefresh((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [e2eeMode]);
 
   const handleStartCall = async (type: CallType) => {
     try {
@@ -634,6 +671,26 @@ const ChatPage: React.FC = () => {
               title="P2P 未連線；訊息經由 Firestore 中繼，但內容仍以同一把 sender key 加密。"
             >
               <span aria-hidden="true">🔓</span> 備援模式（加密傳輸中）
+            </span>
+          )}
+          {e2eeMode === 'exchanging' && (
+            <span
+              className="e2ee-indicator e2ee-indicator-exchanging"
+              role="status"
+              aria-label="端到端加密金鑰交換中"
+              title="正在與對方交換加密金鑰；完成前訊息會暫緩送出，不會以明文傳送。"
+            >
+              <span aria-hidden="true">🔑</span> 金鑰交換中…
+            </span>
+          )}
+          {e2eeMode === 'mesh-dtls' && (
+            <span
+              className="e2ee-indicator e2ee-indicator-dtls"
+              role="status"
+              aria-label="傳輸層加密（非端到端加密）"
+              title="多人房間目前僅有 WebRTC 傳輸層加密（DTLS）；端到端加密尚未支援多人拓撲。"
+            >
+              <span aria-hidden="true">🛡️</span> 傳輸加密（非端到端）
             </span>
           )}
         </div>

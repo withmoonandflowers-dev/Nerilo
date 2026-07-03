@@ -60,6 +60,14 @@
   background: #FFF4E5; /* light amber */
   color: #854F0B;
 }
+.e2ee-indicator-exchanging {
+  background: #EDF2FE; /* light blue */
+  color: #2B4C9B;
+}
+.e2ee-indicator-dtls {
+  background: #F1F1F4; /* neutral grey */
+  color: #55555E;
+}
 
 .connection-status {
   padding: 6px 12px;

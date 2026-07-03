@@ -1,5 +1,8 @@
 /**
  * Firestore 備援聊天：當 P2P 未連線時，經由 Firestore 收發訊息，確保聊天室仍可使用。
+ *
+ * ADR-0004：星型房間的備援訊息一律以 sender key 加密後寫入（encrypted 欄位），
+ * Firestore 只見密文與路由 metadata。明文 content 欄位僅供未啟用 E2EE 的拓撲使用。
  */
 
 import {
@@ -17,25 +20,52 @@ import type { ChatMessage } from '../types';
 
 const MESSAGES_LIMIT = 100;
 
+/** fallback 密文 payload（與 P2P EncryptedChatPayload.encrypted 同形） */
+export interface FallbackEncryptedContent {
+  ciphertext: string; // Base64
+  iv: string; // Base64
+  senderKeyEpoch: number;
+  seq?: number;
+}
+
+export type FallbackMessageBody =
+  | { content: string }
+  | { encrypted: FallbackEncryptedContent };
+
 /**
  * 發送一則訊息到 Firestore（備援路徑）
+ *
+ * 注意：firestore.rules 要求 createdAt 在伺服器時間 ±30 秒內（防重放），
+ * 因此必須同時寫入 createdAt；timestamp 保留供既有讀取端相容。
  */
 export async function sendMessageViaFirestore(
   roomId: string,
   uid: string,
-  content: string
+  body: FallbackMessageBody
 ): Promise<string> {
   const messageId = generateUUID();
   const messagesRef = collection(db, 'p2pRooms', roomId, 'messages');
+  const now = Timestamp.now();
   await addDoc(messagesRef, {
     messageId,
     from: uid,
-    content,
-    timestamp: Timestamp.now(),
+    ...body,
+    createdAt: now,
+    timestamp: now,
     edited: false,
     deleted: false,
   });
   return messageId;
+}
+
+export interface SubscribeOptions {
+  /** 本機 uid：略過自己的密文訊息（本機已有明文回顯，且無法解密自己的密文） */
+  localUid?: string;
+  /** 解密器：通常是 ChatService.decryptFromFallback 的綁定 */
+  decrypt?: (
+    payload: FallbackEncryptedContent,
+    senderId: string
+  ) => Promise<string>;
 }
 
 /**
@@ -44,7 +74,8 @@ export async function sendMessageViaFirestore(
  */
 export function subscribeToFirestoreMessages(
   roomId: string,
-  onMessage: (message: ChatMessage) => void
+  onMessage: (message: ChatMessage) => void,
+  options?: SubscribeOptions
 ): () => void {
   const messagesRef = collection(db, 'p2pRooms', roomId, 'messages');
   const q = query(
@@ -53,20 +84,44 @@ export function subscribeToFirestoreMessages(
     limit(MESSAGES_LIMIT)
   );
 
+  // 逐則依序處理（解密為非同步，串列化以維持訊息順序）
+  let chain: Promise<void> = Promise.resolve();
+
   const unsubscribe = onSnapshot(q, (snapshot) => {
     for (const change of snapshot.docChanges()) {
       if (change.type !== 'added') continue;
       const data = change.doc.data();
-      const ts = data.timestamp;
-      const message: ChatMessage = {
-        messageId: data.messageId,
-        from: data.from,
-        content: data.content,
-        timestamp: ts?.toMillis?.() ?? ts ?? Date.now(),
-        edited: data.edited ?? false,
-        deleted: data.deleted ?? false,
-      };
-      onMessage(message);
+
+      chain = chain.then(async () => {
+        const ts = data.timestamp;
+        const base = {
+          messageId: data.messageId as string,
+          from: data.from as string,
+          timestamp: ts?.toMillis?.() ?? ts ?? Date.now(),
+          edited: (data.edited as boolean) ?? false,
+          deleted: (data.deleted as boolean) ?? false,
+        };
+
+        if (data.encrypted) {
+          // 自己的密文：本機已有明文回顯，略過（sender key 無法解密自己的訊息）
+          if (options?.localUid && data.from === options.localUid) return;
+
+          let content = '[無法解密此訊息]';
+          if (options?.decrypt) {
+            try {
+              content = await options.decrypt(
+                data.encrypted as FallbackEncryptedContent,
+                data.from as string
+              );
+            } catch {
+              // 金鑰不在手上（重整後或未完成交換）：以佔位訊息誠實呈現
+            }
+          }
+          onMessage({ ...base, content });
+        } else {
+          onMessage({ ...base, content: (data.content as string) ?? '' });
+        }
+      });
     }
   });
 
