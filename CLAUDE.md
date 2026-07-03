@@ -15,6 +15,11 @@ npm run ci           # type-check + lint + unit tests
 
 **Run unit tests:** `node ./node_modules/vitest/vitest.mjs run` (workaround for Windows node path issues)
 
+> **New machine / new Claude session?** Read [docs/CROSS-MACHINE-HANDOFF.md](docs/CROSS-MACHINE-HANDOFF.md) first —
+> it carries the cross-machine operational knowledge (E2E local loop, TURN rotation, CI/secrets layout,
+> known pitfalls, pending-work snapshot). Shared Claude skills/commands live in `.claude/commands/` and
+> `.claude/skills/` (committed); update the handoff doc when you learn something the other machine needs.
+
 ## Tech Stack
 
 - **Frontend:** React 18 + TypeScript 5 + Vite 5

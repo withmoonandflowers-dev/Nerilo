@@ -51,6 +51,9 @@ reports/
 
 
 
-# Tool directories
-.claude/
+# Tool directories — share Claude skills/commands via git, keep machine-local state out
+.claude/*
+!.claude/commands/
+!.claude/skills/
+!.claude/launch.json
 .cursor/

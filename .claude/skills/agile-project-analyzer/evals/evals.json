@@ -1,0 +1,23 @@
+{
+  "skill_name": "agile-project-analyzer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我想做一個線上訂餐平台，讓用戶可以瀏覽附近餐廳菜單、下單、線上付款、追蹤外送進度。團隊目前有 3 個後端工程師、2 個前端、1 個設計師，預計 3 個月內上線 MVP。請幫我用敏捷方式分析這個專案。",
+      "expected_output": "完整的 Agile 分析報告，包含 Epics、User Stories（含驗收標準和 Story Points）、Product Backlog、Sprint 計畫、Kanban 看板、風險評估、技術建議。報告應為繁體中文。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "We're launching a new product line for our cosmetics brand. Need to coordinate R&D formulation, packaging design, regulatory compliance, marketing campaign, and retail distribution. Timeline is 6 months, team of 12 across departments. Please analyze this project using Agile methodology.",
+      "expected_output": "Full Agile analysis report in English with Epics, User Stories, Backlog, Sprint plan, Kanban board, risk assessment, and process recommendations (non-software, so technical section should be adapted to tooling/process).",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "老闆說要做一個公司內部的知識管理系統，但具體要什麼功能他也沒講清楚，只說希望大家能把文件和經驗整理起來方便查找。幫我用敏捷開發的方式分析一下這個專案要怎麼規劃。",
+      "expected_output": "報告應先簡短釐清需求（但不過度提問），然後基於合理假設產出完整分析。應包含核心功能假設、User Stories、Sprint 計畫等。繁體中文輸出。",
+      "files": []
+    }
+  ]
+}
