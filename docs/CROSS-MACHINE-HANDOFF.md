@@ -115,10 +115,20 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
   Dashboard,別的專案)互不相干。
 - 商品:**Nerilo Pro**,NT$150/月訂閱,已 Published(**test mode**,
   store 尚未 activate,不能收真錢)。
-- 待辦:(a) webhook 端點(規劃 Netlify Functions 免費層 + firebase-admin
-  設 custom claims,免 Blaze);(b) 前端付費牆與 entitlement;
-  (c) **使用者本人**:store activation(商業資料 + 身分驗證 + payout,
-  在 LS dashboard 的 Activate your store)——決定開始收真錢時才需要。
+- webhook 程式碼已入庫(netlify/functions/,commit 656ca3b),前端付費牆
+  (usePlan + UpgradeButton)已接;test mode 結帳連結在 .env.local
+  (VITE_LS_CHECKOUT_URL,production 需加 GitHub secret)。
+- Netlify site **nerilo-webhook** 已建(site_id 880139cc-...,
+  team withmoonandflowers),LS_WEBHOOK_SECRET 已設進站台環境變數。
+- **阻塞:Netlify 帳號本月額度用罄**("Skipped due to account credit usage
+  exceeded"),整個 team 部署被跳過。精簡部署目錄備在 scratchpad,
+  額度恢復後重跑 deploy 即可。
+- 待辦:(a) Netlify 額度(等重置或升級)→ 部署 → LS 後台設 webhook
+  (URL https://nerilo-webhook.netlify.app/api/ls-webhook + 同一 secret,
+  勾 subscription_created/updated/resumed/unpaused/expired);
+  (b) **使用者本人**:FIREBASE_SERVICE_ACCOUNT(Firebase Console →
+  服務帳戶 → 產生私鑰)設進 Netlify env;(c) **使用者本人**:LS store
+  activation——決定收真錢時才需要。
 
 ## 7. 刻意的設計決定(不要翻案)
 
