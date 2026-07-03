@@ -5,6 +5,7 @@
 import { useRef, useCallback, useMemo } from 'react';
 import { P2PManager } from '../../../core/p2p/P2PManager';
 import { ChatService } from '../ChatService';
+import { SenderKeyManager } from '../../../core/crypto/SenderKeyManager';
 import type { IChatStorage } from '../../../ports';
 import type { ChatMessage, ConnectionState } from '../../../types';
 import { logger } from '../../../utils/logger';
@@ -27,6 +28,7 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
   const chatStorage = options?.chatStorage;
   const p2pManagerRef = useRef<P2PManager | null>(null);
   const chatServiceRef = useRef<ChatService | null>(null);
+  const senderKeyManagerRef = useRef<SenderKeyManager | null>(null);
   const connectionStateRef = useRef<ConnectionState>('idle');
   const stateCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stateUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -58,6 +60,8 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       p2pManagerRef.current.close();
       p2pManagerRef.current = null;
       chatServiceRef.current = null;
+      senderKeyManagerRef.current?.destroy();
+      senderKeyManagerRef.current = null;
     }
 
     try {
@@ -71,6 +75,11 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       const p2pManager = new P2PManager(roomId, uid, 'chat', isInitiator);
       await p2pManager.initialize();
       p2pManagerRef.current = p2pManager;
+
+      // 建立 E2EE 金鑰管理器（ADR-0004：星型路徑 E2EE 預設開啟）
+      const senderKeyManager = new SenderKeyManager(uid);
+      await senderKeyManager.initKeyPair();
+      senderKeyManagerRef.current = senderKeyManager;
 
       // 監聽連線狀態（透過 ref 呼叫，確保用最新的 callback）
       const connectionManager = p2pManager.getConnectionManager();
@@ -138,9 +147,15 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
             uid,
             deviceId,
             roomId,
-            chatStorage
+            chatStorage,
+            senderKeyManager
           );
           chatServiceRef.current = chatService;
+
+          // 廣播 ECDH 公鑰，啟動金鑰交換（雙方各自廣播，先到先答）
+          chatService.initiateKeyExchange().catch((err) => {
+            logger.error('[useStarTopology] E2EE key exchange initiation failed', err);
+          });
 
           // 載入歷史訊息
           chatService.loadHistory().then((messages) => {
@@ -235,6 +250,8 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
       p2pManagerRef.current = null;
     }
     chatServiceRef.current = null;
+    senderKeyManagerRef.current?.destroy();
+    senderKeyManagerRef.current = null;
     connectionStateRef.current = 'idle';
   }, []);
 
