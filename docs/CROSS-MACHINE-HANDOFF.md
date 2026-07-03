@@ -80,6 +80,19 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
   fallback 改密文,徽章讀真值。行為變更:星型房 P2P 從未連上時 fallback 不再明文
   傳訊(訊息標失敗可重送);弱網補救(金鑰交換走 Firestore 信令)排 M4。
 - 順修兩個既有 bug:fallback 缺 createdAt 遭 rules 拒寫;ECDH 公鑰互播無限迴圈隱患。
+- **Production 煙霧測試上線**(`npm run smoke:prod`,tests/smoke/):對正式站跑
+  S1 直連黃金路徑 / S2 強制 TURN(iceTransportPolicy=relay,等效雙嚴格 NAT)/
+  S3 誠實降級,產出 smoke-artifacts/SMOKE-REPORT.md。首次已全綠:直連 RTT 87ms、
+  **TURN relay→relay RTT 169ms(證實 TURN 憑證有效)**、訊息延遲約 180-190ms。
+  取代了大部分「真機兩台互測」人工流程;仍需偶爾人工驗的只剩 iOS Safari、
+  實體電信商 NAT、TURN 月額度耗盡。
+  **關鍵測試語義**:ADR-0004 後「連線就緒 ≠ 可發送」,發訊前須等 E2EE 徽章
+  離開 exchanging 進入已加密穩態(expectE2EESettled),否則會誤判。
+- **待辦(P2,production console 有 CSP 噪音)**:blob worker 被 script-src 擋
+  (`Creating a worker from 'blob:' violates CSP`)、Sentry envelope 上報被
+  connect-src 擋(Sentry 實際上收不到事件!)、fresh 帳號讀 user data 一次
+  permission-denied。三者皆不影響核心聊天,但 Sentry 那條使「已上線」的
+  observability 假設不成立,值得優先修 CSP connect-src 加 sentry.io。
 
 **等使用者(Claude 無法代做):**
 - 真機煙霧測試:兩台裝置(一台走行動網路)完整走一遍建房→邀請→加入→互傳。行動網路加入那步是 TURN 的真實驗證。

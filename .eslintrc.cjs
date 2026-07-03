@@ -36,6 +36,11 @@ module.exports = {
         '@typescript-eslint/no-explicit-any': 'off',
       },
     },
+    {
+      // Node 環境腳本（報告產生器等）：使用 process、node: 內建模組。
+      files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
+      env: { node: true, browser: false },
+    },
   ],
 };
 
