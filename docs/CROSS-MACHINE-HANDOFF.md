@@ -73,6 +73,14 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
 
 ## 6. 待辦快照(2026-07-03,行動前請驗證)
 
+**2026-07-03 更新（Mac 機器）:**
+- 商業化分析入庫:docs/GOAL-ANALYSIS.md、docs/adr/(0001-0011)、docs/COMMERCIALIZATION-ROADMAP.md。
+  定位已拍板(ADR-0009):Nerilo 是資料傳遞架構,聊天 app 是參考應用。
+- **E2EE 已接電**(ADR-0004,commit 609b34e):星型路徑 SenderKeyManager 注入完成,
+  fallback 改密文,徽章讀真值。行為變更:星型房 P2P 從未連上時 fallback 不再明文
+  傳訊(訊息標失敗可重送);弱網補救(金鑰交換走 Firestore 信令)排 M4。
+- 順修兩個既有 bug:fallback 缺 createdAt 遭 rules 拒寫;ECDH 公鑰互播無限迴圈隱患。
+
 **等使用者(Claude 無法代做):**
 - 真機煙霧測試:兩台裝置(一台走行動網路)完整走一遍建房→邀請→加入→互傳。行動網路加入那步是 TURN 的真實驗證。
 - 軟啟動邀請朋友 → 產生 onboarding funnel 數據(`featureLog` category `onboarding` 已埋點)來決定下一輪方向。
