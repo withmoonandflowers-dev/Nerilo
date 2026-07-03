@@ -120,15 +120,19 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
   (VITE_LS_CHECKOUT_URL,production 需加 GitHub secret)。
 - Netlify site **nerilo-webhook** 已建(site_id 880139cc-...,
   team withmoonandflowers),LS_WEBHOOK_SECRET 已設進站台環境變數。
-- **阻塞:Netlify 帳號本月額度用罄**("Skipped due to account credit usage
-  exceeded"),整個 team 部署被跳過。精簡部署目錄備在 scratchpad,
-  額度恢復後重跑 deploy 即可。
-- 待辦:(a) Netlify 額度(等重置或升級)→ 部署 → LS 後台設 webhook
-  (URL https://nerilo-webhook.netlify.app/api/ls-webhook + 同一 secret,
-  勾 subscription_created/updated/resumed/unpaused/expired);
-  (b) **使用者本人**:FIREBASE_SERVICE_ACCOUNT(Firebase Console →
-  服務帳戶 → 產生私鑰)設進 Netlify env;(c) **使用者本人**:LS store
-  activation——決定收真錢時才需要。
+- **webhook 已部署上線**:Netlify site **nerilo-api**(git 連 master 自動部署,
+  workspace 帳號的 team,非 gmail 帳號的 Donekit team——注意 MCP 連 gmail
+  帳號看不到此 site)。端點 https://nerilo-api.netlify.app/api/ls-webhook。
+- **LS webhook 已設定**:URL 同上 + 5 事件(created/updated/resumed/expired/
+  unpaused)。**簽章驗證 e2e 通過**(curl 正確簽章回 Ignored 200,錯誤簽章 401)。
+  注意 **LS signing secret 上限 40 字元**,故用 32-char secret
+  (兩邊一致設在 Netlify env LS_WEBHOOK_SECRET 與 LS webhook)。
+- **舊 site nerilo-webhook(gmail Donekit team)已棄用**(額度用罄),真正在跑的是
+  nerilo-api。gmail team 那顆 env 可忽略。
+- 待辦(**使用者本人**,收真錢前才需要):(a) FIREBASE_SERVICE_ACCOUNT
+  (Firebase Console → 服務帳戶 → 產生私鑰,壓單行)設進 nerilo-api 的 Netlify env
+  ——沒有它 webhook 收到事件會在 setCustomUserClaims 前失敗(500),
+  但簽章驗證與事件映射已可運作;(b) LS store activation(商業資料+身分+payout)。
 
 ## 7. 刻意的設計決定(不要翻案)
 
