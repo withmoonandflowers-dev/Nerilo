@@ -1,0 +1,9 @@
+# Netlify 只承載 webhook 函式（ADR-0008：M3 計費不依賴 Blaze）。
+# 主站仍部署於 Firebase Hosting；此站不建置前端。
+[build]
+  command = "echo 'functions only'"
+  publish = "netlify/public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
