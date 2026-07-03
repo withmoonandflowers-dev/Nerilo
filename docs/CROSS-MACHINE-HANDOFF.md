@@ -134,6 +134,36 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
   ——沒有它 webhook 收到事件會在 setCustomUserClaims 前失敗(500),
   但簽章驗證與事件映射已可運作;(b) LS store activation(商業資料+身分+payout)。
 
+## 6c. 系統可用狀態(2026-07-03 收尾)
+
+**核心系統已完全可用**(production smoke test S1/S2/S3 全綠,build DHaqWeTx):
+註冊/建房/加入/P2P 直連/TURN 中繼/E2EE 金鑰交換/雙向訊息/誠實降級皆通過。
+三張安全與觀測任務卡全部完成並在 master:
+- CSP 修復(c8f80b4):Sentry ingest + worker-src blob 放行,production console 已無錯誤(Sentry 收得到事件)。
+- e2eTestMode 匿名建房漏洞:rules 已移除測試模式例外(純 sign_in_provider 檢查)。
+- functions TS 編譯:已修,`cd functions && npx tsc -p tsconfig.json --noEmit` EXIT 0。
+
+**唯一阻塞付費閉環:FIREBASE_SERVICE_ACCOUNT 未設(只有專案擁有者能做)。**
+webhook 端已完全就緒(帶真實 uid 測回 500「Claim update failed」——只差寫 claim
+這一步,簽章驗證/事件映射/uid 流通皆實測通過)。設定步驟:
+  1. Firebase Console(用**擁有 nerilo 專案的 Google 帳號**,非 workspace 帳號)
+     → 專案設定 → 服務帳戶 → 產生新的私密金鑰 → 下載 JSON。
+  2. JSON 內容壓成單行,貼進 Netlify **nerilo-api** 專案的環境變數
+     FIREBASE_SERVICE_ACCOUNT(app.netlify.com/projects/nerilo-api/configuration/env)。
+     注意:此私鑰是 Firebase 最高權限憑證,Claude 不經手其值。
+  3. 觸發 nerilo-api 重新部署(空 commit 或 Netlify Trigger deploy)。
+  4. 驗證:到 LS webhook 那筆 delivery 按 Resend → 應回 200;
+     或用 test 帳號重新付款 → dashboard 升級按鈕變 Pro 徽章。
+
+**Pro 實質權益現況(誠實)**:能伺服器端強制的維度(每房人數、fallback 配額、
+TURN 保障)目前都受技術限制(拓撲上限 5 人、Functions 未部署),故暫無可強制的
+free/pro 差異。Pro 現階段是身分標記(徽章)+ 未來權益承諾;實質配額分層待
+partial mesh 接線(人數)與 Blaze/Functions(配額、TURN)後才誠實可做。
+plan claim 讀取管道已就緒(usePlan hook,付款鏈路驗證時已確認徽章邏輯)。
+
+**另一項使用者操作(資料保留,非阻塞)**:原生 TTL policy 需跑
+`bash scripts/setup-ttl-policies.sh`(需 gcloud + GCP 權限),不跑僅過期資料不自動清。
+
 ## 7. 刻意的設計決定(不要翻案)
 
 - `reports/` gitignored;健康檢查排程只監控不修改。
