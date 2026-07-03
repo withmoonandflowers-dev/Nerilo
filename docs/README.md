@@ -17,7 +17,8 @@
 | [模組化與可插拔架構.md](模組化與可插拔架構.md) | Ports/Adapters、服務注入、功能註冊、可測試性 |
 | [GOAL-ANALYSIS.md](GOAL-ANALYSIS.md) | 商業化 goal 分析：目標樹、現況差距、ADR 對照 |
 | [COMMERCIALIZATION-ROADMAP.md](COMMERCIALIZATION-ROADMAP.md) | 商業化改造路線圖（M1 至 M4） |
-| [adr/](adr/README.md) | 架構決策記錄（ADR-0001 至 0009） |
+| [adr/](adr/README.md) | 架構決策記錄（ADR-0001 至 0014） |
+| [SOLUTION-multi-device-and-storage.md](SOLUTION-multi-device-and-storage.md) | 多裝置同步與儲存節點的分階段實作藍圖 |
 | architecture.puml / data-flow.puml / protocol.puml / shared-stream-flow.puml | 架構與流程圖 |
 
 根目錄：`README.md`、`CONTRIBUTING.md`。腳本說明見 `scripts/README.md`。清理緣由與驗證見 [清理說明.md](清理說明.md)。
