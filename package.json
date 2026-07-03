@@ -27,6 +27,7 @@
     "test:e2e:stable": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test --grep @stable --reporter=list\"",
     "test:e2e:p0": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test tests/e2e/golden-path.spec.ts --reporter=list\"",
     "test:e2e:p1": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test tests/e2e/chat-flow.spec.ts tests/e2e/connection-states.spec.ts tests/e2e/multi-peer.spec.ts tests/e2e/refresh-recovery.spec.ts --reporter=list\"",
+    "smoke:prod": "playwright test -c playwright.smoke.config.ts; node scripts/smoke-report.mjs",
     "deploy": "npm run build && firebase deploy --only hosting",
     "deploy:hosting": "npm run build && firebase deploy --only hosting",
     "deploy:full": "npm run build && firebase deploy",
