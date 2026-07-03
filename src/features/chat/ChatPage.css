@@ -962,3 +962,21 @@
     max-height: 200px;
   }
 }
+
+/* ── 連線地球歡迎區（連線成功、尚無訊息時） ── */
+.connection-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
+  min-height: 300px;
+}
+.connection-welcome-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
