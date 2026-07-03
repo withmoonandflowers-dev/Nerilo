@@ -17,3 +17,5 @@
 | [0010](0010-heterogeneous-transport.md) | 異質傳輸擴展原則（衛星、LoRa、業餘無線電） | Proposed |
 | [0011](0011-relay-credit-economy.md) | 中繼點數經濟（過路有對價） | Proposed |
 | [0012](0012-community-relay-infrastructure.md) | 社群自營中繼基礎設施（三層備援階梯） | Proposed |
+| [0013](0013-cloud-platform-choice.md) | 雲平台選擇（Firebase vs AWS）：不遷移 | Accepted |
+| [0014](0014-multi-device-identity.md) | 多裝置身分與同步（缺口，方向已定） | Proposed |
