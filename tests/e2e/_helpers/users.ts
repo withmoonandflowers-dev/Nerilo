@@ -98,6 +98,23 @@ export async function expectChatReady(page: Page, timeoutMs = 30_000): Promise<v
   });
 }
 
+/**
+ * Wait until E2EE is settled (encrypted, not mid-exchange) before sending.
+ *
+ * Post-ADR-0004, "connection ready" (ConnectionBanner says 已連線) is no longer
+ * the same as "ready to send": ChatService now blocks sends until the sender-key
+ * exchange completes. Sending during the 金鑰交換中 window makes the message wait
+ * (or, under a tight test budget, appear to never arrive). Gating on the settled
+ * indicator — the 🔒/🔓 variant is visible AND the exchanging variant is gone —
+ * reflects the real send-readiness signal and removes round-trip flakiness.
+ */
+export async function expectE2EEReady(page: Page, timeoutMs = 20_000): Promise<void> {
+  await expect(
+    page.locator('.e2ee-indicator-p2p, .e2ee-indicator-fallback'),
+  ).toBeVisible({ timeout: timeoutMs });
+  await expect(page.locator('.e2ee-indicator-exchanging')).toHaveCount(0);
+}
+
 /** Send a chat message and wait for the input to clear (= dispatched). */
 export async function sendMessage(page: Page, text: string): Promise<void> {
   const input = page.getByPlaceholder('輸入訊息...');
