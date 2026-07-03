@@ -36,6 +36,8 @@ import { useMediaCall, type CallType } from './hooks/useMediaCall';
 import { useFileTransfer, type ReceivedFile } from './hooks/useFileTransfer';
 import { ConnectionBanner } from '../../components/ConnectionBanner/ConnectionBanner';
 import { ConnectionProgress } from '../../components/ConnectionProgress/ConnectionProgress';
+import { ConnectionGlobe } from '../../components/ConnectionGlobe/ConnectionGlobe';
+import { usePeerGlobe } from '../../hooks/usePeerGlobe';
 import { SkeletonMessages } from '../../components/Skeleton/Skeleton';
 import { formatTimestamp, shouldShowDateSeparator, formatDateSeparator } from '../../utils/formatTimestamp';
 import { roomDisplayName } from '../../utils/roomDisplayName';
@@ -102,6 +104,9 @@ const ChatPage: React.FC = () => {
   const channelBus = p2pManager?.getChannelBus() ?? null;
   const fileTransferService = p2pManager?.getFileTransferService() ?? null;
   const deviceId = p2pManager?.getDeviceId() ?? '';
+
+  // 連線地球：連上後經 presence 交換近似位置（時區），畫在連線畫面
+  const globePoints = usePeerGlobe(channelBus, connectionState === 'connected', user?.uid ?? '');
   const localId = user ? `${user.uid}/${deviceId || 'na'}` : '';
 
   const mediaCall = useMediaCall({ mediaService, channelBus, localId });
@@ -856,10 +861,20 @@ const ChatPage: React.FC = () => {
         {messages.length === 0 && connectionState === 'idle' && (
           <SkeletonMessages />
         )}
-        {messages.length === 0 && connectionState === 'connected' && showFirstMsgCoach && (
-          <div className="first-msg-coach" role="status">
-            <span className="first-msg-coach-icon" aria-hidden="true">🔒</span>
-            <p>你們的訊息端對端加密，連我們也看不到。傳出第一則試試。</p>
+        {messages.length === 0 && connectionState === 'connected' && (
+          <div className="connection-welcome">
+            <ConnectionGlobe points={globePoints} size={220} />
+            <p className="connection-welcome-title">
+              {globePoints.length > 1
+                ? `已與 ${globePoints.length - 1} 位夥伴跨地連線`
+                : '已連線，等待夥伴出現在地球上…'}
+            </p>
+            {showFirstMsgCoach && (
+              <div className="first-msg-coach" role="status">
+                <span className="first-msg-coach-icon" aria-hidden="true">🔒</span>
+                <p>你們的訊息端對端加密，連我們也看不到。傳出第一則試試。</p>
+              </div>
+            )}
           </div>
         )}
         {messages.map((msg, index) => {
