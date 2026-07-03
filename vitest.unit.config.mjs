@@ -9,9 +9,7 @@ export default defineConfig({
     // 解凍時從此清單移除並更新對應目錄的 FROZEN.md。
     exclude: [
       '**/node_modules/**',
-      'tests/unit/GameLoop.spec.ts',
-      'tests/unit/GameNetworkSync.spec.ts',
-      'tests/unit/GameWorld.spec.ts',
+      // game/ 於 ADR-0015 解凍（遊戲資料流成為第二參考應用），測試恢復
       'tests/unit/CommunityManager.spec.ts',
       'tests/unit/ChainMerge.spec.ts',
       'tests/unit/SharedLedgerEngine.spec.ts',
