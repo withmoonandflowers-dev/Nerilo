@@ -20,10 +20,14 @@
 
 三層防線，由便宜到昂貴：
 
-1. **Firestore rules 層（立即）**：用文件內計數器做結構性限制。
-   使用者文件記錄 activeRoomCount，rules 拒絕超過方案上限的房間建立；
-   房間文件記錄 participants 數量上限（免費層 5 人）。
-   rules 無法做頻率限制，這層只擋「總量」。
+1. **Firestore rules 層（立即）**：結構性限制。
+   房間 participants 上限 5 人（建立與加入路徑皆驗，**2026-07-03 已實作**：
+   participantsWithinCap()，client 端 RoomService 同步給 room-full 友善錯誤）。
+   原規劃的 activeRoomCount 計數器**改列 Functions 層**：計數器需要所有
+   建/關/清理路徑維持一致，任何漂移（例如清理函式刪房未減數）會把使用者
+   永久鎖死在上限，維運風險大於防護收益；房間建立的頻率與總量控制
+   移至第 2 層以伺服器端狀態實作。
+   rules 無法做頻率限制，這層只擋「單文件結構總量」。
 2. **Cloud Functions 配額層（需 Blaze，見 ADR-0006）**：高頻寫入路徑
    （relay fallback、inbox）改為 callable function 入口，function 內查
    per-user 滑動視窗計數（Firestore 分片計數器或 Realtime Database），
