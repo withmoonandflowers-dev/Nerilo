@@ -1,0 +1,38 @@
+# ADR-0006：升級 Blaze、部署清理 Functions、設預算斷路器
+
+- 狀態：Proposed
+- 日期：2026-07-03
+
+## Context
+
+functions/ 內已有五個寫好且通過 CI 編譯的函式（setRole、getIceServers、
+cleanupExpiredRooms、cleanupStaleSignals、cleanupExpiredInbox），但從未部署，
+因為需要 Blaze 方案與 Cloud Build API（步驟見 PR #15）。後果：
+
+- 正式環境的過期房間、殘留信令、過期收件匣沒有任何清理，資料只進不出。
+- ADR-0005 的配額層與 ADR-0008 的計費 webhook 都需要 Functions 存在。
+- 不升級 Blaze，商業化路線圖整條被阻塞。
+
+升級 Blaze 的風險是帳單從「不可能超支」變成「可能超支」，
+必須與防護措施同一批上線。
+
+## Decision
+
+1. 升級 nerilo 專案至 Blaze，同一天完成以下防護，缺一不可：
+   - Cloud Billing 預算警報：50%、90%、100% 三段通知。
+   - 每月硬上限的斷路器 function：訂閱 billing Pub/Sub，超過上限
+     （初期建議 100 USD/月）自動停用高成本入口（以 feature flag 關閉
+     fallback 寫入與 TURN 發配），保留唯讀。
+2. 部署三個 cleanup 函式，並在 firebase-deploy.yml 加入 functions 部署步驟
+   （移除現有的刻意排除）。
+3. 補一個 cleanup 缺口：roomRequests（合併/拆分請求）過期清理，現有函式未覆蓋。
+4. getIceServers 部署後，TURN 憑證改為短效動態發配（IceServerProvider 已支援，
+   12 小時快取），取代長效靜態 secrets，降低憑證外洩後的濫用窗口。
+
+## Consequences
+
+- 資料保留政策（ADR 見 GOAL-ANALYSIS G4.2）從紙上變成實際運作。
+- ADR-0005、0008 解除阻塞。
+- 開始有月費成本：cleanup 排程在目前流量下估每月數美元，10k 用戶規模估每月一兩百美元，計入定價成本模型。
+- 斷路器誤觸發會讓 fallback 失效（P2P 正常的用戶不受影響），屬於可接受的優雅降級，但需要 Sentry 告警讓維運者第一時間知道。
+- GitHub Actions 免費額度（每月 2000 分鐘）因 functions 部署步驟消耗加快，接近上限時 push 會靜默不觸發（已知陷阱，見 CROSS-MACHINE-HANDOFF 第 3 節）。
