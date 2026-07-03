@@ -21,7 +21,9 @@ export const cleanupExpiredRooms = functions.pubsub
   .schedule('every 60 minutes')
   .onRun(async () => {
     const db = admin.firestore();
-    const now = Date.now();
+    // ttlExpireAt 現為 Firestore Timestamp（配合原生 TTL policy，見 ADR-0006 附錄）。
+    // 此函式維持型別一致以備並存部署；正式清理主力是原生 TTL policy。
+    const now = admin.firestore.Timestamp.now();
 
     const expiredSnapshot = await db
       .collection('p2pRooms')

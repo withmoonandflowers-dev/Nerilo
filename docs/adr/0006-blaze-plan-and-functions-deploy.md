@@ -69,3 +69,11 @@ cleanupExpiredRooms、cleanupStaleSignals、cleanupExpiredInbox），但從未�
 開放公開註冊時才需要」。M2 改用原生 TTL + rules 完成資料保留與結構配額，
 留在免費方案。頻率限制（ADR-0005 第 2 層）隨 Blaze 一起延後，
 在此之前由 rules 結構限制 + 未公開推廣（流量可控）承接風險。
+
+**實作進度（2026-07-03）**：
+- room 的 ttlExpireAt 已改寫為 Firestore Timestamp（RoomService 建房與加入/
+  離開三處寫入點），cleanupExpiredRooms 的比較同步改 Timestamp 以備並存。
+- TTL policy 設定腳本 scripts/setup-ttl-policies.sh 已備，**需專案擁有者
+  以具 GCP 權限的帳號手動執行一次**（CI 無 GCP 憑證無法代跑）。
+- 已知殘留：signals/messages 的 createdAt 允許 number 或 Timestamp（rules），
+  TTL policy 只對 Timestamp 生效；number 型舊文件靠自然汰換，非阻塞。

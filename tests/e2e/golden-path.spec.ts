@@ -18,6 +18,7 @@ import {
   createRoom,
   joinRoom,
   expectChatReady,
+  expectE2EEReady,
   sendMessage,
   expectMessageReceived,
   uniqueMessage,
@@ -75,6 +76,9 @@ test.describe('P0 golden path @stable', () => {
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page);
       await expectChatReady(bob.page);
+      // 金鑰交換完成才是發送閘門（ADR-0004）
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
 
       const msgAtoB = uniqueMessage('A→B hello');
       await sendMessage(alice.page, msgAtoB);
