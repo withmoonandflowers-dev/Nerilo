@@ -108,6 +108,18 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
 - `prompts/`(13 個 review 角色 prompt + REVIEW-PIPELINE.md)只在 `feature/multi-room-improvements` 分支,尚未進 master。
 - `worktree-agent-*` 與 `claude/*` 分支皆無領先 master 的 commit,可忽略。
 
+## 6b. 金流現況(2026-07-03)
+
+- 供應商:Lemon Squeezy(MoR;Stripe 台灣不可用,查證見 ADR-0008 附錄)。
+- Store:**Nerilo**(nerilo.lemonsqueezy.com),與同帳號另一 store(mNAV
+  Dashboard,別的專案)互不相干。
+- 商品:**Nerilo Pro**,NT$150/月訂閱,已 Published(**test mode**,
+  store 尚未 activate,不能收真錢)。
+- 待辦:(a) webhook 端點(規劃 Netlify Functions 免費層 + firebase-admin
+  設 custom claims,免 Blaze);(b) 前端付費牆與 entitlement;
+  (c) **使用者本人**:store activation(商業資料 + 身分驗證 + payout,
+  在 LS dashboard 的 Activate your store)——決定開始收真錢時才需要。
+
 ## 7. 刻意的設計決定(不要翻案)
 
 - `reports/` gitignored;健康檢查排程只監控不修改。
