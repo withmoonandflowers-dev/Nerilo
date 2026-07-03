@@ -153,6 +153,13 @@ export interface ChatMessage {
   deleted?: boolean;
   hlc?: HLCTimestamp; // Hybrid Logical Clock（向下相容，optional）
   deliveryStatus?: DeliveryStatus;
+  /**
+   * 因果依賴：發送時的因果前緣（最近未被覆蓋的訊息 ID）。
+   * 明文 metadata，即使 E2EE 也不加密（僅 messageId，不洩露內容）。
+   * 存在（含空陣列）代表帶因果資訊，會經 CausalOrderingBuffer；
+   * undefined 代表舊版訊息，直接遞交（向下相容）。
+   */
+  deps?: string[];
 }
 
 // ========== E2EE 加密聊天訊息 ==========
@@ -171,6 +178,8 @@ export interface EncryptedChatPayload {
     /** epoch 內單調遞增序號（重放防護）；舊版訊息可能缺少 */
     seq?: number;
   };
+  /** 因果依賴（明文 metadata，不加密）；見 ChatMessage.deps */
+  deps?: string[];
 }
 
 /** ECDH 公鑰交換 payload */

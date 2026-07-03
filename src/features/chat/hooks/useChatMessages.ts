@@ -70,11 +70,12 @@ export function useChatMessages() {
     if (messageIdsRef.current.has(message.messageId)) return;
 
     const causal = message as CausalMessage;
-    if (causal.deps && causal.deps.length > 0) {
-      // Route through causal ordering buffer
+    if (causal.deps !== undefined) {
+      // 帶因果資訊（含空 deps）一律經緩衝器：空 deps 會立即遞交並登記，
+      // 使後續依賴它的訊息不會誤判其依賴未達而卡到 timeout。
       causalBufferRef.current.receive(causal);
     } else {
-      // No deps — deliver immediately (backwards compatible)
+      // 舊版訊息無 deps 欄位 — 直接加入（向下相容）
       setMessagesRef.current((prev) => {
         if (messageIdsRef.current.has(message.messageId)) return prev;
         messageIdsRef.current.add(message.messageId);

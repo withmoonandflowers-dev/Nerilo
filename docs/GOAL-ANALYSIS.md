@@ -76,7 +76,7 @@ G0 Nerilo 成為未來系統可信賴的資料傳遞架構
 | 目標 | 現況 | 差距 | 行動 |
 |---|---|---|---|
 | GC1 語義契約 | 無文件宣告傳遞語義；MessageAssembler（去重）存在但在休眠的 relay 內 | 使用平台的系統無從得知保證等級 | M4：傳輸契約文件 + 去重上移至傳輸層 |
-| GC2 因果順序 | 接收端 CausalOrderingBuffer 已接（useChatMessages.ts:39），但發送端 ChatService 從不填 deps，緩衝器實際被旁路 | 排序保證只做了一半 | M4：ChatService 發送時附 HLC deps |
+| GC2 因果順序 | **已修（2026-07-03）**：ChatService 維護因果前緣，發送時填 deps，接收端推進前緣；useChatMessages 改為「有 deps 欄位即經 buffer」修掉空 deps 不登記導致後續卡 timeout 的缺口。含端到端測試（亂序重排、空 deps 不卡） | mesh 多人的因果收斂待 M4 深化 | 完成（GC2 首階段） |
 | GC3 離線傳遞 | StoreAndForward 實作完整但休眠（core/transport/），且其 Firestore inbox 已有 rules 與清理函式 | 收訊方離線即丟失 | M4 啟用（依賴 ADR-0006 的清理部署） |
 | GC4 切換守恆 | P2P 斷線與 fallback 啟動間無交接協議，窗口期訊息可能丟失 | 未量測、未定義 | M4：切換協議 + 以 featureLog 量測 |
 
