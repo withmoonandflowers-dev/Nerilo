@@ -35,3 +35,22 @@ ADR-0006 的 Functions（webhook 接收端）。
 - 綁定 Stripe。台灣個人或工作室收款需要可用的 Stripe 帳號主體，若不可行，備案是 Paddle（Merchant of Record 模式，處理跨境稅務），介面層設計成可替換。
 - 免費層限額生效即是第一次真實的轉換率實驗，featureLog 的 onboarding 埋點要延伸到 paywall 事件。
 - 定價數字本身不在本 ADR 範圍，屬市場決策（ADR-0009 之後定）。
+
+## 附錄：金流供應商查證結果（2026-07-03）
+
+原決策「Stripe 為主、Paddle 備案」經查證修訂：
+
+- **Stripe 台灣不可用**（2026 仍未開放，個人與公司皆無法直接註冊）。
+  繞道方案（美國 LLC + EIN + 美國銀行帳戶）對驗證階段過重，
+  且帶稅務合規義務（Form 5472 漏報最低罰 25,000 美元），不採。
+- **修訂決策：MoR（Merchant of Record）先行**。Lemon Squeezy（Stripe 旗下，
+  對個人與小團隊友善）或 Paddle（審核較嚴、適合放量後）。費率約
+  5% + 0.5 美元，比 Stripe 貴，但代收代付全球稅務、台灣個人可註冊、
+  離「今天就能收錢」最近。介面層維持可抽換（IPaymentProvider），
+  放量後可評估轉 Paddle 或屆時的其他選項。
+- **台灣本地備選**：綠界/藍新（可用花朝月夕工作室統編，NTD 定期定額），
+  適合台灣優先的封閉驗證；跨境客群仍需 MoR。兩者不互斥。
+- **webhook 免 Blaze 方案**：MoR webhook 端點不必用 Cloud Functions——
+  可用 Netlify Functions（免費層）承載，內用 firebase-admin service account
+  設 custom claims。這解除 ADR-0008 對 ADR-0006（Blaze）的依賴，
+  M3 可以完全在免費基礎設施上完成。
