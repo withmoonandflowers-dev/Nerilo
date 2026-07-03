@@ -1,0 +1,135 @@
+.theme-palette {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+/* ── 浮動觸發按鈕 ── */
+.theme-palette-toggle {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-badge);
+  border: 2px solid var(--color-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform var(--transition-bounce), box-shadow var(--transition-base);
+}
+.theme-palette-toggle:hover {
+  transform: scale(1.08) rotate(-6deg);
+  box-shadow: var(--shadow-xl);
+}
+.theme-palette-toggle:active {
+  transform: scale(0.96);
+}
+
+.theme-toggle-swatches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  width: 24px;
+  height: 24px;
+}
+.theme-toggle-dot {
+  border-radius: var(--radius-badge);
+}
+/* 第三個色票橫跨底部一列，形成花瓣感 */
+.theme-toggle-dot:nth-child(3) {
+  grid-column: span 2;
+}
+
+/* ── 展開選單 ── */
+.theme-palette-menu {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-modal);
+  padding: 10px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: theme-menu-in var(--transition-bounce);
+  transform-origin: bottom right;
+}
+
+@keyframes theme-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.theme-palette-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  padding: 6px 10px 4px;
+}
+
+.theme-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+.theme-palette-item:hover {
+  background: var(--color-surface-secondary);
+}
+.theme-palette-item.is-active {
+  background: var(--color-primary-light);
+}
+
+.theme-swatches {
+  display: inline-flex;
+  border-radius: var(--radius-badge);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+.theme-swatch {
+  width: 14px;
+  height: 24px;
+}
+
+.theme-palette-label {
+  flex: 1;
+  font-weight: 500;
+}
+.theme-check {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+/* 手機：稍微內縮，避免擋住輸入列 */
+@media (max-width: 480px) {
+  .theme-palette {
+    right: 14px;
+    bottom: 14px;
+  }
+  .theme-palette-menu {
+    width: 200px;
+  }
+}

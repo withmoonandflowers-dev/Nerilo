@@ -4,7 +4,9 @@ import { AuthProvider } from './contexts/AuthContext';
 import { FeatureProvider } from './contexts/FeatureContext';
 import { ServicesProvider } from './contexts/ServicesContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ThemePalette } from './components/ThemePalette/ThemePalette';
 import { AppLoadingFallback } from './components/Skeleton/Skeleton';
 
 // Lazy-loaded pages — 每個頁面會被打包成獨立 chunk
@@ -20,28 +22,31 @@ function LoadingFallback() {
 function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <ServicesProvider>
-          <FeatureProvider>
-            <ToastProvider>
-              <Router>
-                <a href="#main-content" className="skip-to-content">
-                  跳至主要內容
-                </a>
-                <Suspense fallback={<LoadingFallback />}>
-                  <Routes>
-                    <Route path="/login" element={<LoginPage />} />
-                    <Route path="/dashboard" element={<DashboardPage />} />
-                    <Route path="/waiting/:roomId" element={<WaitingRoomPage />} />
-                    <Route path="/chat/:roomId" element={<ChatPage />} />
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                  </Routes>
-                </Suspense>
-              </Router>
-            </ToastProvider>
-          </FeatureProvider>
-        </ServicesProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <ServicesProvider>
+            <FeatureProvider>
+              <ToastProvider>
+                <Router>
+                  <a href="#main-content" className="skip-to-content">
+                    跳至主要內容
+                  </a>
+                  <Suspense fallback={<LoadingFallback />}>
+                    <Routes>
+                      <Route path="/login" element={<LoginPage />} />
+                      <Route path="/dashboard" element={<DashboardPage />} />
+                      <Route path="/waiting/:roomId" element={<WaitingRoomPage />} />
+                      <Route path="/chat/:roomId" element={<ChatPage />} />
+                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    </Routes>
+                  </Suspense>
+                  <ThemePalette />
+                </Router>
+              </ToastProvider>
+            </FeatureProvider>
+          </ServicesProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

@@ -14,6 +14,8 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--color-bg);
   color: var(--color-text-primary);
+  /* 切換調色盤時，背景與文字色平滑過渡（非硬切） */
+  transition: background-color var(--transition-slow), color var(--transition-slow);
 }
 
 code {
@@ -61,6 +63,57 @@ select:focus-visible,
 [role="button"]:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* ══════════════════════════════════════════════════════════
+   全域微互動增強（消除「卡」感）
+   組件已有自身樣式，這裡只補上順滑的預設過渡與回饋，
+   讓點擊、hover、主題切換都柔和有彈性。
+   ══════════════════════════════════════════════════════════ */
+
+/* 互動元素預設過渡（顏色/陰影/位移）。個別組件如已宣告 transition
+   會自然覆蓋此規則，因此安全。 */
+button,
+[role='button'],
+input,
+textarea,
+select,
+a {
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-base),
+    transform var(--transition-fast);
+}
+
+/* 按下瞬間的輕微回彈（有觸感） */
+button:not(:disabled):active,
+[role='button']:not([aria-disabled='true']):active {
+  transform: scale(0.97);
+}
+
+/* 卡片 / 表面容器：hover 時輕微浮起，切主題時平滑 */
+.room-card,
+.feature-card,
+.dashboard-card,
+[class*='-card'] {
+  transition:
+    background-color var(--transition-base),
+    border-color var(--transition-base),
+    box-shadow var(--transition-base),
+    transform var(--transition-base);
+}
+
+/* 尊重「減少動態」偏好：關閉非必要動效 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 
