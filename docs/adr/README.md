@@ -16,3 +16,4 @@
 | [0009](0009-target-market.md) | 目標市場與產品形態：資料傳遞架構、內部平台優先 | Accepted |
 | [0010](0010-heterogeneous-transport.md) | 異質傳輸擴展原則（衛星、LoRa、業餘無線電） | Proposed |
 | [0011](0011-relay-credit-economy.md) | 中繼點數經濟（過路有對價） | Proposed |
+| [0012](0012-community-relay-infrastructure.md) | 社群自營中繼基礎設施（三層備援階梯） | Proposed |
