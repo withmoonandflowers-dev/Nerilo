@@ -96,6 +96,9 @@ export class RoomService {
       ...roomData,
       createdAt: Timestamp.fromMillis(roomData.createdAt),
       waitingStartedAt: Timestamp.fromMillis(roomData.waitingStartedAt!),
+      // ttlExpireAt 寫成 Timestamp 供 Firestore 原生 TTL policy 自動清除
+      // （policy 只認 Timestamp 型別）。domain model 仍以 number 表示。
+      ttlExpireAt: Timestamp.fromMillis(roomData.ttlExpireAt!),
     };
 
     // Test mode：加入 e2eTestMode 標記讓 Firestore rules 允許匿名使用者建立房間
@@ -327,7 +330,7 @@ export class RoomService {
         participants: newParticipants,
         participantCount: newParticipants.length,
         lastActiveAt: now,
-        ttlExpireAt: now + OPEN_TTL_MS,
+        ttlExpireAt: Timestamp.fromMillis(now + OPEN_TTL_MS),
       };
 
       if (shouldActivate) {
@@ -419,7 +422,7 @@ export class RoomService {
             participants: newParticipants,
             participantCount: newParticipants.length,
             lastActiveAt: now,
-            ttlExpireAt: now + OPEN_TTL_MS,
+            ttlExpireAt: Timestamp.fromMillis(now + OPEN_TTL_MS),
           });
         });
         return; // success
