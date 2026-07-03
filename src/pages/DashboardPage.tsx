@@ -11,6 +11,7 @@ import { roomDisplayName } from '../utils/roomDisplayName';
 import type { P2PRoom } from '../types';
 import { featureLog } from '../utils/featureLog';
 import { logger } from '../utils/logger';
+import { UpgradeButton } from '../components/UpgradeButton/UpgradeButton';
 import './DashboardPage.css';
 
 const DashboardPage: React.FC = () => {
@@ -258,6 +259,7 @@ const DashboardPage: React.FC = () => {
           <div className="user-info">
             <span>{user?.displayName || user?.email}</span>
             <span className="role-badge">{user?.role}</span>
+            <UpgradeButton />
             <button onClick={handleAuthButtonClick} className="btn-logout" aria-label={isGuest ? '登入帳號' : '登出帳號'}>
               {isGuest ? '登入' : '登出'}
             </button>
