@@ -1,152 +1,302 @@
 /**
- * Nerilo Design Tokens
- * All hardcoded colors, shadows, radii → CSS custom properties
- * Dark mode via prefers-color-scheme
+ * Nerilo Design Tokens — 多主題系統
+ *
+ * 主題以 documentElement 的 data-theme 屬性切換（見 ThemeContext）。
+ * 五組：morandi（柔霧莫蘭迪，預設）/ cream（奶油甜柔）/ lavender（薰衣草夢幻）
+ * / forest（森林療癒）/ dark（深色）。無 data-theme 或未知值時 fallback 到 :root（莫蘭迪）。
+ *
+ * 所有組件皆使用 var(--color-*) 等 token，切換主題全站即時生效。
+ * 加入 transition / easing token 讓互動順滑（消除「卡」感）。
  */
 
+/* ══════════════════════════════════════════════════════════
+   共用 token（不隨主題變）：圓角、動效、間距節奏
+   ══════════════════════════════════════════════════════════ */
 :root {
-  /* ── Brand ── */
-  --color-primary: #667eea;
-  --color-primary-hover: #5568d3;
-  --color-primary-light: rgba(102, 126, 234, 0.15);
-  --color-primary-shadow: rgba(102, 126, 234, 0.4);
-  --color-accent: #764ba2;
-  --gradient-brand: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-
-  /* ── Surfaces ── */
-  --color-bg: #f5f5f5;
-  --color-surface: #ffffff;
-  --color-surface-secondary: #f9f9f9;
-  --color-surface-tertiary: #f0f0f0;
-  --color-surface-hover: #e5e5e5;
-  --color-surface-active: #e0e0e0;
-
-  /* ── Text ── */
-  --color-text-primary: #333333;
-  --color-text-secondary: #666666;
-  --color-text-tertiary: #999999;
-  --color-text-inverse: #ffffff;
-
-  /* ── Borders ── */
-  --color-border: #dddddd;
-  --color-border-light: #eeeeee;
-
-  /* ── Status: Success ── */
-  --color-success: #28a745;
-  --color-success-bg: #d4edda;
-  --color-success-text: #155724;
-  --color-success-border: #c3e6cb;
-
-  /* ── Status: Error ── */
-  --color-error: #dc3545;
-  --color-error-bg: #f8d7da;
-  --color-error-text: #721c24;
-
-  /* ── Status: Warning ── */
-  --color-warning: #ffc107;
-  --color-warning-bg: #fff3cd;
-  --color-warning-text: #856404;
-
-  /* ── Status: Info ── */
-  --color-info: #17a2b8;
-  --color-info-bg: #d1ecf1;
-  --color-info-text: #0c5460;
-
-  /* ── Neutral (for banner idle) ── */
-  --color-neutral-bg: #e2e3e5;
-  --color-neutral-text: #383d41;
-
-  /* ── Shadows ── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.15);
-  --shadow-xl: 0 10px 40px rgba(0, 0, 0, 0.1);
-  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.25);
-
-  /* ── Border Radius ── */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-pill: 20px;
+  /* ── Border Radius（整體更圓潤、柔和） ── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+  --radius-pill: 999px;
   --radius-badge: 9999px;
 
-  /* ── Overlay ── */
-  --overlay-bg: rgba(0, 0, 0, 0.5);
-
-  /* ── Skeleton ── */
-  --skeleton-base: #e0e0e0;
-  --skeleton-shine: rgba(255, 255, 255, 0.5);
+  /* ── Motion（順滑互動的關鍵） ── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition-fast: 140ms var(--ease-out);
+  --transition-base: 240ms var(--ease-out);
+  --transition-slow: 400ms var(--ease-out);
+  --transition-bounce: 340ms var(--ease-bounce);
 }
 
 /* ══════════════════════════════════════════════════════════
-   Dark Mode
+   Morandi — 柔霧莫蘭迪（預設，:root 承載讓無屬性時即生效）
+   藕粉 · 鼠尾草 · 奶霧白
    ══════════════════════════════════════════════════════════ */
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* ── Brand (slightly lighter in dark) ── */
-    --color-primary: #7b93f5;
-    --color-primary-hover: #6b83e5;
-    --color-primary-light: rgba(123, 147, 245, 0.2);
-    --color-primary-shadow: rgba(123, 147, 245, 0.3);
-    --gradient-brand: linear-gradient(135deg, #7b93f5 0%, #9067c6 100%);
+:root,
+[data-theme='morandi'] {
+  --color-primary: #b5838d;
+  --color-primary-hover: #a06e78;
+  --color-primary-light: rgba(181, 131, 141, 0.14);
+  --color-primary-shadow: rgba(181, 131, 141, 0.32);
+  --color-accent: #a5a58d;
+  --gradient-brand: linear-gradient(135deg, #c9ada7 0%, #b5838d 100%);
 
-    /* ── Surfaces ── */
-    --color-bg: #1a1a2e;
-    --color-surface: #2a2a40;
-    --color-surface-secondary: #323250;
-    --color-surface-tertiary: #3a3a58;
-    --color-surface-hover: #404060;
-    --color-surface-active: #484870;
+  --color-bg: #f3ece7;
+  --color-surface: #fffcfa;
+  --color-surface-secondary: #f7efe9;
+  --color-surface-tertiary: #efe4dd;
+  --color-surface-hover: #ebdfd8;
+  --color-surface-active: #e3d3ca;
 
-    /* ── Text ── */
-    --color-text-primary: #e8e8f0;
-    --color-text-secondary: #b0b0c8;
-    --color-text-tertiary: #808098;
-    --color-text-inverse: #1a1a2e;
+  --color-text-primary: #4a4038;
+  --color-text-secondary: #7d746b;
+  --color-text-tertiary: #a89f96;
+  --color-text-inverse: #fffcfa;
 
-    /* ── Borders ── */
-    --color-border: #404060;
-    --color-border-light: #353555;
+  --color-border: #e5d8d0;
+  --color-border-light: #efe6e0;
 
-    /* ── Status: Success ── */
-    --color-success: #4caf50;
-    --color-success-bg: #1b3a1e;
-    --color-success-text: #81c784;
-    --color-success-border: #2e5a30;
+  --color-success: #7a9e7e;
+  --color-success-bg: #e4efe4;
+  --color-success-text: #3f5a42;
+  --color-success-border: #cbe0cc;
+  --color-error: #c98986;
+  --color-error-bg: #f6e4e2;
+  --color-error-text: #7a3b39;
+  --color-warning: #d6a75f;
+  --color-warning-bg: #f7ecd8;
+  --color-warning-text: #7a5a24;
+  --color-info: #8ba3b5;
+  --color-info-bg: #e6eef3;
+  --color-info-text: #3f5563;
 
-    /* ── Status: Error ── */
-    --color-error: #ef5350;
-    --color-error-bg: #3a1a1a;
-    --color-error-text: #ef9a9a;
+  --color-neutral-bg: #ece2db;
+  --color-neutral-text: #7d746b;
 
-    /* ── Status: Warning ── */
-    --color-warning: #ffb300;
-    --color-warning-bg: #3a3018;
-    --color-warning-text: #ffe082;
+  --shadow-sm: 0 1px 3px rgba(74, 64, 56, 0.06);
+  --shadow-md: 0 3px 10px rgba(74, 64, 56, 0.08);
+  --shadow-lg: 0 8px 24px rgba(74, 64, 56, 0.1);
+  --shadow-xl: 0 16px 48px rgba(74, 64, 56, 0.12);
+  --shadow-modal: 0 24px 70px rgba(74, 64, 56, 0.22);
+  --overlay-bg: rgba(74, 64, 56, 0.4);
+  --skeleton-base: #ece2db;
+  --skeleton-shine: rgba(255, 255, 255, 0.6);
+}
 
-    /* ── Status: Info ── */
-    --color-info: #29b6f6;
-    --color-info-bg: #1a2e3a;
-    --color-info-text: #81d4fa;
+/* ══════════════════════════════════════════════════════════
+   Cream — 奶油甜柔
+   蜜桃珊瑚 · 奶油 · 薰衣草點綴
+   ══════════════════════════════════════════════════════════ */
+[data-theme='cream'] {
+  --color-primary: #e58a72;
+  --color-primary-hover: #d57460;
+  --color-primary-light: rgba(229, 138, 114, 0.14);
+  --color-primary-shadow: rgba(229, 138, 114, 0.3);
+  --color-accent: #c9a0dc;
+  --gradient-brand: linear-gradient(135deg, #ffd6ba 0%, #e58a72 100%);
 
-    /* ── Neutral ── */
-    --color-neutral-bg: #323250;
-    --color-neutral-text: #b0b0c8;
+  --color-bg: #fff7f0;
+  --color-surface: #ffffff;
+  --color-surface-secondary: #fff1e6;
+  --color-surface-tertiary: #ffe8d6;
+  --color-surface-hover: #ffe0c9;
+  --color-surface-active: #ffd6ba;
 
-    /* ── Shadows (more subtle in dark) ── */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4);
-    --shadow-xl: 0 10px 40px rgba(0, 0, 0, 0.4);
-    --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --color-text-primary: #5c4a42;
+  --color-text-secondary: #93827a;
+  --color-text-tertiary: #bca79d;
+  --color-text-inverse: #ffffff;
 
-    /* ── Overlay ── */
-    --overlay-bg: rgba(0, 0, 0, 0.7);
+  --color-border: #f4dcc8;
+  --color-border-light: #fae9db;
 
-    /* ── Skeleton ── */
-    --skeleton-base: #3a3a58;
-    --skeleton-shine: rgba(255, 255, 255, 0.08);
-  }
+  --color-success: #7fb08a;
+  --color-success-bg: #e4f2e7;
+  --color-success-text: #3f6349;
+  --color-success-border: #cbe6d1;
+  --color-error: #e57f7f;
+  --color-error-bg: #fce4e4;
+  --color-error-text: #8a3a3a;
+  --color-warning: #eaa94f;
+  --color-warning-bg: #fdefd6;
+  --color-warning-text: #825a1c;
+  --color-info: #7fb3d5;
+  --color-info-bg: #e4eff7;
+  --color-info-text: #35586e;
+
+  --color-neutral-bg: #f6e6d8;
+  --color-neutral-text: #93827a;
+
+  --shadow-sm: 0 1px 3px rgba(180, 120, 90, 0.07);
+  --shadow-md: 0 3px 12px rgba(180, 120, 90, 0.1);
+  --shadow-lg: 0 8px 28px rgba(180, 120, 90, 0.12);
+  --shadow-xl: 0 16px 48px rgba(180, 120, 90, 0.14);
+  --shadow-modal: 0 24px 70px rgba(180, 120, 90, 0.24);
+  --overlay-bg: rgba(92, 74, 66, 0.38);
+  --skeleton-base: #f6e6d8;
+  --skeleton-shine: rgba(255, 255, 255, 0.7);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Lavender — 薰衣草夢幻
+   丁香紫 · 霧藍 · 珠光白
+   ══════════════════════════════════════════════════════════ */
+[data-theme='lavender'] {
+  --color-primary: #9d8df1;
+  --color-primary-hover: #8878e8;
+  --color-primary-light: rgba(157, 141, 241, 0.15);
+  --color-primary-shadow: rgba(157, 141, 241, 0.32);
+  --color-accent: #a0c4ff;
+  --gradient-brand: linear-gradient(135deg, #b8b8ff 0%, #9d8df1 100%);
+
+  --color-bg: #f5f3ff;
+  --color-surface: #ffffff;
+  --color-surface-secondary: #f0ecfe;
+  --color-surface-tertiary: #e8e2fc;
+  --color-surface-hover: #ded6fa;
+  --color-surface-active: #d2c8f7;
+
+  --color-text-primary: #3d3a5c;
+  --color-text-secondary: #6b6890;
+  --color-text-tertiary: #9d9bbd;
+  --color-text-inverse: #ffffff;
+
+  --color-border: #e2dbf6;
+  --color-border-light: #ece7fa;
+
+  --color-success: #7fb08a;
+  --color-success-bg: #e6f1e8;
+  --color-success-text: #3f6349;
+  --color-success-border: #cde5d2;
+  --color-error: #dd7d9a;
+  --color-error-bg: #f9e3ea;
+  --color-error-text: #833a52;
+  --color-warning: #d6a75f;
+  --color-warning-bg: #f6ecd9;
+  --color-warning-text: #7a5a24;
+  --color-info: #86a8e7;
+  --color-info-bg: #e6edf9;
+  --color-info-text: #35507e;
+
+  --color-neutral-bg: #ebe6f8;
+  --color-neutral-text: #6b6890;
+
+  --shadow-sm: 0 1px 3px rgba(61, 58, 92, 0.07);
+  --shadow-md: 0 3px 12px rgba(61, 58, 92, 0.1);
+  --shadow-lg: 0 8px 28px rgba(61, 58, 92, 0.13);
+  --shadow-xl: 0 16px 48px rgba(61, 58, 92, 0.15);
+  --shadow-modal: 0 24px 70px rgba(61, 58, 92, 0.26);
+  --overlay-bg: rgba(61, 58, 92, 0.42);
+  --skeleton-base: #ebe6f8;
+  --skeleton-shine: rgba(255, 255, 255, 0.65);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Forest — 森林療癒
+   苔綠 · 燕麥米 · 陶土橘
+   ══════════════════════════════════════════════════════════ */
+[data-theme='forest'] {
+  --color-primary: #6b7f52;
+  --color-primary-hover: #5a6d44;
+  --color-primary-light: rgba(107, 127, 82, 0.14);
+  --color-primary-shadow: rgba(107, 127, 82, 0.3);
+  --color-accent: #e9c46a;
+  --gradient-brand: linear-gradient(135deg, #a3b18a 0%, #6b7f52 100%);
+
+  --color-bg: #f4f3ec;
+  --color-surface: #fffefb;
+  --color-surface-secondary: #eeede2;
+  --color-surface-tertiary: #e6e5d6;
+  --color-surface-hover: #dedcc9;
+  --color-surface-active: #d3d1ba;
+
+  --color-text-primary: #3a3f2e;
+  --color-text-secondary: #6b6f5c;
+  --color-text-tertiary: #9a9d8a;
+  --color-text-inverse: #fffefb;
+
+  --color-border: #dddccb;
+  --color-border-light: #e8e7d9;
+
+  --color-success: #6b9e70;
+  --color-success-bg: #e2efe3;
+  --color-success-text: #37533b;
+  --color-success-border: #c8e0ca;
+  --color-error: #c17b5f;
+  --color-error-bg: #f4e3db;
+  --color-error-text: #743d29;
+  --color-warning: #d6a341;
+  --color-warning-bg: #f6ecd2;
+  --color-warning-text: #77551a;
+  --color-info: #6f9ba8;
+  --color-info-bg: #e2eef1;
+  --color-info-text: #315058;
+
+  --color-neutral-bg: #e8e6d7;
+  --color-neutral-text: #6b6f5c;
+
+  --shadow-sm: 0 1px 3px rgba(58, 63, 46, 0.07);
+  --shadow-md: 0 3px 12px rgba(58, 63, 46, 0.1);
+  --shadow-lg: 0 8px 28px rgba(58, 63, 46, 0.12);
+  --shadow-xl: 0 16px 48px rgba(58, 63, 46, 0.14);
+  --shadow-modal: 0 24px 70px rgba(58, 63, 46, 0.24);
+  --overlay-bg: rgba(58, 63, 46, 0.4);
+  --skeleton-base: #e8e6d7;
+  --skeleton-shine: rgba(255, 255, 255, 0.6);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Dark — 深色（沉靜夜幕）
+   ══════════════════════════════════════════════════════════ */
+[data-theme='dark'] {
+  --color-primary: #b8a3d9;
+  --color-primary-hover: #c8b6e5;
+  --color-primary-light: rgba(184, 163, 217, 0.2);
+  --color-primary-shadow: rgba(184, 163, 217, 0.28);
+  --color-accent: #a0c4ff;
+  --gradient-brand: linear-gradient(135deg, #b8a3d9 0%, #8fa8d9 100%);
+
+  --color-bg: #1c1b24;
+  --color-surface: #262532;
+  --color-surface-secondary: #2e2d3c;
+  --color-surface-tertiary: #363548;
+  --color-surface-hover: #3e3d54;
+  --color-surface-active: #484766;
+
+  --color-text-primary: #e9e7f0;
+  --color-text-secondary: #b3b0c6;
+  --color-text-tertiary: #807d95;
+  --color-text-inverse: #1c1b24;
+
+  --color-border: #3a3950;
+  --color-border-light: #302f42;
+
+  --color-success: #7bc088;
+  --color-success-bg: #1f3524;
+  --color-success-text: #a5d9ae;
+  --color-success-border: #2f5038;
+  --color-error: #e88a88;
+  --color-error-bg: #3a1f1f;
+  --color-error-text: #f0aaa8;
+  --color-warning: #e6bd66;
+  --color-warning-bg: #38301a;
+  --color-warning-text: #f2d79a;
+  --color-info: #7fb0e8;
+  --color-info-bg: #1f2e3f;
+  --color-info-text: #a8cbf0;
+
+  --color-neutral-bg: #2e2d3c;
+  --color-neutral-text: #b3b0c6;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 3px 10px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.65);
+  --overlay-bg: rgba(0, 0, 0, 0.68);
+  --skeleton-base: #363548;
+  --skeleton-shine: rgba(255, 255, 255, 0.08);
 }

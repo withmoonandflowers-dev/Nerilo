@@ -20,3 +20,4 @@
 | [0013](0013-cloud-platform-choice.md) | 雲平台選擇（Firebase vs AWS）：不遷移 | Accepted |
 | [0014](0014-multi-device-identity.md) | 多裝置身分與同步（缺口，方向已定） | Proposed |
 | [0015](0015-game-data-as-second-app.md) | 遊戲資料流成為第二參考應用（game/ 解凍） | Accepted |
+| [0016](0016-ui-theming-not-framework-swap.md) | 視覺升級用多主題設計系統，不換前端框架 | Accepted |
