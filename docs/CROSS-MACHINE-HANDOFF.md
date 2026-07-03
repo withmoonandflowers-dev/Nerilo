@@ -143,17 +143,16 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
 - e2eTestMode 匿名建房漏洞:rules 已移除測試模式例外(純 sign_in_provider 檢查)。
 - functions TS 編譯:已修,`cd functions && npx tsc -p tsconfig.json --noEmit` EXIT 0。
 
-**唯一阻塞付費閉環:FIREBASE_SERVICE_ACCOUNT 未設(只有專案擁有者能做)。**
-webhook 端已完全就緒(帶真實 uid 測回 500「Claim update failed」——只差寫 claim
-這一步,簽章驗證/事件映射/uid 流通皆實測通過)。設定步驟:
-  1. Firebase Console(用**擁有 nerilo 專案的 Google 帳號**,非 workspace 帳號)
-     → 專案設定 → 服務帳戶 → 產生新的私密金鑰 → 下載 JSON。
-  2. JSON 內容壓成單行,貼進 Netlify **nerilo-api** 專案的環境變數
-     FIREBASE_SERVICE_ACCOUNT(app.netlify.com/projects/nerilo-api/configuration/env)。
-     注意:此私鑰是 Firebase 最高權限憑證,Claude 不經手其值。
-  3. 觸發 nerilo-api 重新部署(空 commit 或 Netlify Trigger deploy)。
-  4. 驗證:到 LS webhook 那筆 delivery 按 Resend → 應回 200;
-     或用 test 帳號重新付款 → dashboard 升級按鈕變 Pro 徽章。
+**付費閉環已完全打通(2026-07-04)。** FIREBASE_SERVICE_ACCOUNT 已由專案擁有者
+(nerilo Firebase 綁在其 gmail 帳號,/u/2/)設進 Netlify nerilo-api 環境變數
+(scope: Builds/Functions/Runtime,標記 secret)。雙重驗證:
+  - 帶真實 uid 的簽章請求 → webhook 回 **200 OK**(getUser + setCustomUserClaims 成功)。
+  - 帶不存在 uid → **400**(非先前的 500;證明 service account 初始化成功、
+    code 到得了 getUser,只是查無此人)。
+整條鏈路(升級按鈕帶 uid → LS checkout → 付款 → webhook 驗簽 → 事件映射 →
+firebase-admin 寫 plan claim)實測全通。webhook secret 因 LS 上限用 32-char。
+  - **注意**:Firebase 專案綁在**擁有者的 gmail 帳號**(非 workspace),
+    未來要進 Firebase Console 需用對的帳號。service account 私鑰 Claude 不經手。
 
 **Pro 實質權益現況(誠實)**:能伺服器端強制的維度(每房人數、fallback 配額、
 TURN 保障)目前都受技術限制(拓撲上限 5 人、Functions 未部署),故暫無可強制的
