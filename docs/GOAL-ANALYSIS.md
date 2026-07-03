@@ -59,10 +59,10 @@ G0 Nerilo 成為未來系統可信賴的資料傳遞架構
 
 | 目標 | 現況 | 差距 | 行動 |
 |---|---|---|---|
-| GS1 E2EE 預設 | SenderKeyManager 實作完整，但 useStarTopology.ts:136 建立 ChatService 未注入，加密恆關（ChatService.ts:141）；全 src 僅休眠的 GroupKeyManager 曾實例化它 | 平台最核心契約未生效 | ADR-0004 |
-| GS2 信令簽章 | 2026-03 稽核 High 項：SDP 未簽章，信令可被竄改成 MITM；firestore.rules 的 meshIdentityChangeIsValid 只擋了身分欄位竄改 | offer/answer 本體仍無完整性保護 | 併入 ADR-0004 範圍 |
+| GS1 E2EE 預設 | **已修（2026-07-03，commit 609b34e）**：星型路徑注入 SenderKeyManager，金鑰未就緒等待不降級，@stable E2E 驗證通過 | mesh（3 人以上）群組金鑰仍屬第二階段，UI 已誠實標示 | ADR-0004（Accepted） |
+| GS2 信令簽章 | 2026-03 稽核 High 項：SDP 未簽章；現行防線是 Firestore auth + rules（簽發者自寫、append-only、±30s），對當前威脅模型足夠 | offer/answer 本體無密碼學完整性保護 | M4（與身分統一同批，屆時有統一簽章身分可用） |
 | GS3 身分原語 | IdentityManager（ECDSA P-256）僅 mesh 路徑使用；星型路徑身分依賴 Firebase uid | 兩套身分，平台需統一 | M4 平台抽取時統一 |
-| GS4 降級不降密 | P2P 失敗即走 Firestore 明文（ChatPage.tsx:437-439） | 最依賴 fallback 的使用者保護最弱 | ADR-0004 |
+| GS4 降級不降密 | **已修（2026-07-03）**：星型房 fallback 一律密文；金鑰未建立時訊息標失敗可重送，不默默明文 | 弱網補救（金鑰交換走 Firestore 信令）排 M4 | ADR-0004（Accepted） |
 
 ### GC 正確
 
