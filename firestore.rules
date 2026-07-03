@@ -54,6 +54,14 @@ service cloud.firestore {
       allow delete: if false; // 不允許從前端刪除 user 文件
     }
 
+    // ── 房間人數上限（ADR-0005 第一層：結構性總量限制） ──────────────
+    // 目前接線的拓撲上限是 5 人 full mesh；6 人以上的 partial mesh 未接線。
+    // 方案分層上線後（ADR-0008），此上限改由 request.auth.token.plan 決定。
+    function participantsWithinCap(data) {
+      return data.participants is list
+        && data.participants.size() <= 5;
+    }
+
     // P2P Rooms collection
     // 安全規則：只允許已登入的用戶（非匿名）建立房間
     match /p2pRooms/{roomId} {
@@ -72,12 +80,14 @@ service cloud.firestore {
       // 例外：若文件帶有 e2eTestMode=true 標記，允許匿名使用者建立（僅 emulator 環境有效）
       allow create: if isAuthenticated() &&
         request.resource.data.ownerUid == request.auth.uid &&
+        participantsWithinCap(request.resource.data) &&
         (request.auth.token.firebase.sign_in_provider != "anonymous" ||
          request.resource.data.e2eTestMode == true);
 
       // 更新：允許房主更新房間，或使用者加入/更新自己的身分。
       // 任何更新都不得修改其他使用者的 meshIdentities 條目（防 MITM）。
-      allow update: if isAuthenticated() && meshIdentitiesChangeIsValid() && (
+      allow update: if isAuthenticated() && meshIdentitiesChangeIsValid() &&
+        participantsWithinCap(request.resource.data) && (
         // 房主可以更新房間
         (request.auth.uid == resource.data.ownerUid) ||
         // 使用者加入房間：更新後必須在 participants 中，且房間非 closed

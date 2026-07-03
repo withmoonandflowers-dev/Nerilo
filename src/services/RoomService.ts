@@ -305,6 +305,17 @@ export class RoomService {
         return;
       }
 
+      // 人數上限（與 firestore.rules 的 participantsWithinCap 同值）：
+      // 先在 client 端給清晰錯誤，rules 是最終防線
+      const MAX_PARTICIPANTS = 5;
+      if (participants.length >= MAX_PARTICIPANTS) {
+        logger.warn('[RoomService] joinRoom failed: Room is full', { roomId, uid });
+        throw Object.assign(
+          new Error(`房間已滿（上限 ${MAX_PARTICIPANTS} 人）`),
+          { code: 'room-full', roomStatus: roomData.status }
+        );
+      }
+
       const newParticipants = [...participants, uid];
       // 當 waiting 房間滿 2 人時，自動轉為 open
       const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
