@@ -38,6 +38,8 @@ export class ChatService {
   // E2EE（可選）
   private senderKeyManager: SenderKeyManager | null;
   private peerECDHKeys: PeerECDHKeyMap = new Map();
+  /** peer 公鑰的 Base64 快照，用於偵測 peer 重新產生金鑰（頁面重整） */
+  private peerECDHKeyFingerprints: Map<string, string> = new Map();
   private e2eeReady = false;
   /** 等待 sender key 分發完成的 resolvers */
   private e2eeReadyResolvers: Array<() => void> = [];
@@ -121,6 +123,11 @@ export class ChatService {
   }
 
   async sendMessage(content: string, to?: string): Promise<string> {
+    // E2EE 模式：金鑰未就緒時先等待（逾時擲錯），確保不會寫入一則送不出去的訊息
+    if (this.senderKeyManager && !this.e2eeReady) {
+      await this.waitForE2EEReady();
+    }
+
     const messageId = generateUUID();
     const hlcTimestamp = this.hlc.now();
     const message: ChatMessage = {
@@ -138,8 +145,7 @@ export class ChatService {
     // 建構 P2P envelope
     let envelopePayload: ChatMessage | EncryptedChatPayload;
 
-    if (this.senderKeyManager && this.e2eeReady) {
-      // E2EE 模式：加密 content
+    if (this.senderKeyManager) {
       const encrypted = await this.senderKeyManager.encryptMessage(content);
       envelopePayload = {
         messageId,
@@ -151,6 +157,7 @@ export class ChatService {
           ciphertext: encrypted.ciphertext,
           iv: encrypted.iv,
           senderKeyEpoch: encrypted.senderKeyEpoch,
+          seq: encrypted.seq,
         },
       };
 
@@ -160,7 +167,7 @@ export class ChatService {
         await this.broadcastSenderKeyDistribution(rotation);
       }
     } else {
-      // 明文模式（向下相容）
+      // 明文模式（未啟用 E2EE 的拓撲，例如 mesh）
       envelopePayload = message;
     }
 
@@ -189,13 +196,18 @@ export class ChatService {
       edited: true,
     });
 
-    let payloadContent: string | { ciphertext: string; iv: string; senderKeyEpoch: number };
-    if (this.senderKeyManager && this.e2eeReady) {
+    let payloadContent: string | { ciphertext: string; iv: string; senderKeyEpoch: number; seq?: number };
+    if (this.senderKeyManager) {
+      // 金鑰未就緒時等待，不得默默降級明文（ADR-0004）
+      if (!this.e2eeReady) {
+        await this.waitForE2EEReady();
+      }
       const encrypted = await this.senderKeyManager.encryptMessage(newContent);
       payloadContent = {
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
         senderKeyEpoch: encrypted.senderKeyEpoch,
+        seq: encrypted.seq,
       };
     } else {
       payloadContent = newContent;
@@ -388,6 +400,15 @@ export class ChatService {
     const payload = envelope.payload as ECDHPubKeyPayload;
     const peerUid = payload.userId;
 
+    // 忽略自己的廣播（防止未來 bus 拓撲改變後的自迴路）
+    if (peerUid === this.localUid) return;
+
+    // 公鑰未變更就不回應：兩端互收公鑰時各自無條件回播會形成無限迴圈；
+    // 只在「新 peer」或「peer 換了金鑰（頁面重整）」時才回覆與重分發
+    if (this.peerECDHKeyFingerprints.get(peerUid) === payload.ecdhPublicKey) {
+      return;
+    }
+
     // 匯入 peer 的 ECDH 公鑰
     const keyData = base64ToBuffer(payload.ecdhPublicKey);
     const peerECDHKey = await crypto.subtle.importKey(
@@ -399,6 +420,7 @@ export class ChatService {
     );
 
     this.peerECDHKeys.set(peerUid, peerECDHKey);
+    this.peerECDHKeyFingerprints.set(peerUid, payload.ecdhPublicKey);
     this.pendingKeyExchangePeers.delete(peerUid);
 
     logger.info('[ChatService][E2EE] Received ECDH public key', { peerUid });
@@ -504,6 +526,7 @@ export class ChatService {
     if (!this.senderKeyManager) return;
 
     this.peerECDHKeys.delete(peerUid);
+    this.peerECDHKeyFingerprints.delete(peerUid);
 
     if (this.peerECDHKeys.size === 0) return;
 
@@ -552,6 +575,41 @@ export class ChatService {
       epoch: distribution.epoch,
       recipientCount: Object.keys(distribution.encryptedKeys).length,
     });
+  }
+
+  // ── Firestore fallback 加解密（ADR-0004：fallback 一律密文） ─────────────
+
+  /**
+   * 為 Firestore fallback 加密內容。
+   * 金鑰未就緒時等待（逾時擲錯），呼叫端不得以明文替代。
+   */
+  async encryptForFallback(
+    content: string
+  ): Promise<{ ciphertext: string; iv: string; senderKeyEpoch: number; seq?: number }> {
+    if (!this.senderKeyManager) {
+      throw new Error('E2EE not enabled — fallback encryption unavailable');
+    }
+    if (!this.e2eeReady) {
+      await this.waitForE2EEReady();
+    }
+    const encrypted = await this.senderKeyManager.encryptMessage(content);
+    return {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      senderKeyEpoch: encrypted.senderKeyEpoch,
+      seq: encrypted.seq,
+    };
+  }
+
+  /** 解密經 Firestore fallback 送來的密文（senderId 為對方 uid） */
+  async decryptFromFallback(
+    payload: { ciphertext: string; iv: string; senderKeyEpoch: number; seq?: number },
+    senderId: string
+  ): Promise<string> {
+    if (!this.senderKeyManager) {
+      throw new Error('E2EE not enabled — cannot decrypt fallback message');
+    }
+    return this.senderKeyManager.decryptMessage(payload as EncryptedPayload, senderId);
   }
 
   /** 等待 E2EE 就緒（用於 UI 層） */

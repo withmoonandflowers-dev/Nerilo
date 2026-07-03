@@ -168,6 +168,8 @@ export interface EncryptedChatPayload {
     ciphertext: string; // Base64
     iv: string;         // Base64
     senderKeyEpoch: number;
+    /** epoch 內單調遞增序號（重放防護）；舊版訊息可能缺少 */
+    seq?: number;
   };
 }
 
