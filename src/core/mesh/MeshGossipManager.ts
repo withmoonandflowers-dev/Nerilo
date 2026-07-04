@@ -2,6 +2,7 @@ import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import { GossipMessageHandler } from './GossipMessageHandler';
+import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import { RoomService } from '../../services/RoomService';
 import { auth } from '../../config/firebase';
@@ -132,9 +133,14 @@ export class MeshGossipManager {
 
     /** 已註冊到 RelayManager 的 peer 集合 */
     const registeredRelayPeers = new Set<string>();
+    /**
+     * 已接線（onMessage/onDigest）的連線實例。必須以「實例」為鍵：
+     * - 以 peerId 為鍵會漏掉重連後的新實例（新連線沒有監聽器 → 收不到訊息）；
+     * - 完全不記錄則每 2 秒重複註冊新 closure，同一則訊息被處理 N 次。
+     */
+    const wiredConnections = new WeakSet<MeshConnection>();
 
-    // 每 2 秒掃描鄰居列表，為新加入的鄰居設置訊息監聽
-    // （MeshConnection.onMessage 內部去重，多次設置不會重複觸發）
+    // 每 2 秒掃描鄰居列表：為新連線接線，並對已連上鄰居做 anti-entropy 對帳
     this.neighborCheckInterval = setInterval(() => {
       if (!this.topologyManager || !this.messageHandler) return;
 
@@ -151,25 +157,34 @@ export class MeshGossipManager {
           registeredRelayPeers.add(peerId);
         }
 
-        // 週期性 anti-entropy：每輪把最近訊息（60s 內）補送給所有已連上鄰居。
-        // 收端 seenMessageIds 去重、冪等；空緩衝為 no-op。這保證不論連線成形時序、
-        // 或訊息在哪個時間點送出，幾個週期內都會到達所有 peer（最終一致）。
-        if (neighbor.getState() === 'connected') {
-          void this.messageHandler!.syncToNeighbor(neighbor);
+        if (!wiredConnections.has(neighbor)) {
+          wiredConnections.add(neighbor);
+
+          neighbor.onMessage(async (message: GossipMessage) => {
+            // 處理 relay 封包
+            const raw = message as unknown as Record<string, unknown>;
+            if (raw.type === 'relay:forward') {
+              await this.relayManager?.handleRelayPacket(peerId, JSON.stringify(raw));
+              return;
+            }
+
+            if (this.messageHandler) {
+              await this.messageHandler.handleReceivedMessage(message, peerId);
+            }
+          });
+
+          // 對方的 digest 進來 → 比對本地 store，把對方缺的訊息補送過去
+          neighbor.onDigest((digest) => {
+            void this.messageHandler?.handleDigest(digest, neighbor);
+          });
         }
 
-        neighbor.onMessage(async (message: GossipMessage) => {
-          // 處理 relay 封包
-          const raw = message as unknown as Record<string, unknown>;
-          if (raw.type === 'relay:forward') {
-            await this.relayManager?.handleRelayPacket(peerId, JSON.stringify(raw));
-            return;
-          }
-
-          if (this.messageHandler) {
-            await this.messageHandler.handleReceivedMessage(message, peerId);
-          }
-        });
+        // 週期性 anti-entropy 對帳：送 digest 給已連上鄰居，對方回補我缺的訊息。
+        // pull-based、冪等（收端以 (senderId, seq) 去重），不論連線成形時序、
+        // 訊息何時送出、走哪條路徑，連通圖上數學上保證最終一致。
+        if (neighbor.getState() === 'connected') {
+          void this.messageHandler!.sendDigestTo(neighbor);
+        }
       });
 
       // 取消註冊已離開的鄰居
@@ -184,12 +199,13 @@ export class MeshGossipManager {
 
   /**
    * 發送訊息
+   * @param messageId 應用層訊息 id，貫穿至 gossip payload（跨傳輸路徑去重）
    */
-  async sendMessage(content: string): Promise<void> {
+  async sendMessage(content: string, messageId?: string): Promise<void> {
     if (!this.initialized || !this.messageHandler) {
       throw new Error('MeshGossipManager not initialized. Call initialize() first.');
     }
-    return await this.messageHandler.sendMessage(content);
+    return await this.messageHandler.sendMessage(content, messageId);
   }
 
   /**

@@ -17,7 +17,11 @@ export class SecurityManager {
     message: Omit<GossipMessage, 'signature'>,
     privateKey: CryptoKey
   ): Promise<string> {
-    // 將訊息（除 signature 外）序列化
+    // 將訊息序列化。ttl 是「會在轉發時遞減」的可變路由欄位，必須排除在
+    // 簽章之外（同 IPsec 對 mutable field 的處理）——把 ttl 簽進去會讓
+    // 所有經轉發（ttl-1）的副本簽章必然失效，gossip 轉發路徑整條壞死。
+    // ttl 被竄改只影響洪泛半徑，不影響訊息完整性（內容欄位全數有簽）。
+    // messageId 是跨傳輸路徑去重的依據，必須簽（否則可竄改造成收端重複顯示）。
     const messageData = JSON.stringify({
       roomId: message.roomId,
       senderId: message.senderId,
@@ -25,9 +29,9 @@ export class SecurityManager {
       seq: message.seq,
       timestamp: message.timestamp,
       content: message.content,
-      ttl: message.ttl,
+      ...(message.messageId !== undefined ? { messageId: message.messageId } : {}),
     });
-    
+
     // 計算 hash
     const encoder = new TextEncoder();
     const messageHash = await crypto.subtle.digest(
@@ -69,7 +73,7 @@ export class SecurityManager {
 
       const signature = base64ToArrayBuffer(message.signature);
       
-      // 重新計算訊息 hash
+      // 重新計算訊息 hash（不含 ttl，與 signMessage 對稱；理由見該處註解）
       const messageData = JSON.stringify({
         roomId: message.roomId,
         senderId: message.senderId,
@@ -77,7 +81,7 @@ export class SecurityManager {
         seq: message.seq,
         timestamp: message.timestamp,
         content: message.content,
-        ttl: message.ttl,
+        ...(message.messageId !== undefined ? { messageId: message.messageId } : {}),
       });
       
       const encoder = new TextEncoder();
