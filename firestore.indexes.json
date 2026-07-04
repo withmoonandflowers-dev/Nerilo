@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "p2pRooms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ttlExpireAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "signals",
       "queryScope": "COLLECTION",
       "fields": [
