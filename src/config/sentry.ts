@@ -22,6 +22,7 @@
  */
 
 import * as Sentry from '@sentry/react';
+import { connectionDiagnostics } from '../core/metrics/ConnectionDiagnostics';
 
 const SENTRY_DSN = import.meta.env?.VITE_SENTRY_DSN;
 const DEPLOY_ENV =
@@ -49,6 +50,18 @@ export function initSentry(): void {
       // maskAllText + blockAllMedia: never capture user content in replays.
       Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
     ],
+  });
+
+  // 把 P2P 連線事件轉成 Sentry breadcrumb：錯誤發生時，附上「連線在崩前
+  // 經歷了什麼」（ICE/DataChannel 狀態軌跡）——這是 WebRTC 除錯的關鍵脈絡，
+  // 純例外堆疊看不到。core 層不相依 Sentry，橋接留在此 config 層。
+  connectionDiagnostics.subscribe((event) => {
+    Sentry.addBreadcrumb({
+      category: 'p2p',
+      message: event.kind,
+      level: event.kind.startsWith('state:failed') || event.kind === 'ice-restart' ? 'warning' : 'info',
+      data: event.detail,
+    });
   });
 }
 
