@@ -114,7 +114,11 @@ export class SecurityManager {
         name: 'ECDSA',
         namedCurve: 'P-256',
       },
-      false, // 不可匯出
+      // 必須可匯出：收訊時 IdentityManager.deriveUserId 會對此 key 做
+      // exportKey('spki') 以驗證 pubKey↔senderId 一致。設 false 會讓 exportKey
+      // 擲錯，導致每則 gossip 訊息在身分驗證處炸掉、永不送達（mesh 訊息不互通）。
+      // 公鑰本為公開資訊，可匯出無安全風險。
+      true,
       ['verify']
     );
   }
