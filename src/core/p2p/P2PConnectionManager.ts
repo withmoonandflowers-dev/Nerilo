@@ -15,6 +15,7 @@ import { logger } from '../../utils/logger';
 import type { ConnectionState, Signal } from '../../types';
 import { getIceServerProvider } from './IceServerProvider';
 import { connectionStats } from '../metrics/ConnectionStats';
+import { connectionDiagnostics } from '../metrics/ConnectionDiagnostics';
 
 export interface IceServers {
   urls: string | string[];
@@ -205,6 +206,10 @@ export class P2PConnectionManager {
     this.iceRestartAttempted = true;
     this.pendingRestartRecovery = true;
     connectionStats.recordIceRestart();
+    connectionDiagnostics.record('ice-restart', {
+      roomId: this.roomId,
+      wasInitiator: this.hasCreatedOffer,
+    });
     this.setState('connecting');
 
     logger.warn('[P2PConnectionManager] Connection failed — attempting one ICE restart', {
@@ -526,6 +531,14 @@ export class P2PConnectionManager {
 
   private setState(newState: ConnectionState): void {
     if (this.state === newState) return;
+    // 診斷軌跡：記錄每次狀態轉換（含 ICE state），供除錯 dump / Sentry breadcrumb。
+    // 一鉤捕獲整條生命週期。
+    connectionDiagnostics.record(`state:${newState}`, {
+      roomId: this.roomId,
+      channel: this.channelLabel,
+      from: this.state,
+      iceState: this.pc?.iceConnectionState,
+    });
     this.state = newState;
     this.stateListeners.forEach(listener => listener(newState));
   }
