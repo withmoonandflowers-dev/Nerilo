@@ -58,6 +58,21 @@ describe('SecurityManager', () => {
     });
   });
 
+  describe('importPublicKey 可匯出（回歸：extractable 導致 mesh 訊息全滅）', () => {
+    it('匯入的公鑰必須能被 exportKey（deriveUserId 依賴此）', async () => {
+      // 收訊時 IdentityManager.deriveUserId 會對匯入的公鑰做 exportKey('spki')
+      // 驗證 pubKey↔senderId。若 importPublicKey 設 extractable:false，exportKey
+      // 會擲錯，導致每則 gossip 訊息在身分驗證處炸掉、mesh 訊息完全不互通。
+      const kp = await generateSigningKeyPair();
+      const spkiB64 = await exportPubKeySpki(kp.publicKey);
+
+      const imported = await sm.importPublicKey(spkiB64);
+      // 這行在 extractable:false 時會 throw；修復後應成功且與原始一致
+      const reExported = await crypto.subtle.exportKey('spki', imported);
+      expect(arrayBufferToBase64(reExported)).toBe(spkiB64);
+    });
+  });
+
   describe('tampered message detection', () => {
     it('fails verification when content is tampered', async () => {
       const kp = await generateSigningKeyPair();

@@ -31,15 +31,28 @@
 | B 看到的訊息 | 只有自己（A=0, B=1, C=0） |
 | C 看到的訊息 | 只有自己，且**重複兩次**（C=2） |
 
-**判定**：mesh 拓撲下**訊息完全不在 peer 間傳播**（即使橫幅顯示已連線），且 mesh
-路徑的去重也未生效（先前去重修復僅涵蓋星型）。這是真實功能缺陷，不是偶發。
+**判定（初次）**：mesh 拓撲下訊息完全不在 peer 間傳播。
 
-**與成熟度矩陣的關係**：先前標「星型最穩、mesh 部分」；本次 QA 證實 mesh 實際為
-**不可用**，非「部分可用」。文件與能力聲明應據此更新。
+### ✅ 根因已找到並修復：公鑰 extractable
 
-**根因待查**（未在本輪修復，屬獨立除錯工作）：可能為 MeshGossipManager 的訊息路由、
-mesh 各對 DataChannel 未真正建立、或 headless 環境限制。需以真實瀏覽器進一步確認
-是產品缺陷或環境因素。
+深入除錯發現：`SecurityManager.importPublicKey` 以 `extractable:false` 匯入公鑰，
+但收訊時 `IdentityManager.deriveUserId` 會對該公鑰做 `exportKey('spki')` 驗證
+pubKey↔senderId。`extractable:false` 使 `exportKey` 擲錯，導致**每則 gossip 訊息
+在身分驗證處炸掉、永不送達**。改為 `extractable:true`（公鑰本為公開，無安全風險）。
+
+驗證：修復後 3 人診斷從「每人只見自己（A=1 B=0 C=0）」變為訊息開始互通
+（如 A 見全部 A=1 B=1 C=1）。單元回歸鎖住（`SecurityManager.spec` importPublicKey
+可匯出）。單元測試未抓到是因其用可匯出金鑰繞過此真實路徑——此為 E2E QA 的價值。
+
+### 🟡 殘留（未修，屬更深的獨立工作）
+
+修復傳播主因後，mesh 仍**不穩定**：多次診斷結果不一致（有時全通、有時部分），
+屬**連線成形時序競態**（`expectChatReady` 只要求連上至少一個鄰居，訊息可能在
+full mesh 成形前送出即遺失，且無 anti-entropy 補償重送）；另有自訊息偶爾重複。
+這是分散式系統可靠性問題，需真實多瀏覽器 + 較大工程（連線就緒門檻、訊息補償）。
+
+**現況判定**：mesh 從「完全不可用」提升為「會傳但不可靠」。**3+ 人仍不建議用於展示；
+2 人星型穩定可用。**
 
 ### E2E @stable 涵蓋（10/10）
 - 註冊 → 儀表板（角色 user）、登出再登入、錯誤帳號清楚錯誤、重複 email 導引登入
