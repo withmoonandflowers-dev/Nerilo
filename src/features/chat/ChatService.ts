@@ -127,13 +127,15 @@ export class ChatService {
     });
   }
 
-  async sendMessage(content: string, to?: string): Promise<string> {
+  async sendMessage(content: string, to?: string, providedMessageId?: string): Promise<string> {
     // E2EE 模式：金鑰未就緒時先等待（逾時擲錯），確保不會寫入一則送不出去的訊息
     if (this.senderKeyManager && !this.e2eeReady) {
       await this.waitForE2EEReady();
     }
 
-    const messageId = generateUUID();
+    // 呼叫端（ChatPage）可傳入 id，讓「樂觀顯示」與下方「本機自我 emit」共用同一 id，
+    // 使 useChatMessages 的 id 去重能收斂成一則（否則同一訊息兩種 id → 重複顯示）。
+    const messageId = providedMessageId ?? generateUUID();
     const hlcTimestamp = this.hlc.now();
     // 因果依賴 = 當前因果前緣（發送這則前「最新」的已知訊息）
     const deps = [...this.causalFrontier];

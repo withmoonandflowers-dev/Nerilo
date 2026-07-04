@@ -27,6 +27,7 @@ import {
 import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
 import { featureLog } from '../../utils/featureLog';
 import { logger } from '../../utils/logger';
+import { generateUUID } from '../../utils/uuid';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -421,8 +422,9 @@ const ChatPage: React.FC = () => {
   const sendMessage = async (content: string, existingMessageId?: string) => {
     if (!user || !roomId) return;
 
-    // Create a temporary message with 'sending' status
-    const tempId = existingMessageId || `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // 產生「真正的」訊息 id 並貫穿樂觀顯示 → 服務送出 → 本機自我 emit，三者共用同一 id，
+    // 使 useChatMessages 的 id 去重能收斂成一則（修掉寄件方自我重複）。
+    const tempId = existingMessageId || generateUUID();
     if (!existingMessageId) {
       const pendingMessage: ChatMessage = {
         messageId: tempId,
@@ -439,10 +441,10 @@ const ChatPage: React.FC = () => {
     try {
       if (connectionState === 'connected') {
         if (architecture.isMesh()) {
-          await meshTopology.sendMessage(content);
+          await meshTopology.sendMessage(content, tempId);
           featureLog('chat', 'message_sent', { roomId, channel: 'p2p_mesh' });
         } else if (architecture.isStar()) {
-          await starTopology.sendMessage(content);
+          await starTopology.sendMessage(content, tempId);
           featureLog('chat', 'message_sent', { roomId, channel: 'p2p_star' });
         } else {
           logger.warn('[ChatPage] No chat service available');
