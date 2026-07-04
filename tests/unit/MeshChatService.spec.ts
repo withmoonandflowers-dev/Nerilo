@@ -20,6 +20,8 @@ const mockGossipManager = {
   }),
   isInitialized: vi.fn().mockReturnValue(true),
   getConnectionState: vi.fn().mockReturnValue({ neighborCount: 1, totalNeighbors: 1 }),
+  // gossip senderId 是 mesh userId；測試中與 localUid 'user-1' 一致以驗自訊息過濾
+  getUserId: vi.fn().mockReturnValue('user-1'),
   cleanup: vi.fn().mockResolvedValue(undefined),
 };
 

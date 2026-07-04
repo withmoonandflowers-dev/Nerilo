@@ -20,6 +20,13 @@ export class GossipMessageHandler {
   private sendRateLimiter: Map<string, number[]> = new Map();
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
   private readonly MAX_MESSAGES_PER_SECOND = 10;
+  /**
+   * 最近訊息緩衝（anti-entropy）：全 mesh 廣播是 ttl=1 直送，假設送出時 mesh 已全連上。
+   * 但連線非同步成形，早送的訊息對「尚未連上的人」會永久遺失。保留最近 60s 訊息，
+   * 新鄰居一連上就補送（syncToNeighbor），收端以 seenMessageIds 去重，達成最終一致。
+   */
+  private recentMessages: { msg: GossipMessage; at: number }[] = [];
+  private readonly RECENT_TTL_MS = 60_000;
 
   constructor(
     private roomId: string,
@@ -80,12 +87,14 @@ export class GossipMessageHandler {
       }
     }
     
-    // 記錄已發送
+    // 記錄已發送（去重 + anti-entropy 緩衝）
     const messageId = await getMessageId(signedMessage);
     this.seenMessageIds.add(messageId);
+    this.recordRecent(signedMessage);
 
-    // 通知本地監聽器
-    this.notifyMessageListeners(signedMessage);
+    // 註：送出時「不」回吐給本地監聽器。自己訊息的顯示由應用層負責
+    // （MeshChatService 樂觀更新，id 與 ChatPage 一致）。gossip 層在此回吐會用
+    // 另一套 id（userId-seq）造成自訊息重複。收訊路徑仍照常 notify。
   }
 
   /**
@@ -163,6 +172,7 @@ export class GossipMessageHandler {
     
     // 記錄已見過
     this.seenMessageIds.add(messageId);
+    this.recordRecent(message);
 
     // 記錄有效訊息投遞（提升 peer 信譽）
     this.peerScoring?.recordDelivery(fromNeighbor);
@@ -255,6 +265,38 @@ export class GossipMessageHandler {
   ): MeshConnection[] {
     const shuffled = [...neighbors].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, Math.min(count, neighbors.length));
+  }
+
+  /** 記錄一則最近訊息（供 anti-entropy 補送），並清掉過期的 */
+  private recordRecent(msg: GossipMessage): void {
+    this.recentMessages.push({ msg, at: Date.now() });
+    this.pruneRecent();
+  }
+
+  private pruneRecent(): void {
+    const cutoff = Date.now() - this.RECENT_TTL_MS;
+    if (this.recentMessages.length > 0 && this.recentMessages[0]!.at < cutoff) {
+      this.recentMessages = this.recentMessages.filter((r) => r.at >= cutoff);
+    }
+  }
+
+  /**
+   * anti-entropy：把最近訊息補送給「剛連上的」鄰居。
+   * 收端以 seenMessageIds 去重，已看過的自動略過。解決「訊息在對方連上前送出」的遺失。
+   */
+  async syncToNeighbor(neighbor: MeshConnection): Promise<void> {
+    this.pruneRecent();
+    for (const { msg } of this.recentMessages) {
+      try {
+        await neighbor.send(msg);
+      } catch (error) {
+        logger.warn('[GossipMessageHandler] anti-entropy sync failed', {
+          roomId: this.roomId,
+          neighborId: neighbor.getId(),
+          error,
+        });
+      }
+    }
   }
 
   /**

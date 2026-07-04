@@ -13,6 +13,8 @@ export class MeshChatService {
   private chatStorage: IChatStorage;
   private messageListeners: Set<(message: ChatMessage) => void> = new Set();
   private messageCounter = 0;
+  /** 本機的 mesh userId（hash pubKey）。gossip senderId 用此，非 firebase uid。 */
+  private meshUserId: string | null = null;
 
   constructor(
     private roomId: string,
@@ -28,12 +30,15 @@ export class MeshChatService {
    */
   async initialize(): Promise<void> {
     await this.meshGossipManager.initialize();
+    // gossip 的 senderId 是 mesh userId（hash pubKey），不是 firebase uid。
+    // 取本機 mesh userId 以正確過濾「自己的訊息」（否則自訊息會重複顯示）。
+    this.meshUserId = this.meshGossipManager.getUserId();
 
     // 監聽 Gossip 訊息
     this.meshGossipManager.onMessage((gossipMessage: GossipMessage) => {
-      // 過濾自己的回音：gossip 可能把本機廣播的訊息繞回；本機已在送出時
-      // 自我 emit（且 ChatPage 已樂觀顯示），再收一次會重複。
-      if (gossipMessage.senderId === this.localUid) return;
+      // 過濾自己的回音：anti-entropy / gossip 可能把本機訊息繞回；本機已樂觀顯示。
+      // 必須比 mesh userId（senderId 的實際型別），比 firebase uid 永不命中。
+      if (gossipMessage.senderId === this.meshUserId) return;
 
       // 轉換為 ChatMessage
       const chatMessage: ChatMessage = {
