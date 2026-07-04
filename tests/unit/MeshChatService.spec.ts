@@ -177,6 +177,52 @@ describe('MeshChatService', () => {
     });
   });
 
+  describe('去重回歸：寄件方不重複', () => {
+    it('sendMessage 傳入 messageId 時，本地 emit 沿用該 id（與樂觀顯示共用）', async () => {
+      const storage = makeMockStorage();
+      const service = new MeshChatService('room-1', 'user-1', storage);
+      await service.initialize();
+
+      const received: ChatMessage[] = [];
+      service.onMessage((msg) => received.push(msg));
+
+      const returned = await service.sendMessage('hi', 'shared-id-123');
+
+      expect(returned).toBe('shared-id-123');
+      expect(received).toHaveLength(1);
+      expect(received[0]!.messageId).toBe('shared-id-123');
+    });
+
+    it('gossip 把自己的訊息繞回時被過濾（senderId === localUid）', async () => {
+      const storage = makeMockStorage();
+      const service = new MeshChatService('room-1', 'user-1', storage);
+      await service.initialize();
+
+      const received: ChatMessage[] = [];
+      service.onMessage((msg) => received.push(msg));
+
+      // 模擬 gossip 把「本機」送出的訊息繞回
+      capturedMessageHandler!({
+        senderId: 'user-1',
+        seq: 7,
+        content: 'my own echo',
+        timestamp: Date.now(),
+      });
+      // 對照：他人的訊息照收
+      capturedMessageHandler!({
+        senderId: 'other-user',
+        seq: 8,
+        content: 'from peer',
+        timestamp: Date.now(),
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(received).toHaveLength(1);
+      expect(received[0]!.content).toBe('from peer');
+    });
+  });
+
   describe('歷史訊息', () => {
     it('loadHistory 從 storage 取得歷史', async () => {
       const history: ChatMessage[] = [

@@ -103,11 +103,11 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
   /**
    * 發送訊息
    */
-  const sendMessage = useCallback(async (content: string): Promise<void> => {
+  const sendMessage = useCallback(async (content: string, messageId?: string): Promise<void> => {
     if (!meshChatServiceRef.current) {
       throw new Error('MeshChatService not initialized');
     }
-    await meshChatServiceRef.current.sendMessage(content);
+    await meshChatServiceRef.current.sendMessage(content, messageId);
   }, []);
 
   /**
