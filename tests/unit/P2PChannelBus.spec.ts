@@ -140,6 +140,45 @@ describe('P2PChannelBus', () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
+    it('drops malformed envelopes from a malicious peer（嚴格型別驗證）', async () => {
+      const handler = vi.fn();
+      bus.subscribe('chat', handler);
+
+      const malformed: unknown[] = [
+        { ...makeEnvelope('chat'), ns: { evil: true } }, // ns 非字串
+        { ...makeEnvelope('chat'), from: 12345 }, // from 非字串
+        { ...makeEnvelope('chat'), v: 'x' }, // v 非數字
+        { ...makeEnvelope('chat'), ts: 'now' }, // ts 非數字
+        { ...makeEnvelope('chat'), type: '' }, // 空字串
+        { ...makeEnvelope('chat'), payload: undefined }, // 無 payload
+      ];
+      for (const bad of malformed) {
+        channel.onmessage!({ data: JSON.stringify(bad) });
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('drops envelopes using prototype-pollution ns/type（縱深防禦）', async () => {
+      // 不訂 '*'：wildcard 會收到驗證失敗時發出的 system ERROR，會混淆斷言
+      const protoHandler = vi.fn();
+      const chatHandler = vi.fn();
+      bus.subscribe('__proto__', protoHandler);
+      bus.subscribe('chat', chatHandler);
+
+      channel.onmessage!({ data: JSON.stringify({ ...makeEnvelope('__proto__', 'MSG') }) });
+      channel.onmessage!({ data: JSON.stringify({ ...makeEnvelope('chat', 'constructor') }) });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(protoHandler).not.toHaveBeenCalled();
+      expect(chatHandler).not.toHaveBeenCalled();
+      // 原型未被污染
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
     it('emits a system ERROR envelope when message fails to parse', async () => {
       const sysHandler = vi.fn();
       bus.subscribe('system', sysHandler);

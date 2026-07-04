@@ -166,16 +166,34 @@ export class P2PChannelBus {
     }
   }
 
+  /**
+   * 嚴格驗證 envelope 結構（來源是不可信的遠端 peer）。
+   *
+   * 不只檢查「存在」，還檢查「型別正確」——惡意 peer 可送 ns=物件、from=數字
+   * 等畸形值，下游對這些欄位做字串操作（extractUid 等）會誤動作或擲錯。
+   * 額外擋掉會污染原型鏈的保留字當作 namespace（縱深防禦；Map 分派本身安全，
+   * 但避免任何下游用 ns 索引普通物件）。
+   */
   private validateEnvelope(envelope: P2PEnvelope): boolean {
-    return !!(
-      envelope.v &&
-      envelope.ns &&
-      envelope.type &&
-      envelope.id &&
-      envelope.ts &&
-      envelope.from &&
-      envelope.payload !== undefined
-    );
+    const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+    const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+    if (
+      !isNum(envelope.v) ||
+      !isStr(envelope.ns) ||
+      !isStr(envelope.type) ||
+      !isStr(envelope.id) ||
+      !isNum(envelope.ts) ||
+      !isStr(envelope.from) ||
+      envelope.payload === undefined
+    ) {
+      return false;
+    }
+    // 原型污染縱深防禦：ns/type 不得為保留字
+    const dangerous = ['__proto__', 'constructor', 'prototype'];
+    if (dangerous.includes(envelope.ns) || dangerous.includes(envelope.type)) {
+      return false;
+    }
+    return true;
   }
 
   send(envelope: P2PEnvelope): Promise<void> {

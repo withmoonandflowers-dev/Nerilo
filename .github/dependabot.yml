@@ -1,0 +1,36 @@
+# Dependabot：持續供應鏈防範（威脅模型 F7）
+# AI 攻擊者會自動比對相依套件 CVE；讓修補 PR 自動來，不靠人記得跑 npm audit。
+version: 2
+updates:
+  # 主專案（React SPA + 共用 core）
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # 非 security 的小版本更新併成一個 PR，減少噪音
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+
+  # Netlify webhook 函式（firebase-admin 傳遞相依有已知漏洞，優先追）
+  - package-ecosystem: npm
+    directory: /functions
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+
+  # GitHub Actions 本身也要更新
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
