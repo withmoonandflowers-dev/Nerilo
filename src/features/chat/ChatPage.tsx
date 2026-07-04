@@ -93,6 +93,9 @@ const ChatPage: React.FC = () => {
   const currentTopologyRef = useRef<'star' | 'mesh' | null>(null);
   /** 拓撲初始化/遷移互斥鎖，防止並行 init */
   const migrationInProgressRef = useRef(false);
+  /** 房間文件的最新參與者數（真相來源）。備援橋接條件用它，不用 mesh 層
+   *  的鄰居發現數——後者在對方 mesh init 卡住時會少算，導致該橋不橋。 */
+  const participantCountRef = useRef(0);
   const connectingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const architecture = useP2PArchitecture();
@@ -261,6 +264,7 @@ const ChatPage: React.FC = () => {
 
           try {
             const effectiveCount = effectiveParticipantCount ?? room.participants.length;
+            participantCountRef.current = Math.max(participantCountRef.current, effectiveCount);
             if (room.status !== 'open' || effectiveCount < 2) return;
 
             const decision = architecture.decide(room, effectiveCount);
@@ -468,6 +472,17 @@ const ChatPage: React.FC = () => {
         if (architecture.isMesh()) {
           await meshTopology.sendMessage(content, tempId);
           featureLog('chat', 'message_sent', { roomId, channel: 'p2p_mesh' });
+          // 混合模式橋接：mesh 連上的鄰居數 < 房間應到人數-1，代表有成員在
+          // mesh 之外（掉 Firestore 備援或 init 卡住）。同則訊息（同 id）雙寫
+          // 備援讓掉隊者收到；mesh 成員收到兩份同 id 由 useChatMessages 去重
+          // → 仍恰好一次。人數以「房間文件」為真相來源（join 即入列），
+          // 不用 mesh 鄰居發現數（對方 mesh init 卡住時會少算）。
+          const coverage = meshTopology.getState().meshChatService?.getMeshCoverage();
+          const expectedPeers = participantCountRef.current - 1;
+          if (coverage && expectedPeers > 0 && coverage.connected < expectedPeers) {
+            await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
+            featureLog('chat', 'message_sent', { roomId, channel: 'firestore_bridge' });
+          }
         } else if (architecture.isStar()) {
           await starTopology.sendMessage(content, tempId);
           featureLog('chat', 'message_sent', { roomId, channel: 'p2p_star' });
@@ -485,10 +500,10 @@ const ChatPage: React.FC = () => {
             throw new Error('E2EE 金鑰尚未建立（P2P 交換未完成），無法經備援通道傳送');
           }
           const encrypted = await chatService.encryptForFallback(content);
-          await sendMessageViaFirestore(roomId, user.uid, { encrypted });
+          await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
         } else {
           // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文
-          await sendMessageViaFirestore(roomId, user.uid, { content });
+          await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
         }
         featureLog('chat', 'message_sent', { roomId, channel: 'firestore_fallback' });
       }

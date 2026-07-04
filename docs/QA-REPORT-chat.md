@@ -98,3 +98,50 @@ Alice（寄件方）畫面顯示：房間標題帶「端到端加密」徽章；
 ## 回歸保護
 
 去重測試標 `@stable`，納入 CI（每次 PR/master push 跑），修復不會再回退。
+
+## 第三輪（2026-07-05）：3 人 mesh「最終各恰好一次」達標
+
+**驗證標準**：3 人診斷 E2E（`tests/e2e/mesh-diagnostic.spec.ts`）連續 5 次、
+每次 3x3 送達矩陣全 =1（count==1 同時抓漏與重）。實測**連續兩批 5/5（10 連綠）**。
+送達 deadline 固定 20s（10 個對帳週期）+ 5s 沉澱抓重複；總 timeout 只涵蓋
+註冊與 WebRTC 連線成形，未以放寬送達門檻湊綠。@stable 迴歸 11/11 綠。
+
+### 根因（五個，全部有實證與回歸鎖）
+
+1. **簽章覆蓋 ttl**（`SecurityManager`）：gossip 轉發 ttl-1 改變被簽內容 →
+   所有經轉發的副本簽章必然失效 → 轉發路徑整條壞死，mesh 只剩直連可用。
+   修：ttl（可變路由欄位）排除在簽章外。回歸：`SecurityManager.spec` 轉發副本驗簽。
+2. **checkSequence 拒收亂序舊 seq**（`GossipMessageHandler`）：把補送回來的
+   較早訊息當重放丟棄 → 永久遺失。修：去重改以「(senderId, seq) 是否已持有」
+   判定；亂序未見過一律接受。回歸：`GossipMessageHandler.spec`。
+3. **signaling 互刪**（`P2PConnectionManager`）：兩個清理（close 時刪自己全部
+   signal、ICE connected 後刪整房舊 signal）都不分 channelLabel → mesh 多連線
+   併發建立時互刪 offer/ICE，隨機造成某 pair 永久建不起來。修：兩者都只清
+   自己 channel 的。
+4. **半開連線謊報 connected**（`MeshConnection.getState`）：ICE connected 但
+   ChannelBus 未 open 的連線被當可用 → digest 送進黑洞、fanout await 卡 30s
+   拖住後續程式（含備援橋接）。修：bus 未 open 降報 connecting；fanout/轉發
+   只選 connected。
+5. **備援層破壞恰好一次**（`FirestoreChatFallback`/`ChatPage`）：(a) 備援寫入
+   自生新 UUID，寄件方收到自己的回音變兩顆泡泡；(b) mesh 成員送訊只走 mesh，
+   掉備援的成員永遠收不到（混合模式不對稱分割）。修：一則訊息一個 id 貫穿
+   樂觀顯示/mesh gossip（入簽章）/備援；mesh 覆蓋不足（連上數 < 房間人數-1）
+   時同 id 雙寫備援橋接，收端以 id 去重。
+
+### 補償機制（本輪核心交付）
+
+seq-based anti-entropy 對帳（`src/core/mesh/antiEntropy.ts`）：每節點保存
+(senderId, seq)→已簽名訊息 的 store，每 2s 與已連上鄰居交換 digest
+（floor/max/missing），對方缺哪則補哪則。pull-based、冪等、走任何已連通路徑；
+digest 交換一輪對稱差嚴格縮小 + 訊息集有限 → 連通圖上數學上保證收斂。
+不 gate 發送路徑（送訊不等 full mesh 就緒）。單元含雙節點/鏈狀拓撲收斂模擬。
+
+### 已知限制（誠實記錄）
+
+- `verifyMessage` 5 分鐘時效窗：超過 5 分鐘的訊息補送給遲到者會被驗簽拒絕
+  （長會話遲入者收不到舊訊息）。獨立工作項。
+- 星型→mesh 遷移期間送出的訊息屬星型棧，mesh 對帳管不到；診斷測試在
+  mesh 模式訊號（`.e2ee-indicator-dtls`）後才發送。遷移窗訊息可靠性為
+  獨立工作項。
+- 備援橋接為明文（mesh 房本無 E2EE，UI 已誠實標示）；橋接條件依房間文件
+  人數，成員「已離開但文件未更新」期間會多寫一筆備援（無正確性影響）。

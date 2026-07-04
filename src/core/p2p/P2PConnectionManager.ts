@@ -547,6 +547,10 @@ export class P2PConnectionManager {
    * 清理 Firestore 中此房間的舊 signals（本次 session 之前的）
    * 在 P2P 連線成功（ICE connected）後呼叫一次。
    * 設計原則：signal 僅用於建立連線，連線建立後即無用途，不需保留。
+   *
+   * 只清「自己這條 channel」的：mesh 下同房有多條連線併發建立（A↔B、A↔C、B↔C
+   * 各自的 P2PConnectionManager），無差別刪整房舊 signal 會把其他 pair 還在等的
+   * offer/ICE 刪掉，造成該 pair 永久建不起來（隨機分割 mesh）。
    */
   private async cleanupOldSignals(): Promise<void> {
     if (this.hasCleanedOldSignals) return;
@@ -563,12 +567,19 @@ export class P2PConnectionManager {
       const snapshot = await getDocs(oldSignalsQuery);
       if (snapshot.empty) return;
 
-      const deletions = snapshot.docs.map(d => deleteDoc(d.ref));
+      // client-side 過濾 channelLabel（避免複合索引）；無 label 的舊格式文件
+      // 可能屬於任何連線，一律不動
+      const own = snapshot.docs.filter(
+        d => (d.data() as Record<string, unknown>).channelLabel === this.channelLabel
+      );
+      if (own.length === 0) return;
+
+      const deletions = own.map(d => deleteDoc(d.ref));
       await Promise.allSettled(deletions);
 
       logger.info('[P2PConnectionManager] Cleaned up old signals', {
         roomId: this.roomId,
-        deletedCount: snapshot.size,
+        deletedCount: own.length,
       });
     } catch (err) {
       // 清理失敗不影響功能，只記 log
@@ -579,6 +590,11 @@ export class P2PConnectionManager {
   /**
    * 清理此連線本次 session 產生的 signals（離開房間時呼叫）
    * 確保離開後不留下任何 signaling 資料。
+   *
+   * 只清「自己這條 channel」的：同頁面可能同時有其他連線在建立
+   * （最典型：star→mesh 遷移時 star close，會與剛寫出的 mesh offer 併發；
+   * 只以 from 過濾會把自己 mesh 連線的 signaling 一起刪掉，該節點從此
+   * 連不進 mesh、退化到 Firestore 備援）。
    */
   private async cleanupSessionSignals(): Promise<void> {
     try {
@@ -591,12 +607,18 @@ export class P2PConnectionManager {
       const snapshot = await getDocs(sessionSignalsQuery);
       if (snapshot.empty) return;
 
-      const deletions = snapshot.docs.map(d => deleteDoc(d.ref));
+      // client-side 過濾 channelLabel（避免複合索引）；無 label 的舊格式不動
+      const own = snapshot.docs.filter(
+        d => (d.data() as Record<string, unknown>).channelLabel === this.channelLabel
+      );
+      if (own.length === 0) return;
+
+      const deletions = own.map(d => deleteDoc(d.ref));
       await Promise.allSettled(deletions);
 
       logger.info('[P2PConnectionManager] Cleaned up session signals on close', {
         roomId: this.roomId,
-        deletedCount: snapshot.size,
+        deletedCount: own.length,
       });
     } catch (err) {
       logger.warn('[P2PConnectionManager] Failed to cleanup session signals', err);

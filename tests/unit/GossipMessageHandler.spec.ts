@@ -3,8 +3,9 @@
  *
  * 覆蓋修復項目：
  * - TTL 不可變性：handleReceivedMessage 不應修改傳入的訊息物件
- * - 訊息去重：相同訊息只通知監聽器一次
- * - 序列號檢查：舊的或重放的訊息應被拒絕
+ * - 訊息去重：(senderId, seq) 為訊息身分，重複遞送（含並行）只通知一次
+ * - 亂序容忍：未見過的較早 seq 必須接受（anti-entropy 補送依賴此行為）
+ * - anti-entropy 對帳：digest 交換 → 補送對方缺的訊息
  * - 發送速率限制：超過 10 msg/s 應拋錯
  */
 
@@ -19,7 +20,9 @@ function makeMockNeighbor(id: string) {
     getId: vi.fn().mockReturnValue(id),
     getState: vi.fn().mockReturnValue('connected'),
     send: vi.fn().mockResolvedValue(undefined),
+    sendDigest: vi.fn().mockResolvedValue(undefined),
     onMessage: vi.fn(),
+    onDigest: vi.fn(),
   };
 }
 
@@ -117,15 +120,20 @@ describe('GossipMessageHandler', () => {
       }
     });
 
-    it('TTL 為 0 時不轉發', async () => {
+    it('TTL 為 0 時仍顯示但不轉發（ttl 只限制洪泛半徑，不限制呈現）', async () => {
       const message = makeMessage({ ttl: 0, seq: 1 });
-      // TTL=0 時訊息應被丟棄（不通知監聽器也不轉發）
       const listener = vi.fn();
       handler.onMessage(listener);
 
+      const neighbors = topology.getNeighbors();
       await handler.handleReceivedMessage(message, 'neighbor-1');
 
-      expect(listener).not.toHaveBeenCalled();
+      // anti-entropy 補送可能以 ttl=0 到達：對使用者仍須恰好一次呈現
+      expect(listener).toHaveBeenCalledTimes(1);
+      // 但不再轉發
+      for (const n of neighbors) {
+        expect(n.send).not.toHaveBeenCalled();
+      }
     });
   });
 
@@ -157,16 +165,29 @@ describe('GossipMessageHandler', () => {
       expect(listener).toHaveBeenCalledTimes(2);
     });
 
-    it('舊的 seq（小於等於上次）應被拒絕', async () => {
+    it('亂序到達的較早 seq（未見過）應被接受 — anti-entropy 補送場景', async () => {
       const listener = vi.fn();
       handler.onMessage(listener);
 
-      // 先接受 seq=5
-      await handler.handleReceivedMessage(makeMessage({ seq: 5, content: 'first' }), 'n1');
-      // 再嘗試 seq=3（舊的）
-      await handler.handleReceivedMessage(makeMessage({ seq: 3, content: 'replay' }), 'n1');
+      // 先收到 seq=5（例如經轉發先到）
+      await handler.handleReceivedMessage(makeMessage({ seq: 5, content: 'later' }), 'n1');
+      // 再收到 seq=3（對帳補送回來的較早訊息）——舊實作在此誤判為重放而永久遺失
+      await handler.handleReceivedMessage(makeMessage({ seq: 3, content: 'earlier' }), 'n1');
 
-      // 只有第一條應觸發監聽器
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('同一 (senderId, seq) 並行遞送只 notify 一次（inflight 預佔）', async () => {
+      const listener = vi.fn();
+      handler.onMessage(listener);
+
+      // 兩個鄰居「同時」遞同一則：不 await 第一個就開始第二個
+      const m = makeMessage({ seq: 7 });
+      await Promise.all([
+        handler.handleReceivedMessage(m, 'n1'),
+        handler.handleReceivedMessage({ ...m }, 'n2'),
+      ]);
+
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
@@ -218,6 +239,77 @@ describe('GossipMessageHandler', () => {
       await handler.handleReceivedMessage(makeMessage({ seq: 2, content: 'after-unsub' }), 'n1');
 
       expect(listener).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── anti-entropy 對帳 ─────────────────────────────────────────────────────
+
+  describe('anti-entropy（digest 對帳）', () => {
+    it('sendDigestTo：store 為空時不送 digest', async () => {
+      const neighbor = makeMockNeighbor('n1');
+      await handler.sendDigestTo(neighbor as any);
+      expect(neighbor.sendDigest).not.toHaveBeenCalled();
+    });
+
+    it('sendDigestTo：收過訊息後送出含該 sender 持有摘要的 digest', async () => {
+      await handler.handleReceivedMessage(makeMessage({ seq: 1 }), 'n1');
+      await handler.handleReceivedMessage(makeMessage({ seq: 3, content: 'c3' }), 'n1');
+
+      const neighbor = makeMockNeighbor('n1');
+      await handler.sendDigestTo(neighbor as any);
+
+      expect(neighbor.sendDigest).toHaveBeenCalledTimes(1);
+      const digest = neighbor.sendDigest.mock.calls[0][0];
+      expect(digest['sender-abc']).toEqual({ floor: 1, max: 3, missing: [2] });
+    });
+
+    it('handleDigest：把對方缺的訊息補送過去（對方沒聽過該 sender → 全補）', async () => {
+      await handler.handleReceivedMessage(makeMessage({ seq: 1, content: 'm1' }), 'n1');
+      await handler.handleReceivedMessage(makeMessage({ seq: 2, content: 'm2' }), 'n1');
+
+      const neighbor = makeMockNeighbor('n2');
+      await handler.handleDigest({}, neighbor as any);
+
+      const sentSeqs = neighbor.send.mock.calls.map((c) => (c[0] as GossipMessage).seq);
+      expect(sentSeqs).toEqual([1, 2]);
+    });
+
+    it('handleDigest：只補對方 missing/max 之外的，已持有的不重送', async () => {
+      await handler.handleReceivedMessage(makeMessage({ seq: 1, content: 'm1' }), 'n1');
+      await handler.handleReceivedMessage(makeMessage({ seq: 2, content: 'm2' }), 'n1');
+      await handler.handleReceivedMessage(makeMessage({ seq: 3, content: 'm3' }), 'n1');
+
+      const neighbor = makeMockNeighbor('n2');
+      // 對方宣告：有 1..3 但缺 2
+      await handler.handleDigest(
+        { 'sender-abc': { floor: 1, max: 3, missing: [2] } },
+        neighbor as any,
+      );
+
+      const sentSeqs = neighbor.send.mock.calls.map((c) => (c[0] as GossipMessage).seq);
+      expect(sentSeqs).toEqual([2]);
+    });
+
+    it('handleDigest：畸形 digest 直接忽略、不拋錯不補送', async () => {
+      await handler.handleReceivedMessage(makeMessage({ seq: 1 }), 'n1');
+      const neighbor = makeMockNeighbor('n2');
+
+      await handler.handleDigest('garbage', neighbor as any);
+      await handler.handleDigest({ 'sender-abc': { floor: -1, max: 'x', missing: null } }, neighbor as any);
+
+      expect(neighbor.send).not.toHaveBeenCalled();
+    });
+
+    it('自己送出的訊息也進 store，會被 digest 對帳補給缺的 peer', async () => {
+      await handler.sendMessage('from-local');
+
+      const neighbor = makeMockNeighbor('n2');
+      await handler.handleDigest({}, neighbor as any);
+
+      const sent = neighbor.send.mock.calls.map((c) => c[0] as GossipMessage);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].senderId).toBe('local-user');
+      expect(sent[0].content).toBe('from-local');
     });
   });
 

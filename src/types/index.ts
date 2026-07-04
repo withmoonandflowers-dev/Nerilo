@@ -255,6 +255,12 @@ export interface GossipMessage {
   ttl: number; // Time To Live（跳數限制）
   signature: string; // Base64 編碼的簽名
   hlc?: HLCTimestamp; // Hybrid Logical Clock（向下相容，optional）
+  /**
+   * 應用層訊息 id（寄件端樂觀顯示的 id），有簽章保護。
+   * 同一則訊息可能同時走 mesh 與 Firestore 備援兩條路（混合模式橋接）；
+   * 兩條路帶同一個 id，UI 以 id 去重 → 跨傳輸路徑仍恰好一次。
+   */
+  messageId?: string;
 }
 
 // Mesh 身分資訊

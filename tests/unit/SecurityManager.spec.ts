@@ -73,6 +73,21 @@ describe('SecurityManager', () => {
     });
   });
 
+  describe('轉發副本簽章仍有效（回歸：簽章含 ttl 使所有轉發副本驗簽失敗）', () => {
+    it('ttl 遞減後（gossip 轉發）驗簽必須通過', async () => {
+      const kp = await generateSigningKeyPair();
+      const msg = makeUnsignedMessage({
+        pubKey: await exportPubKeySpki(kp.publicKey),
+        ttl: 8,
+      });
+      const signature = await sm.signMessage(msg, kp.privateKey);
+
+      // 模擬中繼節點轉發：ttl - 1，簽章不變
+      const forwarded: GossipMessage = { ...msg, signature, ttl: msg.ttl - 1 };
+      expect(await sm.verifyMessage(forwarded, kp.publicKey)).toBe(true);
+    });
+  });
+
   describe('tampered message detection', () => {
     it('fails verification when content is tampered', async () => {
       const kp = await generateSigningKeyPair();
