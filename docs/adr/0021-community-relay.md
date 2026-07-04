@@ -44,17 +44,36 @@ RateLimiter、MessagePadding。缺的不是機器，是**接進活的連線流 +
 - Phase 1 本機記帳（proof='local'）；Phase 2 換真實雙簽收據 / 伺服器權威帳本時
   IIncentiveProvider 介面不變。
 
-## 分階段（誠實：#1 是多 session 大工程）
+## 分階段與進度
 
 | 階段 | 內容 | 狀態 |
 |---|---|---|
-| P2.0 | 中繼→點數 glue（recordRelayContribution）+ App Check 擋機器人 | ✅ 本回合 |
-| P2.1 | RelayManager 接活連線流：注入 peerSendFn（真 WebRTC 送）、餵 RelayScorer 候選、直連失敗才觸發 | ⏳ 下階段 |
-| P2.2 | 1-hop 中繼端到端（第三 peer 轉發 A↔B）+ 中繼成功呼叫 recordRelayContribution | ⏳ |
-| P2.3 | 多路徑（MultiPathSelector）+ PeerScoring/RateLimiter 全面接線 | ⏳ |
-| P2.4 | 多 peer 真實網路壓測 + 數據回饋 | ⏳ |
+| P2.0 | 中繼→點數 glue（recordRelayContribution）+ App Check 擋機器人 | ✅ 完成 |
+| P2.1 | **發現層**：RelayDirectory（announce/query/TTL）+ RelayOverlay（發現→registerPeer）| ✅ 完成 |
+| P2.2 | **端到端邏輯證明**：記憶體多節點模擬 A→C→B（發現→中繼→送達→C 賺點）| ✅ 完成（RelayOverlaySim.spec） |
+| P2.3 | **整合入口**：RelayCoordinator.useOverlay 組裝 directory+overlay+credit+transport | ✅ 完成 |
+| P2.D | **部署接縫**（見下）：Firestore 目錄 adapter + 真 WebRTC transport + rules + 真實多節點測試 | ⏳ 待部署 |
 
-**觸發條件**：P2.1 起，先看 P0 數據——直連成功率高、TURN 不痛時可緩；數據說痛了全推。
+### 已完成：overlay 邏輯 + 端到端模擬證明
+
+routing 大腦（RelayManager）之外，補齊了它缺的「網路名冊」與「發現」，並用
+**記憶體多節點模擬**證明整條邏輯通：A 經目錄發現 C → registerPeer → sendViaRelay
+→ C 中繼轉發 → B 送達 → C 賺點。這是「路由 + 發現 + 計費」邏輯的端到端證明。
+
+### 待部署（P2.D）：只剩「換上真實傳輸與名冊」
+
+模擬用 `InMemoryRelayDirectory` + `SimTransport`；上 production 只需替換兩個注入點，
+邏輯不變：
+
+1. **Firestore 目錄 adapter**（`IRelayDirectory` 的 Firestore 實作）——跨房發現。
+   **需 firestore.rules 新增 relayNodes 集合規則**（非匿名 + 速率限制防女巫灌假節點）。
+   rules 目前平行 session 維護中，故此 adapter 待協調後補。
+2. **真 WebRTC transport**（`RelayCoordinator.attachTransport` 注入實際 peerSend）——
+   連上房間外的中繼節點需新 signaling 路徑。
+3. **真實多節點驗證**：3+ 真實瀏覽器節點跑 A→C→B + 評分踢除 + 女巫抵抗。
+
+**觸發條件**：P2.D 投入前先看 P0 數據——直連成功率高、TURN 不痛時可緩；數據說痛了再上。
+邏輯已就緒且證明可用，屆時是「接真實傳輸」而非「從頭寫」。
 
 ## Consequences
 

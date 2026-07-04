@@ -105,4 +105,16 @@ describe('RelayCoordinator', () => {
     expect(relay.onMessageDelivery).toHaveBeenCalledWith(deliver);
     expect(coord.isTransportAttached()).toBe(true);
   });
+
+  it('useOverlay 建 overlay 並宣告自己可中繼', async () => {
+    const { InMemoryRelayDirectory } = await import('../../src/core/relay/RelayDirectory');
+    const relay = { ...makeFakeRelay(), registerPeer: vi.fn(), unregisterPeer: vi.fn() };
+    const dir = new InMemoryRelayDirectory(30_000, () => 1000);
+    const coord = new RelayCoordinator(relay as unknown as RelayManager, econ);
+
+    const overlay = coord.useOverlay(dir, 'A', { reliability: 0.9 });
+    await Promise.resolve(); // 等 announceSelf microtask
+    expect(overlay).toBeDefined();
+    expect((await dir.query()).map((e) => e.nodeId)).toContain('A');
+  });
 });
