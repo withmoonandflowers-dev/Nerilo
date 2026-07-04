@@ -31,6 +31,10 @@ export class MeshChatService {
 
     // 監聽 Gossip 訊息
     this.meshGossipManager.onMessage((gossipMessage: GossipMessage) => {
+      // 過濾自己的回音：gossip 可能把本機廣播的訊息繞回；本機已在送出時
+      // 自我 emit（且 ChatPage 已樂觀顯示），再收一次會重複。
+      if (gossipMessage.senderId === this.localUid) return;
+
       // 轉換為 ChatMessage
       const chatMessage: ChatMessage = {
         messageId: `${gossipMessage.senderId}-${gossipMessage.seq}`,
@@ -57,11 +61,12 @@ export class MeshChatService {
   /**
    * 發送訊息
    */
-  async sendMessage(content: string): Promise<string> {
+  async sendMessage(content: string, providedMessageId?: string): Promise<string> {
     await this.meshGossipManager.sendMessage(content);
 
-    // 加入自增 counter 避免同一毫秒內發送多則訊息時 ID 碰撞
-    const messageId = `${this.localUid}-${Date.now()}-${++this.messageCounter}`;
+    // 呼叫端可傳入 id，讓樂觀顯示與本機自我 emit 共用同一 id（去重收斂）。
+    // 未傳入時自生：自增 counter 避免同一毫秒內多則訊息 ID 碰撞。
+    const messageId = providedMessageId ?? `${this.localUid}-${Date.now()}-${++this.messageCounter}`;
     
     // 建立 ChatMessage（用於本地顯示）
     const chatMessage: ChatMessage = {

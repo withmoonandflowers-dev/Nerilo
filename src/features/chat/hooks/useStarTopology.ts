@@ -186,11 +186,12 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
   /**
    * 發送訊息
    */
-  const sendMessage = useCallback(async (content: string): Promise<void> => {
+  const sendMessage = useCallback(async (content: string, messageId?: string): Promise<void> => {
     if (!chatServiceRef.current) {
       throw new Error('ChatService not initialized');
     }
-    await chatServiceRef.current.sendMessage(content);
+    // 星型為 2 人直連，無定向 to；把 id 串下去讓樂觀顯示與服務自我 emit 共用
+    await chatServiceRef.current.sendMessage(content, undefined, messageId);
   }, []);
 
   /**
