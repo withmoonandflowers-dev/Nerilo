@@ -1,0 +1,181 @@
+/**
+ * CreditEconomy — 點數經濟（正向循環的骨架，ADR-0020）
+ *
+ * 把三件事接成一條循環：
+ *   在線/連線（玩遊戲時天然發生）→ 累積點數 → 遊戲可查/可花
+ *
+ * 願景：玩家為了玩遊戲而在線，在線即貢獻網路容量（未來接 P2 relay 時
+ * 中繼他人流量），因此「玩遊戲的人不知不覺參與基礎建設」並賺得點數。
+ *
+ * 定位（Phase 1）：
+ * - 建在既有 LocalCreditProvider 之上（複用其節流/負債下限/tier）。
+ * - 本機單一節點餘額，localStorage 持久化（跨 session 累積；無 localStorage
+ *   環境退化為記憶體）。刻意不用 Dexie（避免 schema 遷移）。
+ * - 框架無關（純 src/core）：React 與未來 Vue 都消費同一顆 singleton。
+ *
+ * 誠實邊界：
+ * - 本機點數尚無 sybil 抵抗——兌換真實權益前必須補防刷（見 threat-model F-payment）。
+ * - 累積綁「實際連線中」而非「開著分頁」，降低純掛機刷點（呼叫端負責只在
+ *   connected 時 startEarning）。
+ */
+
+import { LocalCreditProvider } from './LocalCreditProvider';
+import { DEFAULT_CREDIT_RATES } from './types';
+import type { CreditBalance, ServiceTier } from '../relay/types';
+import { logger } from '../../utils/logger';
+
+const STORAGE_KEY = 'nerilo.credits.v1';
+/** 在線累積 tick：每 60 秒結算一次（pro-rata 於 perUptimeHour） */
+const ACCRUAL_TICK_MS = 60_000;
+
+export type CreditListener = (balance: CreditBalance) => void;
+
+function hasLocalStorage(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage !== null;
+  } catch {
+    return false;
+  }
+}
+
+export class CreditEconomy {
+  private provider = new LocalCreditProvider();
+  private nodeId: string | null = null;
+  private listeners = new Set<CreditListener>();
+
+  // 在線累積狀態
+  private accrualTimer: ReturnType<typeof setInterval> | null = null;
+  private earning = false;
+
+  /** 綁定本機節點並載入持久化餘額。重複 init 同一 nodeId 為 no-op。 */
+  init(nodeId: string): void {
+    if (this.nodeId === nodeId) return;
+    this.nodeId = nodeId;
+    const saved = this.load();
+    if (saved && saved.nodeId === nodeId) {
+      this.provider.importBalances([saved]);
+    }
+    // 確保餘額存在（新節點拿初始 grant）
+    void this.provider.getBalance(nodeId);
+  }
+
+  /**
+   * 開始在線累積：呼叫端應「只在實際 connected 時」呼叫（玩遊戲=在線=賺點）。
+   * 每 tick pro-rata 結算 perUptimeHour；stop 時結算殘餘時間。
+   */
+  startEarning(): void {
+    if (this.earning || !this.nodeId) return;
+    this.earning = true;
+    let lastTick = Date.now();
+
+    this.accrualTimer = setInterval(() => {
+      const now = Date.now();
+      const hours = (now - lastTick) / 3_600_000;
+      lastTick = now;
+      this.accrue(hours);
+    }, ACCRUAL_TICK_MS);
+  }
+
+  /** 停止累積（離開房間/斷線）。tick 制下不補殘餘（下次進房再賺），保持簡單可測。 */
+  stopEarning(): void {
+    if (this.accrualTimer) {
+      clearInterval(this.accrualTimer);
+      this.accrualTimer = null;
+    }
+    this.earning = false;
+  }
+
+  private accrue(hours: number): void {
+    if (!this.nodeId || hours <= 0) return;
+    this.provider.recordUptime(this.nodeId, hours);
+    this.persistAndEmit();
+  }
+
+  // ── 遊戲面向 facade ────────────────────────────────────────────────────────
+
+  async getBalance(): Promise<CreditBalance | null> {
+    if (!this.nodeId) return null;
+    return this.provider.getBalance(this.nodeId);
+  }
+
+  async getServiceTier(): Promise<ServiceTier> {
+    if (!this.nodeId) return 'free';
+    return this.provider.getServiceTier(this.nodeId);
+  }
+
+  /**
+   * 遊戲花點數。回傳是否成功（餘額不足即 false，不會扣）。
+   * reason 供稽核/UI 呈現（例如 'game:powerup'）。
+   */
+  async trySpend(amount: number, reason: string): Promise<boolean> {
+    if (!this.nodeId || amount <= 0) return false;
+    const ok = await this.provider.deductCredits(this.nodeId, amount);
+    if (ok) {
+      logger.info('[CreditEconomy] spent', { amount, reason });
+      this.persistAndEmit();
+    }
+    return ok;
+  }
+
+  /** 訂閱餘額變化（UI 反應式呈現）。回傳取消訂閱函式。 */
+  subscribe(listener: CreditListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  // ── 持久化 ─────────────────────────────────────────────────────────────────
+
+  private persistAndEmit(): void {
+    if (!this.nodeId) return;
+    const balances = this.provider.exportBalances();
+    const mine = balances.find((b) => b.nodeId === this.nodeId);
+    if (!mine) return;
+    this.save(mine);
+    for (const fn of this.listeners) {
+      try {
+        fn({ ...mine });
+      } catch (err) {
+        logger.warn('[CreditEconomy] listener threw', { err });
+      }
+    }
+  }
+
+  private save(balance: CreditBalance): void {
+    if (!hasLocalStorage()) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(balance));
+    } catch {
+      /* 容量滿：記憶體模式繼續 */
+    }
+  }
+
+  private load(): CreditBalance | null {
+    if (!hasLocalStorage()) return null;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as CreditBalance) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 測試/登出用 */
+  reset(): void {
+    this.stopEarning();
+    this.provider.clear();
+    this.nodeId = null;
+    this.listeners.clear();
+    if (hasLocalStorage()) {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        /* noop */
+      }
+    }
+  }
+}
+
+/** 全域單例：連線生命週期 startEarning/stopEarning、遊戲 trySpend、UI subscribe */
+export const creditEconomy = new CreditEconomy();
+
+export { DEFAULT_CREDIT_RATES };
