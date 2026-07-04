@@ -1,0 +1,6 @@
+{
+  "$comment": "社群捐贈 TURN 伺服器登錄（ADR-0012 P1）。用 PR 新增——git 歷史即審計軌跡。格式見 docs/COMMUNITY-TURN.md。credential 公開於此檔，貢獻者請在 coturn 端設 quota/bps 上限並理解此風險。",
+  "version": 1,
+  "updated": "2026-07-04",
+  "servers": []
+}
