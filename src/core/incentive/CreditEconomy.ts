@@ -91,6 +91,21 @@ export class CreditEconomy {
     this.persistAndEmit();
   }
 
+  /**
+   * 中繼貢獻 → 產生點數（ADR-0021「中繼即價值」的核心）。
+   * 本機為他人轉發了 bytesRelayed bytes 時呼叫；依 perKbRelayed + perRelayBonus
+   * 獎勵本機節點，走 LocalCreditProvider 既有的每小時上限節流（防刷）。
+   *
+   * requesterNodeId 供稽核（誰的流量）；proof 為簽章佔位（Phase 1 本機記帳用
+   * 'local'，Phase 2 換真實雙簽收據時填入）。Nerilo 只「產生」點數，
+   * 怎麼兌換由上層/玩家決定（不在本專案範圍）。
+   */
+  async recordRelayContribution(requesterNodeId: string, bytesRelayed: number): Promise<void> {
+    if (!this.nodeId || bytesRelayed <= 0) return;
+    await this.provider.recordRelay(this.nodeId, requesterNodeId, bytesRelayed, 'local');
+    this.persistAndEmit();
+  }
+
   // ── 遊戲面向 facade ────────────────────────────────────────────────────────
 
   async getBalance(): Promise<CreditBalance | null> {
