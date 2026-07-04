@@ -151,6 +151,13 @@ export class MeshGossipManager {
           registeredRelayPeers.add(peerId);
         }
 
+        // 週期性 anti-entropy：每輪把最近訊息（60s 內）補送給所有已連上鄰居。
+        // 收端 seenMessageIds 去重、冪等；空緩衝為 no-op。這保證不論連線成形時序、
+        // 或訊息在哪個時間點送出，幾個週期內都會到達所有 peer（最終一致）。
+        if (neighbor.getState() === 'connected') {
+          void this.messageHandler!.syncToNeighbor(neighbor);
+        }
+
         neighbor.onMessage(async (message: GossipMessage) => {
           // 處理 relay 封包
           const raw = message as unknown as Record<string, unknown>;
@@ -228,6 +235,15 @@ export class MeshGossipManager {
    */
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  /** 本機 mesh userId（hash pubKey）；未初始化時為 null。gossip senderId 用此。 */
+  getUserId(): string | null {
+    try {
+      return this.identityManager.getUserId();
+    } catch {
+      return null;
+    }
   }
 
   /**
