@@ -446,7 +446,23 @@ export interface ChainCheckpoint {
 
 // ========== Multi-channel ==========
 
-export type ChannelKind = 'control' | 'bulk' | 'gossip';
+/**
+ * DataChannel 通道種類：
+ * - control：可靠有序（協議控制、名冊、輸入等不可丟的訊息）
+ * - bulk：可靠有序、高水位（素材/檔案，不與 control 搶隊頭）
+ * - gossip：可靠有序（mesh gossip）
+ * - state：**不可靠無序**（ordered:false, maxRetransmits:0）——60Hz 狀態幀，
+ *   丟幀不重傳，下一幀天然覆蓋（ADR-0019）
+ */
+export type ChannelKind = 'control' | 'bulk' | 'gossip' | 'state';
+
+/** 各通道的 RTCDataChannel 建立參數（單一真相來源，所有建通道處共用） */
+export const CHANNEL_INIT: Record<ChannelKind, RTCDataChannelInit> = {
+  control: { ordered: true },
+  bulk: { ordered: true },
+  gossip: { ordered: true },
+  state: { ordered: false, maxRetransmits: 0 },
+};
 
 /** Message priority for backpressure queue */
 export type MessagePriority = 'critical' | 'high' | 'normal' | 'low';

@@ -6,12 +6,14 @@ const HIGH_WATERMARK: Record<ChannelKind, number> = {
   bulk: 16 * 1024 * 1024,  // 16 MB
   control: 256 * 1024,      // 256 KB
   gossip: 256 * 1024,       // 256 KB
+  state: 64 * 1024,         // 64 KB — 狀態幀小且可丟；水位滿代表產幀快過網路，該丟幀而非排隊
 };
 
 const LOW_WATERMARK: Record<ChannelKind, number> = {
   bulk: HIGH_WATERMARK.bulk / 2,
   control: HIGH_WATERMARK.control / 2,
   gossip: HIGH_WATERMARK.gossip / 2,
+  state: HIGH_WATERMARK.state / 2,
 };
 
 type MessageHandler = (peerId: string, kind: ChannelKind, data: string | ArrayBuffer) => void;
