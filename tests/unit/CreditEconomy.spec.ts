@@ -99,6 +99,32 @@ describe('CreditEconomy', () => {
     expect(seen[0]).toBe(90); // 花掉 10
   });
 
+  it('中繼貢獻產生點數：10KB → +15（10*perKb + perRelayBonus）', async () => {
+    econ.init('alice');
+    await econ.recordRelayContribution('bob', 10 * 1024);
+    // 初始 100 + (10*1 + 5) = 115
+    expect((await econ.getBalance())!.balance).toBeCloseTo(115, 5);
+  });
+
+  it('中繼貢獻 0 bytes 不加點；未 init 安全 no-op', async () => {
+    await econ.recordRelayContribution('bob', 1024); // 未 init
+    econ.init('alice');
+    await econ.recordRelayContribution('bob', 0);
+    expect((await econ.getBalance())!.balance).toBe(100);
+  });
+
+  it('中繼貢獻通知 subscriber 且持久化', async () => {
+    econ.init('alice');
+    const seen: number[] = [];
+    econ.subscribe((b) => seen.push(b.balance));
+    await econ.recordRelayContribution('bob', 5 * 1024); // +10
+
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+    const econ2 = new CreditEconomy();
+    econ2.init('alice');
+    expect((await econ2.getBalance())!.balance).toBeCloseTo(110, 5);
+  });
+
   it('持久化：重整（新實例）後餘額還原', async () => {
     econ.init('alice');
     await econ.trySpend(40, 'x'); // 100 → 60，觸發 persist
