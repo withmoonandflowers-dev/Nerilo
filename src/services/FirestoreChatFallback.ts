@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
+import { connectionStats } from '../core/metrics/ConnectionStats';
 import type { ChatMessage } from '../types';
 
 const MESSAGES_LIMIT = 100;
@@ -44,6 +45,7 @@ export async function sendMessageViaFirestore(
   body: FallbackMessageBody
 ): Promise<string> {
   const messageId = generateUUID();
+  connectionStats.recordFallbackMessage(); // P0 量測：fallback 觸發率（社群中繼投資決策依據）
   const messagesRef = collection(db, 'p2pRooms', roomId, 'messages');
   const now = Timestamp.now();
   await addDoc(messagesRef, {

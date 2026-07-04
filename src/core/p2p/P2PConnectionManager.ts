@@ -14,6 +14,7 @@ import { db } from '../../config/firebase';
 import { logger } from '../../utils/logger';
 import type { ConnectionState, Signal } from '../../types';
 import { getIceServerProvider } from './IceServerProvider';
+import { connectionStats } from '../metrics/ConnectionStats';
 
 export interface IceServers {
   urls: string | string[];
@@ -42,6 +43,8 @@ export class P2PConnectionManager {
   private hasCleanedOldSignals = false;
   /** 本次 session 是否已嘗試過 ICE restart（一次重試，ADR-0019） */
   private iceRestartAttempted = false;
+  /** restart 後首次恢復的 one-shot 標記（統計用，避免後續 connected 重複計） */
+  private pendingRestartRecovery = false;
   /** 是否曾以發起方身分 createOffer（restart 時由發起方重新 offer） */
   private hasCreatedOffer = false;
   /** ICE restart 後的恢復逾時計時器 */
@@ -84,6 +87,7 @@ export class P2PConnectionManager {
       });
 
       // 建立 RTCPeerConnection
+      connectionStats.recordAttempt();
       this.pc = new RTCPeerConnection({
         iceServers: this.iceServers,
       });
@@ -153,6 +157,11 @@ export class P2PConnectionManager {
             clearTimeout(this.iceRestartTimeoutId);
             this.iceRestartTimeoutId = null;
           }
+          connectionStats.recordConnected();
+          if (this.pendingRestartRecovery) {
+            this.pendingRestartRecovery = false; // one-shot：只計 restart 後首次恢復
+            connectionStats.recordIceRestartRecovered();
+          }
           this.setState('connected');
           // 連線成功後清理舊 session 的 signals（非阻塞）
           this.cleanupOldSignals();
@@ -167,6 +176,7 @@ export class P2PConnectionManager {
           if (!this.iceRestartAttempted) {
             this.attemptIceRestart();
           } else {
+            connectionStats.recordFailed();
             this.setState('failed');
           }
           break;
@@ -193,6 +203,8 @@ export class P2PConnectionManager {
   private attemptIceRestart(): void {
     if (!this.pc) return;
     this.iceRestartAttempted = true;
+    this.pendingRestartRecovery = true;
+    connectionStats.recordIceRestart();
     this.setState('connecting');
 
     logger.warn('[P2PConnectionManager] Connection failed — attempting one ICE restart', {
@@ -206,11 +218,13 @@ export class P2PConnectionManager {
         // 發起方重新 offer（restartIce 後 createOffer 會帶新 ICE credentials）
         this.createOffer().catch((err) => {
           logger.error('[P2PConnectionManager] ICE restart re-offer failed', { roomId: this.roomId, err });
+          connectionStats.recordFailed();
           this.setState('failed');
         });
       }
     } catch (err) {
       logger.error('[P2PConnectionManager] restartIce threw', { roomId: this.roomId, err });
+      connectionStats.recordFailed();
       this.setState('failed');
       return;
     }
@@ -220,6 +234,7 @@ export class P2PConnectionManager {
       this.iceRestartTimeoutId = null;
       if (this.pc && this.pc.connectionState !== 'connected') {
         logger.warn('[P2PConnectionManager] ICE restart did not recover in time', { roomId: this.roomId });
+        connectionStats.recordFailed();
         this.setState('failed');
       }
     }, 15_000);
