@@ -151,4 +151,17 @@ describe('IceServerProvider — 社群 TURN', () => {
     await provider.getIceServers();
     expect(fetchFn).not.toHaveBeenCalled();
   });
+
+  it('威脅模型 F2：已有自營 TURN → 不 fetch/不用社群 TURN（不暴露 metadata）', async () => {
+    const fetchFn = makeFetch({ servers: [VALID_ENTRY] });
+    const provider = new IceServerProvider({
+      communityTurnUrl: LIST_URL,
+      fetchFn,
+      staticTurn: [{ urls: ['turn:my-own.example:3478'], username: 'me', credential: 'pw' }],
+    });
+    const servers = await provider.getIceServers();
+    expect(fetchFn).not.toHaveBeenCalled(); // 有可信 TURN → 根本不碰社群清單
+    expect(servers.some((s) => JSON.stringify(s.urls).includes('my-own.example'))).toBe(true);
+    expect(servers.some((s) => JSON.stringify(s.urls).includes('turn.volunteer.org'))).toBe(false);
+  });
 });
