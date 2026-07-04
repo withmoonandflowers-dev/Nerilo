@@ -28,6 +28,7 @@ import type { ConnectionState, P2PRoom, ChatMessage } from '../../types';
 import { featureLog } from '../../utils/featureLog';
 import { logger } from '../../utils/logger';
 import { generateUUID } from '../../utils/uuid';
+import { startRoomHeartbeat } from '../../services/RoomHeartbeat';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -74,6 +75,8 @@ const ChatPage: React.FC = () => {
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const [showFirstMsgCoach, setShowFirstMsgCoach] = useState(false);
   const [roomName, setRoomName] = useState<string | undefined>(undefined);
+  // 是否為房主（host migration 易主時經 onRoomOpen 更新）——房主負責活性心跳
+  const [isRoomOwner, setIsRoomOwner] = useState(false);
   /** 遞增即觸發 init effect 重跑（優雅重連，保留訊息歷史，取代整頁 reload） */
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -182,6 +185,7 @@ const ChatPage: React.FC = () => {
         }
 
         setRoomName(room.roomName);
+        setIsRoomOwner(room.ownerUid === uid);
 
         logger.info('[ChatPage] Room found', {
           roomId,
@@ -317,6 +321,8 @@ const ChatPage: React.FC = () => {
               roomId,
               effectiveParticipantCount,
             });
+            // 房主可能因 host migration 易主：跟著 snapshot 更新，心跳隨之交接
+            setIsRoomOwner(room.ownerUid === uid);
             // initializeP2P 內部已有互斥鎖，直接呼叫即可
             await initializeP2P(room, effectiveParticipantCount);
           },
@@ -418,6 +424,15 @@ const ChatPage: React.FC = () => {
       }
     }
   }, [messages, isNearBottom, user?.uid]);
+
+  // 房主活性心跳：在房內且是房主時每 5 分鐘刷新 lastActiveAt/ttlExpireAt。
+  // 活房 TTL 永遠在未來（不被原生 TTL 誤殺）；全員斷線 → 心跳停 → 30 分鐘內
+  // 過期 → 公開列表以 ttlExpireAt 濾掉殭屍房。易主時此 effect 自動交接。
+  useEffect(() => {
+    if (!isRoomOwner || !roomId) return;
+    const stop = startRoomHeartbeat(roomId);
+    return stop;
+  }, [isRoomOwner, roomId]);
 
   const sendMessage = async (content: string, existingMessageId?: string) => {
     if (!user || !roomId) return;
