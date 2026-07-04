@@ -38,13 +38,17 @@ export type FallbackMessageBody =
  *
  * 注意：firestore.rules 要求 createdAt 在伺服器時間 ±30 秒內（防重放），
  * 因此必須同時寫入 createdAt；timestamp 保留供既有讀取端相容。
+ *
+ * @param providedMessageId 呼叫端的樂觀顯示 id。必須貫穿寫入，否則 onSnapshot
+ * 把自己的訊息以「另一個 id」回吐（明文路徑不跳過自己），寄件方畫面出現兩顆泡泡。
  */
 export async function sendMessageViaFirestore(
   roomId: string,
   uid: string,
-  body: FallbackMessageBody
+  body: FallbackMessageBody,
+  providedMessageId?: string
 ): Promise<string> {
-  const messageId = generateUUID();
+  const messageId = providedMessageId ?? generateUUID();
   connectionStats.recordFallbackMessage(); // P0 量測：fallback 觸發率（社群中繼投資決策依據）
   const messagesRef = collection(db, 'p2pRooms', roomId, 'messages');
   const now = Timestamp.now();

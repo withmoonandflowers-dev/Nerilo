@@ -40,9 +40,10 @@ export class MeshChatService {
       // 必須比 mesh userId（senderId 的實際型別），比 firebase uid 永不命中。
       if (gossipMessage.senderId === this.meshUserId) return;
 
-      // 轉換為 ChatMessage
+      // 轉換為 ChatMessage。id 優先用寄件端的應用層 id（簽章保護）：
+      // 同一則訊息可能同時經 mesh 與 Firestore 備援到達，同 id 才能被 UI 去重。
       const chatMessage: ChatMessage = {
-        messageId: `${gossipMessage.senderId}-${gossipMessage.seq}`,
+        messageId: gossipMessage.messageId ?? `${gossipMessage.senderId}-${gossipMessage.seq}`,
         from: gossipMessage.senderId,
         content: gossipMessage.content,
         timestamp: gossipMessage.timestamp,
@@ -67,11 +68,12 @@ export class MeshChatService {
    * 發送訊息
    */
   async sendMessage(content: string, providedMessageId?: string): Promise<string> {
-    await this.meshGossipManager.sendMessage(content);
-
     // 呼叫端可傳入 id，讓樂觀顯示與本機自我 emit 共用同一 id（去重收斂）。
     // 未傳入時自生：自增 counter 避免同一毫秒內多則訊息 ID 碰撞。
     const messageId = providedMessageId ?? `${this.localUid}-${Date.now()}-${++this.messageCounter}`;
+
+    // id 一併進 gossip payload：收端跨傳輸路徑（mesh / Firestore 備援）以同 id 去重
+    await this.meshGossipManager.sendMessage(content, messageId);
     
     // 建立 ChatMessage（用於本地顯示）
     const chatMessage: ChatMessage = {
@@ -125,6 +127,16 @@ export class MeshChatService {
     } else {
       return 'idle';
     }
+  }
+
+  /**
+   * mesh 覆蓋狀況：connected=已連上的鄰居數、known=已發現的鄰居數（含未連上）。
+   * connected < known 代表有成員在 mesh 之外（多半掉到 Firestore 備援），
+   * 呼叫端據此決定是否雙寫備援橋接。
+   */
+  getMeshCoverage(): { connected: number; known: number } {
+    const s = this.meshGossipManager.getConnectionState();
+    return { connected: s.neighborCount, known: s.totalNeighbors };
   }
 
   /**
