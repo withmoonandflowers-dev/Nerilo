@@ -126,8 +126,15 @@ export class IceServerProvider {
       }
     }
 
-    // 4. 社群捐贈 TURN（ADR-0012 P1）——來源失敗一律靜默略過，不影響主流程
-    if (this.config.communityTurnUrl) {
+    // 4. 社群捐贈 TURN（ADR-0012 P1）——僅在「沒有可信 TURN」時才用（威脅模型 F2）。
+    // 有自營/動態 TURN 就不該把連線 metadata 暴露給志願者；社群 TURN 是
+    // 「零成本、無自營 TURN」情境的次選補位，不與可信 TURN 並用。
+    const hasTrustedTurn = servers.some((s) => {
+      const u = s.urls;
+      const arr = Array.isArray(u) ? u : [u];
+      return arr.some((x) => typeof x === 'string' && (x.startsWith('turn:') || x.startsWith('turns:')));
+    });
+    if (this.config.communityTurnUrl && !hasTrustedTurn) {
       try {
         const community = await this.getCommunityTurnServers();
         for (const turn of community) {
