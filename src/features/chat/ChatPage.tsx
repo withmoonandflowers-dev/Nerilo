@@ -29,6 +29,7 @@ import { featureLog } from '../../utils/featureLog';
 import { logger } from '../../utils/logger';
 import { generateUUID } from '../../utils/uuid';
 import { startRoomHeartbeat } from '../../services/RoomHeartbeat';
+import { creditEconomy } from '../../core/incentive/CreditEconomy';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
@@ -424,6 +425,15 @@ const ChatPage: React.FC = () => {
       }
     }
   }, [messages, isNearBottom, user?.uid]);
+
+  // 點數經濟（ADR-0020）：實際連線中 = 在線貢獻網路容量 = 累積點數。
+  // 綁 connected 狀態而非開著分頁，降低純掛機刷點。斷線/離開自動停。
+  useEffect(() => {
+    if (!user?.uid || connectionState !== 'connected') return;
+    creditEconomy.init(user.uid);
+    creditEconomy.startEarning();
+    return () => creditEconomy.stopEarning();
+  }, [user?.uid, connectionState]);
 
   // 房主活性心跳：在房內且是房主時每 5 分鐘刷新 lastActiveAt/ttlExpireAt。
   // 活房 TTL 永遠在未來（不被原生 TTL 誤殺）；全員斷線 → 心跳停 → 30 分鐘內
