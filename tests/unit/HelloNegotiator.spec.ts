@@ -220,4 +220,56 @@ describe('HelloNegotiator', () => {
       expect(() => vi.advanceTimersByTime(10_000)).not.toThrow();
     });
   });
+
+  describe('strict protocols（ADR-0019：版本不合硬擋，不降級）', () => {
+    function negotiateWith(local: Partial<HelloPayload>, remote: Partial<HelloPayload>) {
+      const n = new HelloNegotiator(makeSelfCapabilities(local), vi.fn(), SELF_ID, ROOM_ID, 5_000);
+      let result: import('../../src/core/p2p/HelloNegotiator').NegotiatedCapabilities | null = null;
+      n.onNegotiated((r) => { result = r; });
+      n.handleEnvelope(makeHelloEnvelope(makeSelfCapabilities(remote)));
+      n.dispose();
+      return result!;
+    }
+
+    it('雙方同協議同版本 → 無 mismatch', () => {
+      const r = negotiateWith({ strictProtocols: { game: 2 } }, { strictProtocols: { game: 2 } });
+      expect(r.strictMismatches).toEqual([]);
+    });
+
+    it('雙方同協議不同版本 → 列入 mismatch（含雙方版本）', () => {
+      const r = negotiateWith({ strictProtocols: { game: 2 } }, { strictProtocols: { game: 1 } });
+      expect(r.strictMismatches).toEqual([{ protocol: 'game', local: 2, remote: 1 }]);
+    });
+
+    it('對方未宣告該協議 → 不算 mismatch（feature 可用性由 features 交集決定）', () => {
+      const r = negotiateWith({ strictProtocols: { game: 2 } }, {});
+      expect(r.strictMismatches).toEqual([]);
+    });
+
+    it('雙方皆未宣告 → 空清單（向下相容既有 HELLO）', () => {
+      const r = negotiateWith({}, {});
+      expect(r.strictMismatches).toEqual([]);
+    });
+
+    it('多協議只列不合的那個', () => {
+      const r = negotiateWith(
+        { strictProtocols: { game: 2, sync: 1 } },
+        { strictProtocols: { game: 2, sync: 3 } }
+      );
+      expect(r.strictMismatches).toEqual([{ protocol: 'sync', local: 1, remote: 3 }]);
+    });
+
+    it('strictProtocols 型別不合法（值非 number）→ payload 整包被拒', () => {
+      const env: Envelope = {
+        v: 1, ns: 'system', type: 'HELLO',
+        id: 'x', ts: Date.now(), from: 'peer-b', roomId: ROOM_ID,
+        payload: {
+          protocolVersion: 1, features: [], transports: [],
+          strictProtocols: { game: 'v2' },
+        },
+      };
+      negotiator.handleEnvelope(env);
+      expect(negotiator.isNegotiated()).toBe(false);
+    });
+  });
 });

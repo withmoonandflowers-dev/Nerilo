@@ -40,6 +40,12 @@ export class P2PConnectionManager {
   private readonly sessionStartedAt: Timestamp = Timestamp.now();
   /** 是否已清理舊 signals（只在首次連線成功時執行一次） */
   private hasCleanedOldSignals = false;
+  /** 本次 session 是否已嘗試過 ICE restart（一次重試，ADR-0019） */
+  private iceRestartAttempted = false;
+  /** 是否曾以發起方身分 createOffer（restart 時由發起方重新 offer） */
+  private hasCreatedOffer = false;
+  /** ICE restart 後的恢復逾時計時器 */
+  private iceRestartTimeoutId: ReturnType<typeof setTimeout> | null = null;
   /**
    * Signal 通道標籤：用於隔離同一房間內不同連線的 signals。
    * - Star: 'chat'
@@ -142,6 +148,11 @@ export class P2PConnectionManager {
       const state = this.pc.connectionState;
       switch (state) {
         case 'connected':
+          // ICE restart 成功恢復 → 取消逾時定案
+          if (this.iceRestartTimeoutId !== null) {
+            clearTimeout(this.iceRestartTimeoutId);
+            this.iceRestartTimeoutId = null;
+          }
           this.setState('connected');
           // 連線成功後清理舊 session 的 signals（非阻塞）
           this.cleanupOldSignals();
@@ -151,7 +162,13 @@ export class P2PConnectionManager {
           // 不立即標記為 failed，留給上層偵測逾時後處理。
           break;
         case 'failed':
-          this.setState('failed');
+          // ADR-0019：先嘗試一次 ICE restart（換網路/NAT rebind 常見可救），
+          // 已試過或 restart 後仍 failed 才定案。
+          if (!this.iceRestartAttempted) {
+            this.attemptIceRestart();
+          } else {
+            this.setState('failed');
+          }
           break;
         case 'closed':
           this.setState('closed');
@@ -165,6 +182,47 @@ export class P2PConnectionManager {
       if (!this.pc) return;
       logger.info('ICE connection state:', this.pc.iceConnectionState);
     };
+  }
+
+  /**
+   * ICE restart 一次重試（ADR-0019）。
+   * 發起方：restartIce() 產生新 ICE credentials 後重新 createOffer 走既有 signaling；
+   * 應答方：保持 connecting，等發起方的新 offer（既有 signal listener 會接手）。
+   * 15 秒內未恢復 connected 即定案 failed（UI 狀態列據 state 呈現重連中/失敗）。
+   */
+  private attemptIceRestart(): void {
+    if (!this.pc) return;
+    this.iceRestartAttempted = true;
+    this.setState('connecting');
+
+    logger.warn('[P2PConnectionManager] Connection failed — attempting one ICE restart', {
+      roomId: this.roomId,
+      wasInitiator: this.hasCreatedOffer,
+    });
+
+    try {
+      this.pc.restartIce();
+      if (this.hasCreatedOffer) {
+        // 發起方重新 offer（restartIce 後 createOffer 會帶新 ICE credentials）
+        this.createOffer().catch((err) => {
+          logger.error('[P2PConnectionManager] ICE restart re-offer failed', { roomId: this.roomId, err });
+          this.setState('failed');
+        });
+      }
+    } catch (err) {
+      logger.error('[P2PConnectionManager] restartIce threw', { roomId: this.roomId, err });
+      this.setState('failed');
+      return;
+    }
+
+    // 恢復逾時：15 秒內未回到 connected 即定案
+    this.iceRestartTimeoutId = setTimeout(() => {
+      this.iceRestartTimeoutId = null;
+      if (this.pc && this.pc.connectionState !== 'connected') {
+        logger.warn('[P2PConnectionManager] ICE restart did not recover in time', { roomId: this.roomId });
+        this.setState('failed');
+      }
+    }, 15_000);
   }
 
   private setupSignalingListeners(): void {
@@ -366,6 +424,7 @@ export class P2PConnectionManager {
 
   async createOffer(): Promise<void> {
     if (!this.pc) throw new Error('PeerConnection not initialized');
+    this.hasCreatedOffer = true; // 記住發起方身分，ICE restart 時由發起方重新 offer
 
     logger.info('[P2PConnectionManager] createOffer called', {
       roomId: this.roomId,
@@ -523,6 +582,10 @@ export class P2PConnectionManager {
     this.pendingIceCandidates = [];
     this.processedSignalIds.clear();
     this.signalMutex = Promise.resolve();
+    if (this.iceRestartTimeoutId !== null) {
+      clearTimeout(this.iceRestartTimeoutId);
+      this.iceRestartTimeoutId = null;
+    }
 
     if (this.pc) {
       this.pc.close();
