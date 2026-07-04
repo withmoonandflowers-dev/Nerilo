@@ -52,6 +52,20 @@ export interface HelloPayload {
    * 上層可透過此欄位傳達「我希望使用 mesh」等意圖
    */
   topologyHint?: 'star' | 'mesh' | 'hybrid' | 'auto';
+  /**
+   * 嚴格版本協議（選填）：key = 協議名（如 'game'），value = 版本號。
+   * 與一般 protocolVersion 的 min() 降級語義不同——雙方都宣告同一 key 時
+   * 版本「必須相等」，不等即列入 strictMismatches（上層應提示雙方重新整理，
+   * 不得靜默降級）。狀態幀等二進位格式錯位沒有降級可言，錯位即 desync。
+   */
+  strictProtocols?: Record<string, number>;
+}
+
+/** 嚴格協議版本不合的描述 */
+export interface StrictMismatch {
+  protocol: string;
+  local: number;
+  remote: number;
 }
 
 /** 協商結果 */
@@ -62,6 +76,11 @@ export interface NegotiatedCapabilities {
   protocolVersion: number;
   /** 本地支援的 transports */
   transports: ChannelKind[];
+  /**
+   * 嚴格協議版本不合清單（雙方都宣告、版本卻不等的協議）。
+   * 非空時上層應停用對應 feature 並提示「請雙方重新整理」，不得靜默降級。
+   */
+  strictMismatches: StrictMismatch[];
   /** 對方的完整 HelloPayload（供上層參考） */
   remote: HelloPayload;
 }
@@ -178,12 +197,20 @@ export class HelloNegotiator {
   private validateHelloPayload(payload: unknown): payload is HelloPayload {
     if (!payload || typeof payload !== 'object') return false;
     const p = payload as Record<string, unknown>;
+    const strictOk =
+      p.strictProtocols === undefined ||
+      (typeof p.strictProtocols === 'object' &&
+        p.strictProtocols !== null &&
+        Object.values(p.strictProtocols as Record<string, unknown>).every(
+          (v) => typeof v === 'number'
+        ));
     return (
       typeof p.protocolVersion === 'number' &&
       Array.isArray(p.features) &&
       p.features.every((f: unknown) => typeof f === 'string') &&
       Array.isArray(p.transports) &&
-      p.transports.every((t: unknown) => typeof t === 'string')
+      p.transports.every((t: unknown) => typeof t === 'string') &&
+      strictOk
     );
   }
 
@@ -257,6 +284,18 @@ export class HelloNegotiator {
 
     // 計算交集
     const localFeatureSet = new Set(this.selfCapabilities.features);
+
+    // 嚴格協議：雙方都宣告的 key 必須版本相等，不等即列入 mismatch（不降級）
+    const strictMismatches: StrictMismatch[] = [];
+    const localStrict = this.selfCapabilities.strictProtocols ?? {};
+    const remoteStrict = this.remoteHello.strictProtocols ?? {};
+    for (const [protocol, local] of Object.entries(localStrict)) {
+      const remote = remoteStrict[protocol];
+      if (remote !== undefined && remote !== local) {
+        strictMismatches.push({ protocol, local, remote });
+      }
+    }
+
     const negotiated: NegotiatedCapabilities = {
       protocolVersion: Math.min(
         this.selfCapabilities.protocolVersion,
@@ -264,8 +303,16 @@ export class HelloNegotiator {
       ),
       features: this.remoteHello.features.filter((f) => localFeatureSet.has(f)),
       transports: this.selfCapabilities.transports,
+      strictMismatches,
       remote: this.remoteHello,
     };
+
+    if (strictMismatches.length > 0) {
+      logger.warn('[HelloNegotiator] Strict protocol version mismatch — feature must be disabled', {
+        roomId: this.roomId,
+        strictMismatches,
+      });
+    }
 
     logger.info('[HelloNegotiator] Negotiation complete', {
       roomId: this.roomId,
