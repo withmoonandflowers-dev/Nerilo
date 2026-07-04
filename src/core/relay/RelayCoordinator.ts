@@ -15,18 +15,39 @@
 
 import type { RelayManager, PeerSendFn, MessageDeliveryFn } from './RelayManager';
 import type { CreditEconomy } from '../incentive/CreditEconomy';
+import { RelayOverlay, type RelayOverlayOptions } from './RelayOverlay';
+import type { IRelayDirectory } from './RelayDirectory';
+import type { RelayNodeMetrics } from './types';
 import { logger } from '../../utils/logger';
 
 export class RelayCoordinator {
   private unsubscribers: (() => void)[] = [];
   private transportAttached = false;
+  private overlay: RelayOverlay | null = null;
 
   constructor(
     private readonly relay: RelayManager,
     private readonly credits: CreditEconomy
   ) {}
 
-  /** 開始把中繼賺點事件轉進真實餘額。 */
+  /**
+   * 掛上發現層：以 RelayDirectory 建 RelayOverlay，讓本節點宣告可中繼、並週期
+   * 發現其他候選填進 RelayManager（buildPathsTo 才有節點可選）。
+   * @returns 建立的 overlay（可另外呼叫 announceSelf/refresh）
+   */
+  useOverlay(
+    directory: IRelayDirectory,
+    localNodeId: string,
+    selfMetrics: Partial<RelayNodeMetrics> = {},
+    options: RelayOverlayOptions = {}
+  ): RelayOverlay {
+    this.overlay = new RelayOverlay(this.relay, directory, localNodeId, options);
+    // 立即宣告自己可中繼（之後由 overlay.start 週期續期）
+    void this.overlay.announceSelf(selfMetrics);
+    return this.overlay;
+  }
+
+  /** 開始：轉點事件 + （若有）啟動 overlay 週期發現。 */
   start(): void {
     const unsub = this.relay.on('relay:credit-earned', (event) => {
       const bytes = typeof event.data.bytes === 'number' ? event.data.bytes : 0;
@@ -37,6 +58,7 @@ export class RelayCoordinator {
       });
     });
     this.unsubscribers.push(unsub);
+    this.overlay?.start();
   }
 
   /**
@@ -59,5 +81,7 @@ export class RelayCoordinator {
   stop(): void {
     this.unsubscribers.forEach((u) => u());
     this.unsubscribers = [];
+    void this.overlay?.stop();
+    this.overlay = null;
   }
 }
