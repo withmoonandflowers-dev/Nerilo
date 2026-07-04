@@ -3,14 +3,20 @@ import { P2PChannelBus } from './P2PChannelBus';
 import { P2PProtocolRegistry } from './P2PProtocolRegistry';
 import { P2PFileTransferService } from './P2PFileTransferService';
 import { P2PMediaService } from './P2PMediaService';
+import { StateChannel } from './StateChannel';
 import { HelloNegotiator, type HelloPayload, type NegotiatedCapabilities } from './HelloNegotiator';
 import { generateDeviceId } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
-import type { Envelope, P2PEnvelope } from '../../types';
+import { CHANNEL_INIT, type Envelope, type P2PEnvelope } from '../../types';
+
+/** 不可靠狀態幀通道的 DataChannel label（ADR-0019） */
+const STATE_CHANNEL_LABEL = 'state';
 
 export class P2PManager {
   private connectionManager: P2PConnectionManager;
   private channelBus: P2PChannelBus | null = null;
+  /** 不可靠二進位狀態幀通道（ADR-0019，遊戲 60Hz 狀態流用；為 null 表示尚未建立） */
+  private stateChannel: StateChannel | null = null;
   private protocolRegistry: P2PProtocolRegistry;
   private fileTransferService: P2PFileTransferService | null = null;
   private mediaService: P2PMediaService | null = null;
@@ -86,6 +92,10 @@ export class P2PManager {
             this.initializeServices();
           };
         }
+      } else if (event.channel.label === STATE_CHANNEL_LABEL) {
+        // 不可靠狀態幀通道（遠端建立，answerer 收到）
+        logger.info('[P2PManager] State channel received', { roomId: this.roomId });
+        this.stateChannel = new StateChannel(event.channel);
       }
     };
 
@@ -98,6 +108,11 @@ export class P2PManager {
       // initiator 負責建立 DataChannel 並送出 offer
       const dataChannel = pc.createDataChannel(this.dataChannelLabel, { ordered: true });
       this.channelBus = new P2PChannelBus(dataChannel);
+
+      // 同時建立不可靠狀態幀通道（ADR-0019）。必須在 createOffer 前建立，
+      // 才會進 SDP、被對端 ondatachannel 收到。狀態流按需使用，閒置零成本。
+      const stateDc = pc.createDataChannel(STATE_CHANNEL_LABEL, CHANNEL_INIT.state);
+      this.stateChannel = new StateChannel(stateDc);
 
       dataChannel.onopen = () => {
         logger.info('[P2PManager] DataChannel opened', {
@@ -167,7 +182,7 @@ export class P2PManager {
       const selfCapabilities: HelloPayload = {
         protocolVersion: 1,
         features: ['chat', 'file', 'media'],   // 預設 built-in features
-        transports: ['control', 'bulk', 'gossip'],
+        transports: ['control', 'bulk', 'gossip', 'state'],
       };
 
       this.helloNegotiator = new HelloNegotiator(
@@ -219,6 +234,11 @@ export class P2PManager {
     return this.channelBus;
   }
 
+  /** 不可靠狀態幀通道（遊戲 60Hz 狀態流用）。連線未建立或對端不支援時為 null。 */
+  getStateChannel(): StateChannel | null {
+    return this.stateChannel;
+  }
+
   getProtocolRegistry(): P2PProtocolRegistry {
     return this.protocolRegistry;
   }
@@ -250,6 +270,8 @@ export class P2PManager {
     this.mediaService = null;
     this.channelBus?.close();
     this.channelBus = null;
+    this.stateChannel?.close();
+    this.stateChannel = null;
     this.servicesInitialized = false;
     await this.connectionManager.close();
   }
