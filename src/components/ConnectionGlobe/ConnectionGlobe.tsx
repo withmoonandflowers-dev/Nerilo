@@ -1,220 +1,115 @@
 /**
- * 連線地球動畫（隱私優先，時區近似定位）。
+ * 連線地球（cobe，WebGL 點陣地球，隱私優先時區近似定位）。
  *
- * 輕量 canvas 2D：自轉的經緯球 + 自己/對方的發光座標點 + 連線弧線。
- * 刻意不用 three.js（bundle 與 GPU 成本高）；經緯球以正交投影繪製，
- * 位置點對映時區推得的近似經緯度。主題色感知（讀 CSS 變數）。
+ * 用 cobe（Vercel 出品，~32K）繪製精緻的點陣地球，以 markers 標出自己與對方
+ * 的近似位置（時區推得，不碰 GPS/IP）。主題色感知（讀 CSS 變數）。
+ * WebGL 不可用時優雅降級為不顯示（不影響聊天）。
  */
 import { useEffect, useRef } from 'react';
-import { projectOrthographic, type LatLng } from '../../utils/geo';
+import createGlobe from 'cobe';
+import { useTheme } from '../../contexts/ThemeContext';
+import type { LatLng } from '../../utils/geo';
 import './ConnectionGlobe.css';
 
 export interface GlobePoint {
   coord: LatLng;
-  /** 是否為本機（自己） */
   self?: boolean;
   label?: string;
 }
 
 interface ConnectionGlobeProps {
   points: GlobePoint[];
-  /** 畫布邊長（正方形），預設 200 */
   size?: number;
 }
 
-function cssVar(name: string, fallback: string): string {
+/** 讀 CSS 變數（hex）→ cobe 需要的 [r,g,b]（0..1） */
+function cssVarRgb(name: string, fallback: [number, number, number]): [number, number, number] {
   if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const m = raw.match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return fallback;
+  const int = parseInt(m[1], 16);
+  return [((int >> 16) & 255) / 255, ((int >> 8) & 255) / 255, (int & 255) / 255];
 }
 
-export function ConnectionGlobe({ points, size = 200 }: ConnectionGlobeProps) {
+export function ConnectionGlobe({ points, size = 220 }: ConnectionGlobeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pointsRef = useRef(points);
-  pointsRef.current = points;
+  const { theme } = useTheme();
+  const phiRef = useRef(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
+    const dark = theme === 'dark' ? 1 : 0;
+    const marker = cssVarRgb('--color-primary', [0.71, 0.51, 0.55]);
+    const glow = cssVarRgb('--color-primary', [0.71, 0.51, 0.55]);
+    // 點陣基色：淺主題用柔和暖白偏主色，深主題用主色
+    const base: [number, number, number] = dark
+      ? cssVarRgb('--color-primary', [0.72, 0.64, 0.85])
+      : [0.86, 0.78, 0.78];
 
-    const cx = size / 2;
-    const cy = size / 2;
-    const r = size / 2 - 10;
+    const self = points.find((p) => p.self);
+    const markers = points.map((p) => ({
+      location: [p.coord.lat, p.coord.lng] as [number, number],
+      size: p.self ? 0.09 : 0.06,
+    }));
+    // 自己 → 每位夥伴的連線弧（v2 cobe 原生支援）
+    const arcs = self
+      ? points
+          .filter((p) => !p.self)
+          .map((p) => ({
+            from: [self.coord.lat, self.coord.lng] as [number, number],
+            to: [p.coord.lat, p.coord.lng] as [number, number],
+          }))
+      : [];
 
-    // 主題色（點陣/弧線/光點），啟動時讀一次
-    const primary = cssVar('--color-primary', '#b5838d');
-    const accent = cssVar('--color-accent', '#a5a58d');
-
+    let globe: import('cobe').Globe | null = null;
     let raf = 0;
-    let rotation = 0;
-    let arcPhase = 0;
-    let t = 0;
-    let stopped = false;
+    try {
+      globe = createGlobe(canvas, {
+        devicePixelRatio: dpr,
+        width: size * dpr,
+        height: size * dpr,
+        phi: phiRef.current,
+        theta: 0.28,
+        dark,
+        diffuse: 1.2,
+        mapSamples: 14000,
+        mapBrightness: dark ? 5 : 8,
+        baseColor: base,
+        markerColor: marker,
+        glowColor: glow,
+        markers,
+        arcs,
+        arcColor: marker,
+        arcWidth: 1.4,
+      });
+      const g = globe;
+      const tick = () => {
+        phiRef.current += 0.004;
+        g.update({ phi: phiRef.current });
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    } catch {
+      // WebGL 不可用 → 靜默降級（不影響聊天）
+      globe = null;
+    }
 
-    // 畫一條由經緯點構成的弧（僅連接正面可見的連續段）
-    const strokePath = (pts: LatLng[]) => {
-      ctx.beginPath();
-      let started = false;
-      for (const pt of pts) {
-        const p = projectOrthographic(pt, cx, cy, r, rotation);
-        if (p.visible) {
-          if (started) ctx.lineTo(p.x, p.y);
-          else {
-            ctx.moveTo(p.x, p.y);
-            started = true;
-          }
-        } else {
-          started = false;
-        }
-      }
-      ctx.stroke();
-    };
-
-    const draw = () => {
-      if (stopped) return;
-      ctx.clearRect(0, 0, size, size);
-
-      // 球體光暈
-      const glow = ctx.createRadialGradient(cx, cy, r * 0.15, cx, cy, r * 1.18);
-      glow.addColorStop(0, primary + '33');
-      glow.addColorStop(0.7, primary + '14');
-      glow.addColorStop(1, primary + '00');
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r * 1.18, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 球面底色
-      ctx.fillStyle = primary + '0e';
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 球體外圈
-      ctx.strokeStyle = primary;
-      ctx.globalAlpha = 0.5;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // 經線圈（子午線）：每 30°
-      ctx.strokeStyle = primary;
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.28;
-      for (let lng = -180; lng < 180; lng += 30) {
-        const meridian: LatLng[] = [];
-        for (let lat = -90; lat <= 90; lat += 5) meridian.push({ lat, lng });
-        strokePath(meridian);
-      }
-      // 緯線圈：每 30°
-      for (let lat = -60; lat <= 60; lat += 30) {
-        const parallel: LatLng[] = [];
-        for (let lng = -180; lng <= 180; lng += 5) parallel.push({ lat, lng });
-        strokePath(parallel);
-      }
-      ctx.globalAlpha = 1;
-
-      // 連線弧線：本機 → 其他每個點
-      const pts = pointsRef.current;
-      const self = pts.find((p) => p.self);
-      if (self) {
-        const a = projectOrthographic(self.coord, cx, cy, r, rotation);
-        for (const other of pts) {
-          if (other.self) continue;
-          const b = projectOrthographic(other.coord, cx, cy, r, rotation);
-          // 弧的控制點：兩點中點往外推，形成飛越感
-          const mx = (a.x + b.x) / 2;
-          const my = (a.y + b.y) / 2;
-          const ox = mx - cx;
-          const oy = my - cy;
-          const olen = Math.hypot(ox, oy) || 1;
-          const lift = r * 0.5;
-          const ctrlX = mx + (ox / olen) * lift;
-          const ctrlY = my + (oy / olen) * lift;
-
-          ctx.strokeStyle = primary;
-          ctx.globalAlpha = a.visible || b.visible ? 0.75 : 0.25;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.quadraticCurveTo(ctrlX, ctrlY, b.x, b.y);
-          ctx.stroke();
-
-          // 沿弧線流動的光點（拖尾，更明顯）
-          for (let k = 0; k < 3; k++) {
-            const tp = (arcPhase - k * 0.06 + 1) % 1;
-            const qx = (1 - tp) * (1 - tp) * a.x + 2 * (1 - tp) * tp * ctrlX + tp * tp * b.x;
-            const qy = (1 - tp) * (1 - tp) * a.y + 2 * (1 - tp) * tp * ctrlY + tp * tp * b.y;
-            ctx.globalAlpha = 0.9 - k * 0.28;
-            ctx.fillStyle = accent;
-            ctx.beginPath();
-            ctx.arc(qx, qy, 3.5 - k, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-      }
-      ctx.globalAlpha = 1;
-
-      // 座標光點（自己較亮較大，帶脈衝環）
-      const pulse = (Math.sin(t * 2.2) + 1) / 2; // 0..1
-      for (const pt of pts) {
-        const p = projectOrthographic(pt.coord, cx, cy, r, rotation);
-        if (!p.visible) continue;
-        const color = pt.self ? primary : accent;
-        const radius = pt.self ? 5 : 4.5;
-        // 脈衝環（擴散）
-        ctx.globalAlpha = 0.35 * (1 - pulse);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius + 3 + pulse * 7, 0, Math.PI * 2);
-        ctx.stroke();
-        // 外圈光暈
-        ctx.globalAlpha = 0.3;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius * 2.1, 0, Math.PI * 2);
-        ctx.fill();
-        // 實心點
-        ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        // 白心
-        ctx.fillStyle = '#fff';
-        ctx.globalAlpha = 0.9;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius * 0.42, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-
-      rotation = (rotation + 0.22) % 360;
-      arcPhase = (arcPhase + 0.012) % 1;
-      t += 0.016;
-      raf = requestAnimationFrame(draw);
-    };
-
-    raf = requestAnimationFrame(draw);
     return () => {
-      stopped = true;
-      cancelAnimationFrame(raf);
+      if (raf) cancelAnimationFrame(raf);
+      globe?.destroy();
     };
-  }, [size]);
+    // points 內容變化時重建（peer 加入）；主題變化時換色
+  }, [points, size, theme]);
 
   return (
     <div className="connection-globe" aria-hidden="true">
       <canvas
         ref={canvasRef}
-        style={{ width: size, height: size }}
+        style={{ width: size, height: size, aspectRatio: '1' }}
         className="connection-globe-canvas"
       />
     </div>
