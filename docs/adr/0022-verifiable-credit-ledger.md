@@ -37,6 +37,20 @@
 - **自簽自有日誌**能防第三方竄改與事後偷改（鏈斷），但擋不了持金鑰的本人重寫整條並
   重簽。要跨主體不可否認，需共簽 / 外部時間戳 / 錨定——屬後續。
 
+## 續：正當性層（共簽收據）
+
+帳本給「完整性」，`CoSignedReceipt`（`src/core/incentive/CoSignedReceipt.ts`）補「正當性」：
+中繼賺點的收據要 **relay（賺點方）+ requester（受益方）雙簽**才有效——relay 一方
+偽造不了（沒有 requester 簽章不算數）。`createReceiptDraft`（relay 起草簽）→
+`counterSign`（requester 共簽）→ `verifyReceipt`（雙簽驗證）。自簽自收（relay===requester）
+直接拒（女巫嫌疑）。真實 ECDSA 測試涵蓋單方偽造、換人簽、竄改欄位、自簽全被擋。
+
+三層合起來 = 可信點數：**完整性（雜湊鏈）+ 正當性（共簽）+ 唯一性（防女巫 App Check）**。
+
+**wiring 留部署**：中繼當下 requester 即時回簽是傳輸層協議（延伸 mesh identity 公鑰交換），
+需真實多節點；本模組交付「收據產生/驗證邏輯」，可獨立驗證。`recordRelayContribution`
+接受收據當 earn gate 是下一步接線點。
+
 ## Consequences
 
 - **好處**：點數帳本可驗證、防竄改，成本接近零（無 gas/錢包/代幣/法遵）。這是
