@@ -17,6 +17,7 @@
 
 import { metricsCollector, type MetricsSnapshot } from './MetricsCollector';
 import { initRemoteTelemetry, type RemoteTelemetry } from './RemoteTelemetry';
+import { connectionStats } from './ConnectionStats';
 
 const DEFAULT_INTERVAL_MS = 10_000;
 
@@ -59,11 +60,26 @@ function defaultSink(snapshot: MetricsSnapshot): void {
   }
 
   if (Object.keys(snapshot.buffer).length > 0) {
-     
+
     console.table(snapshot.buffer);
   }
 
-   
+  // P0 連線量測（跨 session 累積）：直連成功率決定社群中繼（ADR-0012）投資優先級
+  const conn = connectionStats.getSnapshot();
+  if (conn.attempts > 0 || conn.fallbackMessages > 0) {
+
+    console.table({
+      attempts: conn.attempts,
+      connected: conn.connected,
+      failed: conn.failed,
+      directSuccessRate: conn.directSuccessRate !== null ? `${(conn.directSuccessRate * 100).toFixed(1)}%` : 'n/a',
+      iceRestarts: conn.iceRestarts,
+      restartRecovered: conn.iceRestartRecovered,
+      fallbackMessages: conn.fallbackMessages,
+    });
+  }
+
+
   console.groupEnd();
 }
 
