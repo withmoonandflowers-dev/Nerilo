@@ -22,6 +22,8 @@
 import { LocalCreditProvider } from './LocalCreditProvider';
 import { DEFAULT_CREDIT_RATES } from './types';
 import type { CreditBalance, ServiceTier } from '../relay/types';
+import type { CreditLedger, VerifyResult } from './CreditLedger';
+import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
 
 const STORAGE_KEY = 'nerilo.credits.v1';
@@ -46,6 +48,44 @@ export class CreditEconomy {
   // 在線累積狀態
   private accrualTimer: ReturnType<typeof setInterval> | null = null;
   private earning = false;
+
+  /** 可選的可驗證帳本（ADR-0022）：attach 後每筆賺/花以簽章串鏈記錄，可驗防竄改 */
+  private ledger: CreditLedger | null = null;
+
+  /**
+   * 掛上可驗證帳本。之後每筆 earn/spend 以「實際套用的差額」附加成簽章 entry。
+   * 記錄的是 provider 真正套用的量（例：節流後可能為 0 就不記），故帳本與餘額一致。
+   */
+  attachLedger(ledger: CreditLedger): void {
+    this.ledger = ledger;
+  }
+
+  /** 驗證帳本完整性（防竄改）。未掛帳本回 ok=true（無可驗即無竄改風險）。 */
+  async verifyLedger(): Promise<VerifyResult> {
+    return this.ledger ? this.ledger.verify() : { ok: true };
+  }
+
+  /** 匯出帳本（稽核/傳輸）。未掛帳本回 null。 */
+  exportLedger(): string | null {
+    return this.ledger ? this.ledger.serialize() : null;
+  }
+
+  /** 把「實際差額」記進帳本（差額 <= 0 或未掛帳本則略過）。 */
+  private recordToLedger(op: 'earn' | 'spend', amount: number, reason: string): void {
+    if (!this.ledger || amount <= 0) return;
+    void this.ledger.append(op, amount, reason, Date.now(), generateUUID()).catch((err) => {
+      logger.warn('[CreditEconomy] ledger append failed', { err });
+    });
+  }
+
+  /** 讀本機餘額數字（同步，內部用；provider 已同步回傳） */
+  private currentBalance(): number {
+    if (!this.nodeId) return 0;
+    for (const b of this.provider.exportBalances()) {
+      if (b.nodeId === this.nodeId) return b.balance;
+    }
+    return 0;
+  }
 
   /** 綁定本機節點並載入持久化餘額。重複 init 同一 nodeId 為 no-op。 */
   init(nodeId: string): void {
@@ -87,7 +127,9 @@ export class CreditEconomy {
 
   private accrue(hours: number): void {
     if (!this.nodeId || hours <= 0) return;
+    const before = this.currentBalance();
     this.provider.recordUptime(this.nodeId, hours);
+    this.recordToLedger('earn', this.currentBalance() - before, 'uptime');
     this.persistAndEmit();
   }
 
@@ -102,7 +144,9 @@ export class CreditEconomy {
    */
   async recordRelayContribution(requesterNodeId: string, bytesRelayed: number): Promise<void> {
     if (!this.nodeId || bytesRelayed <= 0) return;
+    const before = this.currentBalance();
     await this.provider.recordRelay(this.nodeId, requesterNodeId, bytesRelayed, 'local');
+    this.recordToLedger('earn', this.currentBalance() - before, 'relay');
     this.persistAndEmit();
   }
 
@@ -126,6 +170,7 @@ export class CreditEconomy {
     if (!this.nodeId || amount <= 0) return false;
     const ok = await this.provider.deductCredits(this.nodeId, amount);
     if (ok) {
+      this.recordToLedger('spend', amount, reason);
       logger.info('[CreditEconomy] spent', { amount, reason });
       this.persistAndEmit();
     }
