@@ -11,6 +11,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GossipMessageHandler } from '../../src/core/mesh/GossipMessageHandler';
+import { SecurityManager } from '../../src/core/mesh/SecurityManager';
+import { arrayBufferToBase64 } from '../../src/utils/crypto';
 import type { GossipMessage } from '../../src/types';
 
 // ── Mock MeshTopologyManager ────────────────────────────────────────────────
@@ -207,6 +209,18 @@ describe('GossipMessageHandler', () => {
   // ── 簽名驗證 ─────────────────────────────────────────────────────────────
 
   describe('handleReceivedMessage — 簽名驗證', () => {
+    it('驗簽以 maxAgeMs: null 呼叫（回歸：時效窗拒掉 anti-entropy 補送的舊訊息）', async () => {
+      // 時效防護在 gossip 路徑由 (senderId, seq) 去重承擔；驗簽若帶預設
+      // 5 分鐘窗，補送給遲到者的舊訊息會被拒、永久遺失。
+      await handler.handleReceivedMessage(makeMessage({ seq: 1 }), 'n1');
+
+      expect(security.verifyMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        { maxAgeMs: null },
+      );
+    });
+
     it('簽名無效時不觸發監聽器', async () => {
       // 建立一個 verifyMessage 回傳 false 的 security mock
       security = makeMockSecurityManager(false);
@@ -310,6 +324,52 @@ describe('GossipMessageHandler', () => {
       expect(sent).toHaveLength(1);
       expect(sent[0].senderId).toBe('local-user');
       expect(sent[0].content).toBe('from-local');
+    });
+  });
+
+  // ── 補送舊訊息（真 SecurityManager 整合）──────────────────────────────────
+
+  describe('anti-entropy 補送 >5 分鐘舊訊息（真 SecurityManager 整合）', () => {
+    it('遲到者收到 30 分鐘前簽名的補送訊息：恰好一次呈現，重複補送被去重', async () => {
+      const realSecurity = new SecurityManager();
+      const kp = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      );
+      const pubKeyB64 = arrayBufferToBase64(
+        await crypto.subtle.exportKey('spki', kp.publicKey),
+      );
+
+      // 補送到達時可能 ttl=0（原始洪泛已耗盡半徑）——顯示不受 ttl 限制
+      const unsigned: Omit<GossipMessage, 'signature'> = {
+        roomId: 'room-test',
+        senderId: 'sender-abc',
+        pubKey: pubKeyB64,
+        seq: 1,
+        timestamp: Date.now() - 30 * 60 * 1000,
+        content: 'old-but-valid',
+        ttl: 0,
+      };
+      const signature = await realSecurity.signMessage(unsigned, kp.privateKey);
+      const fillMessage: GossipMessage = { ...unsigned, signature };
+
+      const lateJoiner = new GossipMessageHandler(
+        'room-test',
+        'late-user',
+        identity as any, // deriveUserId mock 回傳 'sender-abc'，與訊息一致
+        realSecurity,
+        topology as any,
+      );
+      const listener = vi.fn();
+      lateJoiner.onMessage(listener);
+
+      await lateJoiner.handleReceivedMessage(fillMessage, 'n1');
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      // 另一鄰居的 digest 輪再補一次同一則 → (senderId, seq) 去重擋下
+      await lateJoiner.handleReceivedMessage({ ...fillMessage }, 'n2');
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 

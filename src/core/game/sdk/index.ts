@@ -1,5 +1,7 @@
 export { GameTransportSDK } from './GameTransportSDK';
 export type { IGameBroadcast } from './GameTransportSDK';
+// mesh 傳輸接線（M4）：遊戲事件走 gossip 可靠廣播（恰好一次）
+export { MeshGossipBroadcast, attachGameTransportToMesh } from './MeshGossipBroadcast';
 export { GameSession } from './GameSession';
 export { GameFeature, setGameFeatureCallbacks } from './GameFeature';
 export { DeterministicRNG } from './DeterministicRNG';
