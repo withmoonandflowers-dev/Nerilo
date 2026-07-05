@@ -88,6 +88,30 @@ describe('SecurityManager', () => {
     });
   });
 
+  describe('channel 欄位有簽章保護（M4：防跨通道錯誤分發）', () => {
+    it('把 chat 訊息竄改成 game 通道 → 驗簽失敗', async () => {
+      const kp = await generateSigningKeyPair();
+      const msg = makeUnsignedMessage({
+        pubKey: await exportPubKeySpki(kp.publicKey),
+        channel: 'chat',
+      });
+      const signature = await sm.signMessage(msg, kp.privateKey);
+
+      const tampered: GossipMessage = { ...msg, signature, channel: 'game' };
+      expect(await sm.verifyMessage(tampered, kp.publicKey)).toBe(false);
+    });
+
+    it('channel:game 正常簽驗 round-trip', async () => {
+      const kp = await generateSigningKeyPair();
+      const msg = makeUnsignedMessage({
+        pubKey: await exportPubKeySpki(kp.publicKey),
+        channel: 'game',
+      });
+      const signature = await sm.signMessage(msg, kp.privateKey);
+      expect(await sm.verifyMessage({ ...msg, signature }, kp.publicKey)).toBe(true);
+    });
+  });
+
   describe('tampered message detection', () => {
     it('fails verification when content is tampered', async () => {
       const kp = await generateSigningKeyPair();
@@ -140,6 +164,62 @@ describe('SecurityManager', () => {
 
       const valid = await sm.verifyMessage(signedMsg, kp.publicKey);
       expect(valid).toBe(true);
+    });
+  });
+
+  describe('時效窗可停用（回歸：補送舊訊息被時效拒絕、遲到者永久收不到）', () => {
+    it('maxAgeMs: null 接受任意舊的訊息（anti-entropy 補送給遲到者）', async () => {
+      const kp = await generateSigningKeyPair();
+      const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
+      const msg = makeUnsignedMessage({ timestamp: thirtyMinAgo });
+
+      const signature = await sm.signMessage(msg, kp.privateKey);
+      const signedMsg: GossipMessage = { ...msg, signature };
+
+      expect(await sm.verifyMessage(signedMsg, kp.publicKey)).toBe(false); // 預設仍拒
+      expect(
+        await sm.verifyMessage(signedMsg, kp.publicKey, { maxAgeMs: null }),
+      ).toBe(true);
+    });
+
+    it('maxAgeMs: null 仍拒絕未來時間戳（合法補送只會帶過去時間）', async () => {
+      const kp = await generateSigningKeyPair();
+      const msg = makeUnsignedMessage({ timestamp: Date.now() + 31_000 });
+
+      const signature = await sm.signMessage(msg, kp.privateKey);
+      const signedMsg: GossipMessage = { ...msg, signature };
+
+      expect(
+        await sm.verifyMessage(signedMsg, kp.publicKey, { maxAgeMs: null }),
+      ).toBe(false);
+    });
+
+    it('maxAgeMs: null 仍驗簽（停用時效 ≠ 停用完整性檢查）', async () => {
+      const kp = await generateSigningKeyPair();
+      const msg = makeUnsignedMessage({ timestamp: Date.now() - 30 * 60 * 1000 });
+
+      const signature = await sm.signMessage(msg, kp.privateKey);
+      const signedMsg: GossipMessage = { ...msg, signature, content: 'tampered' };
+
+      expect(
+        await sm.verifyMessage(signedMsg, kp.publicKey, { maxAgeMs: null }),
+      ).toBe(false);
+    });
+
+    it('自訂 maxAgeMs 生效', async () => {
+      const kp = await generateSigningKeyPair();
+      const twoMinAgo = Date.now() - 2 * 60 * 1000;
+      const msg = makeUnsignedMessage({ timestamp: twoMinAgo });
+
+      const signature = await sm.signMessage(msg, kp.privateKey);
+      const signedMsg: GossipMessage = { ...msg, signature };
+
+      expect(
+        await sm.verifyMessage(signedMsg, kp.publicKey, { maxAgeMs: 60_000 }),
+      ).toBe(false);
+      expect(
+        await sm.verifyMessage(signedMsg, kp.publicKey, { maxAgeMs: 3 * 60_000 }),
+      ).toBe(true);
     });
   });
 

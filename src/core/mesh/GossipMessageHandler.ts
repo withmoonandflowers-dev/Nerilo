@@ -46,7 +46,11 @@ export class GossipMessageHandler {
    * 發送訊息
    * @param messageId 應用層訊息 id（樂觀顯示同款）；帶上讓收端跨傳輸路徑去重
    */
-  async sendMessage(content: string, messageId?: string): Promise<void> {
+  async sendMessage(
+    content: string,
+    messageId?: string,
+    channel?: GossipMessage['channel']
+  ): Promise<void> {
     // Rate limiting
     if (!this.checkSendRate(this.userId)) {
       throw new Error('Rate limit exceeded');
@@ -58,7 +62,7 @@ export class GossipMessageHandler {
     // 從拓撲管理器讀取動態 gossip 設定
     const gossipConfig = this.topologyManager.getGossipConfig();
 
-    // 建立訊息
+    // 建立訊息（channel 缺省 = 'chat'；游戲事件帶 'game'，同管線同保證）
     const message: Omit<GossipMessage, 'signature'> = {
       roomId: this.roomId,
       senderId: this.userId,
@@ -68,6 +72,7 @@ export class GossipMessageHandler {
       content,
       ttl: gossipConfig.ttl,
       ...(messageId !== undefined ? { messageId } : {}),
+      ...(channel !== undefined ? { channel } : {}),
     };
 
     // 簽名
@@ -162,9 +167,15 @@ export class GossipMessageHandler {
 
     this.inflight.add(key);
     try {
-      // 驗證簽名
+      // 驗證簽名。maxAgeMs: null——anti-entropy 補送與首次洪泛在線路上無法
+      // 區分（補送即原始已簽名訊息重送），時效窗會把補給遲到者的 >5 分鐘
+      // 舊訊息拒掉、造成永久遺失。本路徑的重放防護由上方 (senderId, seq)
+      // 去重 + floor 承擔；代價是跨會話重放不再受時效窗限制（新會話 store
+      // 為空），屬已記錄的殘留風險，見 docs/QA-REPORT-chat.md。
       const publicKey = await this.securityManager.importPublicKey(message.pubKey);
-      const isValid = await this.securityManager.verifyMessage(message, publicKey);
+      const isValid = await this.securityManager.verifyMessage(message, publicKey, {
+        maxAgeMs: null,
+      });
 
       if (!isValid) {
         logger.warn('[GossipMessageHandler] Invalid signature', {

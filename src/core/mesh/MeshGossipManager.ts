@@ -200,12 +200,18 @@ export class MeshGossipManager {
   /**
    * 發送訊息
    * @param messageId 應用層訊息 id，貫穿至 gossip payload（跨傳輸路徑去重）
+   * @param channel 應用通道（M4）：缺省 'chat'；遊戲事件帶 'game'，
+   *   走同一條「簽章+去重+anti-entropy 對帳」管線，獲得同等恰好一次保證
    */
-  async sendMessage(content: string, messageId?: string): Promise<void> {
+  async sendMessage(
+    content: string,
+    messageId?: string,
+    channel?: GossipMessage['channel']
+  ): Promise<void> {
     if (!this.initialized || !this.messageHandler) {
       throw new Error('MeshGossipManager not initialized. Call initialize() first.');
     }
-    return await this.messageHandler.sendMessage(content, messageId);
+    return await this.messageHandler.sendMessage(content, messageId, channel);
   }
 
   /**

@@ -7,8 +7,10 @@ import { logger } from '../../utils/logger';
  * 負責訊息的簽名和驗證
  */
 export class SecurityManager {
-  /** 訊息最大有效時間（5 分鐘） */
+  /** 訊息最大有效時間（5 分鐘）——verifyMessage 的預設時效窗，可由呼叫端停用 */
   private static readonly MAX_MESSAGE_AGE_MS = 5 * 60 * 1000;
+  /** 容忍的時鐘偏差：timestamp 超前本地時鐘逾此值一律拒絕（不受 maxAgeMs 影響） */
+  private static readonly MAX_CLOCK_SKEW_MS = 30_000;
 
   /**
    * 簽名訊息
@@ -22,6 +24,7 @@ export class SecurityManager {
     // 所有經轉發（ttl-1）的副本簽章必然失效，gossip 轉發路徑整條壞死。
     // ttl 被竄改只影響洪泛半徑，不影響訊息完整性（內容欄位全數有簽）。
     // messageId 是跨傳輸路徑去重的依據，必須簽（否則可竄改造成收端重複顯示）。
+    // channel 決定上層分發（chat/game），必須簽（否則可跨通道錯誤分發）。
     const messageData = JSON.stringify({
       roomId: message.roomId,
       senderId: message.senderId,
@@ -30,6 +33,7 @@ export class SecurityManager {
       timestamp: message.timestamp,
       content: message.content,
       ...(message.messageId !== undefined ? { messageId: message.messageId } : {}),
+      ...(message.channel !== undefined ? { channel: message.channel } : {}),
     });
 
     // 計算 hash
@@ -55,15 +59,30 @@ export class SecurityManager {
 
   /**
    * 驗證訊息簽名
+   *
+   * @param options.maxAgeMs 時效窗（ms）；未給用預設 5 分鐘，傳 null 停用過期檢查。
+   *   gossip 收訊路徑必須傳 null：anti-entropy 補送的是原始已簽名訊息，線路上與
+   *   首次洪泛無法區分，任何 wall-clock 門檻都會把補給遲到者的舊訊息拒掉、破壞
+   *   「最終各恰好一次」。該路徑的重放防護由 (senderId, seq) store 去重承擔
+   *   （見 GossipMessageHandler.handleReceivedMessage）。未來時間戳不受此參數
+   *   影響、一律拒絕——合法補送只會帶過去的 timestamp。
    */
   async verifyMessage(
     message: GossipMessage,
-    publicKey: CryptoKey
+    publicKey: CryptoKey,
+    options?: { maxAgeMs?: number | null }
   ): Promise<boolean> {
     try {
-      // 防止 replay attack：拒絕過期訊息
+      // 防止 replay attack：拒絕過期或未來訊息（時效窗可依呼叫端停用，見上）
+      const maxAgeMs =
+        options?.maxAgeMs === undefined
+          ? SecurityManager.MAX_MESSAGE_AGE_MS
+          : options.maxAgeMs;
       const age = Date.now() - message.timestamp;
-      if (age > SecurityManager.MAX_MESSAGE_AGE_MS || age < -30_000) {
+      if (
+        (maxAgeMs !== null && age > maxAgeMs) ||
+        age < -SecurityManager.MAX_CLOCK_SKEW_MS
+      ) {
         logger.warn('[SecurityManager] Message rejected: stale or future timestamp', {
           senderId: message.senderId,
           ageMs: age,
@@ -82,6 +101,7 @@ export class SecurityManager {
         timestamp: message.timestamp,
         content: message.content,
         ...(message.messageId !== undefined ? { messageId: message.messageId } : {}),
+        ...(message.channel !== undefined ? { channel: message.channel } : {}),
       });
       
       const encoder = new TextEncoder();
