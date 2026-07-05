@@ -1,0 +1,233 @@
+/* Nerilo 設計 token — iMessage / Telegram 亮色通訊風（docs/UI-REDESIGN-SPEC.md）*/
+:root {
+  --bg: #F2F2F7;
+  --surface: #FFFFFF;
+  --primary: #0A84FF;
+  --primary-press: #0774E0;
+  --bubble-other: #E9E9EB;
+  --text: #000000;
+  --text-2: #8E8E93;
+  --text-3: #C7C7CC;
+  --separator: rgba(60, 60, 67, 0.12);
+  --success: #34C759;
+  --warning: #FF9F0A;
+  --danger: #FF3B30;
+  --on-primary: #FFFFFF;
+
+  --r-bubble: 18px;
+  --r-card: 16px;
+  --r-btn: 12px;
+  --r-pill: 20px;
+
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.10);
+
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --t-fast: 180ms;
+  --t-mid: 280ms;
+
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI',
+    'PingFang TC', 'Noto Sans TC', sans-serif;
+}
+
+[data-theme='dark'] {
+  --bg: #000000;
+  --surface: #1C1C1E;
+  --bubble-other: #26262A;
+  --text: #FFFFFF;
+  --text-2: #8E8E93;
+  --text-3: #48484A;
+  --separator: rgba(84, 84, 88, 0.5);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #__nuxt {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+input, textarea {
+  font-family: inherit;
+  color: var(--text);
+}
+
+/* 共用元件樣式 */
+.btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 20px;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: var(--r-pill);
+  font-size: 17px;
+  font-weight: 600;
+  transition: transform var(--t-fast) var(--spring), background var(--t-fast) var(--ease), opacity var(--t-fast) var(--ease);
+}
+.btn-primary:active { transform: scale(0.97); background: var(--primary-press); }
+.btn-primary:disabled { opacity: 0.4; cursor: default; }
+
+.btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 20px;
+  background: var(--surface);
+  color: var(--primary);
+  border-radius: var(--r-pill);
+  font-size: 17px;
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+  transition: transform var(--t-fast) var(--spring);
+}
+.btn-secondary:active { transform: scale(0.97); }
+
+.card {
+  background: var(--surface);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-1);
+}
+
+.field {
+  width: 100%;
+  padding: 13px 16px;
+  border: none;
+  border-radius: var(--r-btn);
+  background: var(--bg);
+  font-size: 17px;
+  outline: none;
+  transition: box-shadow var(--t-fast) var(--ease);
+}
+.field:focus { box-shadow: 0 0 0 2px var(--primary); }
+
+/* 列表 stagger 進場：每列依 --i 延遲 30ms，只動 transform/opacity（GPU 合成，不觸發 layout） */
+.stagger {
+  animation: stagger-in 320ms var(--spring) both;
+  animation-delay: calc(var(--i, 0) * 30ms);
+}
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 頁面過場：預設淡入；進聊天/等待室從右滑入（iOS 導航心智） */
+.page-enter-active, .page-leave-active { transition: opacity var(--t-fast) var(--ease); }
+.page-enter-from, .page-leave-to { opacity: 0; }
+
+.slide-enter-active { transition: transform var(--t-mid) var(--ease), opacity var(--t-mid) var(--ease); }
+.slide-leave-active { transition: opacity var(--t-fast) var(--ease); }
+.slide-enter-from { transform: translateX(24px); opacity: 0; }
+.slide-leave-to { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   neo 主題 —「前衛」視覺（深紫黑 × 霓虹粉紫漸層 × 酸性萊姆 × 玻璃）
+   目標客群語彙：edgy/Y2K revival；聊天與遊戲同一套語言。
+   僅覆蓋 tokens + 少量穩定 class 的皮膚；版面規則不在此檔。
+   ═══════════════════════════════════════════════════════════════════ */
+[data-theme='neo'] {
+  --bg: #0E0812;
+  --surface: #1A1122;
+  --primary: #FF2D8A;
+  --primary-press: #E01A75;
+  --bubble-other: rgba(255, 255, 255, 0.07);
+  --text: #F7F2FA;
+  --text-2: #A99BB8;
+  --text-3: #5E5070;
+  --separator: rgba(255, 255, 255, 0.09);
+  --success: #C8FF3D;
+  --warning: #FFB02E;
+  --danger: #FF4D6D;
+  --on-primary: #FFFFFF;
+
+  --neo-grad: linear-gradient(135deg, #FF2D8A 0%, #8B5CF6 100%);
+  --neo-grad-soft: linear-gradient(135deg, rgba(255, 45, 138, 0.16), rgba(139, 92, 246, 0.16));
+  --neo-glow: 0 0 18px rgba(255, 45, 138, 0.35);
+  --neo-glow-violet: 0 0 22px rgba(139, 92, 246, 0.3);
+  --neo-lime: #C8FF3D;
+  --neo-violet: #8B5CF6;
+}
+
+/* 背景氛圍：兩團霓虹光暈（固定、極淡，不干擾可讀性） */
+[data-theme='neo'] body {
+  background:
+    radial-gradient(600px 400px at 85% -5%, rgba(139, 92, 246, 0.18), transparent 70%),
+    radial-gradient(500px 380px at -10% 100%, rgba(255, 45, 138, 0.14), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* 我方泡泡：霓虹漸層 + 微光暈（specificity 加 .chat 蓋過 scoped 樣式） */
+[data-theme='neo'] .chat .bubble--mine {
+  background: var(--neo-grad);
+  box-shadow: var(--neo-glow);
+}
+[data-theme='neo'] .chat .bubble--other {
+  background: var(--bubble-other);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+/* 標題：漸層文字（前衛感的錨點，只此一處，避免氾濫） */
+[data-theme='neo'] .chat .chat__title {
+  background: var(--neo-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* 送出鍵與新訊息 pill：同一漸層語言 */
+[data-theme='neo'] .chat .chat__send,
+[data-theme='neo'] .chat .chat__new-pill {
+  background: var(--neo-grad);
+  box-shadow: var(--neo-glow);
+}
+
+/* 輸入框：玻璃 */
+[data-theme='neo'] .chat .chat__input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+[data-theme='neo'] .chat .chat__input:focus {
+  border-color: var(--neo-violet);
+  box-shadow: var(--neo-glow-violet);
+}
+
+/* 提示橫幅（原版寫死亮色底，neo 下改玻璃） */
+[data-theme='neo'] .chat .chat__banner {
+  background: rgba(255, 176, 46, 0.12);
+  color: var(--warning);
+}
+[data-theme='neo'] .chat .chat__banner--info {
+  background: rgba(139, 92, 246, 0.14);
+  color: #C9B8F5;
+}
