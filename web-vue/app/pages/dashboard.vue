@@ -88,7 +88,9 @@ async function handleCreate() {
     const roomId = await RoomService.createRoom(
       user.value.uid,
       user.value.displayName ?? '訪客',
-      true,
+      // isPrivate=false（對齊 React 版預設）：私房會讓非參與者連 getRoom 都被
+      // 規則拒絕，「分享連結邀人」整條路壞掉。私密房等有 UI 開關再開放。
+      false,
       undefined,
       undefined,
       undefined,
