@@ -62,6 +62,22 @@ service cloud.firestore {
         && data.participants.size() <= 5;
     }
 
+    // ── 參與者自行離開 ──────────────────────────────────────────────
+    // leaveRoom 是把自己從 participants 移除，更新後 uid 必不在列表中，
+    // 落不進「加入/更新身分」分支，需要獨立分支。
+    // 限制：被移除的成員 ⊆ {自己} 且不得新增成員；只能動離開相關欄位；
+    // meshIdentities 另受 meshIdentitiesChangeIsValid 限制（只能動自己的條目）。
+    function isSelfLeaveOnly() {
+      let oldP = resource.data.participants.toSet();
+      let newP = request.resource.data.participants.toSet();
+      return request.auth.uid in resource.data.participants
+        && !(request.auth.uid in request.resource.data.participants)
+        && oldP.difference(newP).hasOnly([request.auth.uid])
+        && newP.difference(oldP).size() == 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['participants', 'participantCount', 'lastActiveAt', 'ttlExpireAt', 'meshIdentities']);
+    }
+
     // P2P Rooms collection
     // 安全規則：只允許已登入的用戶（非匿名）建立房間
     match /p2pRooms/{roomId} {
@@ -77,12 +93,10 @@ service cloud.firestore {
 
       // 建立：只允許已登入的用戶（非匿名）建立房間
       // 且 ownerUid 必須是當前用戶
-      // 例外：若文件帶有 e2eTestMode=true 標記，允許匿名使用者建立（僅 emulator 環境有效）
       allow create: if isAuthenticated() &&
         request.resource.data.ownerUid == request.auth.uid &&
         participantsWithinCap(request.resource.data) &&
-        (request.auth.token.firebase.sign_in_provider != "anonymous" ||
-         request.resource.data.e2eTestMode == true);
+        request.auth.token.firebase.sign_in_provider != "anonymous";
 
       // 更新：允許房主更新房間，或使用者加入/更新自己的身分。
       // 任何更新都不得修改其他使用者的 meshIdentities 條目（防 MITM）。
@@ -93,16 +107,40 @@ service cloud.firestore {
         // 使用者加入房間：更新後必須在 participants 中，且房間非 closed
         (request.auth.uid in request.resource.data.participants &&
          resource.data.status != 'closed') ||
-        // 既有參與者可以更新自己的 meshIdentity（含格式驗證）
+        // 參與者離開房間：把自己（且只有自己）從 participants 移除。
+        // 必須排在 meshIdentity 分支之前：rules 的 || 由左至右短路且不吸收
+        // 錯誤，後面分支若 evaluation error 會蓋掉這裡的 true。
+        isSelfLeaveOnly() ||
+        // 既有參與者可以更新自己的 meshIdentity（含格式驗證）。
+        // 用 `in` 檢查 key 存在——直接索引不存在的 key 是 evaluation error。
         (request.auth.uid in resource.data.participants &&
-         request.resource.data.meshIdentities != null &&
-         request.resource.data.meshIdentities[request.auth.uid] != null &&
+         'meshIdentities' in request.resource.data &&
+         request.auth.uid in request.resource.data.meshIdentities &&
          isValidMeshIdentity(request.resource.data.meshIdentities[request.auth.uid]))
       );
 
-      // 刪除：只允許房主刪除自己的房間
-      allow delete: if isAuthenticated() &&
-        request.auth.uid == resource.data.ownerUid;
+      // 刪除：房主，或任何參與者（持久聊天室的「全員軟刪除→最後一人真刪」
+      // 路徑；成員互信模型下允許，見 RoomService.softDeleteRoom）
+      allow delete: if isAuthenticated() && (
+        request.auth.uid == resource.data.ownerUid ||
+        request.auth.uid in resource.data.participants
+      );
+
+      // memberStates subcollection — 每位成員的個人狀態（已讀/釘選/軟刪除）
+      // 文件 id = uid；只能寫自己的（防竄改他人已讀/刪除狀態），參與者可讀
+      //（softDeleteRoom 需要讀全員狀態判斷是否全刪）。
+      match /memberStates/{memberUid} {
+        allow read: if isAuthenticated() &&
+          request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
+        // 只能建立/更新自己的（防竄改他人已讀/釘選/刪除狀態）
+        allow create, update: if isAuthenticated() &&
+          request.auth.uid == memberUid &&
+          request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
+        // 刪除開放給參與者：全員軟刪除後的真刪除要連他人狀態文件一起清，
+        // 否則留孤兒子文件（父文件刪除不會級聯）
+        allow delete: if isAuthenticated() &&
+          request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants;
+      }
 
       // Signals subcollection - signaling 訊息
       // 安全措施：
@@ -153,6 +191,23 @@ service cloud.firestore {
         allow delete: if isAuthenticated()
           && resource.data.from == request.auth.uid;
       }
+    }
+
+    // 好友關係（2026-07-05）：id = 排序後 uidA_uidB；只有當事雙方可讀寫。
+    // 只有「受邀方」能把 pending 改 accepted（防單方面自我通過）。
+    match /friendships/{fid} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.uids;
+      allow create: if isAuthenticated() &&
+        request.resource.data.uids.size() == 2 &&
+        request.auth.uid in request.resource.data.uids &&
+        request.resource.data.requestedBy == request.auth.uid &&
+        request.resource.data.status == 'pending';
+      allow update: if isAuthenticated() &&
+        request.auth.uid in resource.data.uids &&
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'accepted' &&
+        resource.data.requestedBy != request.auth.uid;
+      allow delete: if isAuthenticated() && request.auth.uid in resource.data.uids;
     }
 
     // 明確禁止其他集合儲存敏感內容

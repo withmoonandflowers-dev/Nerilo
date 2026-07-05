@@ -23,6 +23,13 @@ export interface IceServers {
   credential?: string;
 }
 
+/**
+ * signal 回看窗：訂閱下限往回退這麼久，讓「後進場者」能讀到「先進場者」
+ * 早先寫的 offer/ICE。涵蓋好友 DM／分享連結晚進場（一方先到、另一方數分鐘內到）。
+ * 比舊 session 殘留的存活時間短，避免誤讀過期 signals。
+ */
+const SIGNAL_LOOKBACK_MS = 10 * 60 * 1000;
+
 export class P2PConnectionManager {
   private pc: RTCPeerConnection | null = null;
   private roomId: string;
@@ -253,12 +260,21 @@ export class P2PConnectionManager {
     logger.info('[P2PConnectionManager] setupSignalingListeners', { roomId: this.roomId });
 
     const signalsRef = collection(db, 'p2pRooms', this.roomId, 'signals');
-    // 只訂閱「本次 session 之後」建立的 signals，忽略舊 session 殘留。
-    // 這是最關鍵的 signal 隔離：避免上一輪的 offer/answer 干擾新連線。
+    // 訂閱「近期」signals，忽略更早的舊 session 殘留。
+    //
+    // 下限用 sessionStartedAt 往回退一個 LOOKBACK 窗，而非 sessionStartedAt 本身：
+    // 否則「先進場的 initiator 在後進場的 non-initiator 之前寫的 offer」會被
+    // 後者過濾掉（createdAt < 其 sessionStartedAt）→ non-initiator 收不到 offer、
+    // 永遠卡 connecting。這正是好友 DM／分享連結晚進場的失敗模式。
+    // 回看窗涵蓋「一方先到、另一方數分鐘內才進」；processedSignalIds 去重、
+    // cleanupOldSignals 在連上後清除，故放寬下限不會重複處理或污染。
+    const lookbackFrom = Timestamp.fromMillis(
+      this.sessionStartedAt.toMillis() - SIGNAL_LOOKBACK_MS
+    );
     // 使用 asc 排序確保因果順序：offer/answer 先到，ICE candidates 後到。
     const q = query(
       signalsRef,
-      where('createdAt', '>=', this.sessionStartedAt),
+      where('createdAt', '>=', lookbackFrom),
       orderBy('createdAt', 'asc'),
       limit(50)
     );

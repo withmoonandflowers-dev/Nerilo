@@ -20,8 +20,9 @@ import { doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { logger } from '../utils/logger';
 
-/** 與 RoomService 的 OPEN_TTL_MS 一致（30 分鐘） */
-const OPEN_TTL_MS = 30 * 60 * 1000;
+/** 持久聊天室（2026-07-05 產品決策）：與 RoomService.PERSISTENT_TTL_MS 一致，
+ *  心跳只刷新 lastActiveAt，不再把 ttl 縮回 30 分鐘（那會讓持久房被 TTL 政策誤殺） */
+const OPEN_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
 /** 心跳間隔：5 分鐘（TTL 的 1/6，單次失敗仍有多輪補救機會） */
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
