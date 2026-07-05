@@ -44,6 +44,7 @@ import { usePeerGlobe } from '../../hooks/usePeerGlobe';
 import { SkeletonMessages } from '../../components/Skeleton/Skeleton';
 import { formatTimestamp, shouldShowDateSeparator, formatDateSeparator } from '../../utils/formatTimestamp';
 import { roomDisplayName } from '../../utils/roomDisplayName';
+import { TicTacToePanel } from '../game/TicTacToePanel';
 import './ChatPage.css';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ const ChatPage: React.FC = () => {
   const [showConnectionHint, setShowConnectionHint] = useState(false);
   const [hasJoinedRoom, setHasJoinedRoom] = useState(false);
   const [showFirstMsgCoach, setShowFirstMsgCoach] = useState(false);
+  const [showGame, setShowGame] = useState(false);
   const [roomName, setRoomName] = useState<string | undefined>(undefined);
   // 是否為房主（host migration 易主時經 onRoomOpen 更新）——房主負責活性心跳
   const [isRoomOwner, setIsRoomOwner] = useState(false);
@@ -762,8 +764,33 @@ const ChatPage: React.FC = () => {
           >
             <IconVideo size={20} aria-hidden="true" />
           </button>
+          {/* 遊戲 demo（里程碑 1）：2 人星型房限定；遊戲事件走 P2P bus ns:'ttt' */}
+          {architecture.isStar() && (
+            <button
+              type="button"
+              className="btn-call"
+              onClick={() => setShowGame((v) => !v)}
+              aria-label="開啟遊戲"
+              title="井字棋（P2P 傳輸 demo）"
+            >
+              <span aria-hidden="true">🎮</span>
+            </button>
+          )}
         </div>
       </header>
+
+      {/* 井字棋面板：斷線時面板自行顯示「對局暫停」（遊戲不走 Firestore 備援） */}
+      {showGame && architecture.isStar() && user && (
+        <div className="game-panel-float">
+          <TicTacToePanel
+            bus={starTopology.getState().p2pManager?.getChannelBus() ?? null}
+            isInitiator={isRoomOwner}
+            selfId={user.uid}
+            connected={connectionState === 'connected'}
+            onClose={() => setShowGame(false)}
+          />
+        </div>
+      )}
 
       {/* Incoming call banner */}
       {mediaCall.state === 'ringing' && (
