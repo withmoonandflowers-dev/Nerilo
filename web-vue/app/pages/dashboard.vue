@@ -1,27 +1,36 @@
 <script setup lang="ts">
 import { RoomService } from '@legacy/services/RoomService'
+import { FriendService, type Friendship } from '@legacy/services/FriendService'
 import { indexedDBService } from '@legacy/services/IndexedDBService'
 import { localTimezone, timezoneToLatLng } from '@legacy/utils/geo'
-import type { P2PRoom } from '@legacy/types'
+import type { P2PRoom, RoomMemberState } from '@legacy/types'
 import { featureLog } from '@legacy/utils/featureLog'
 import { gradientFor, initialFor } from '~/lib/avatar'
 
 const { user, loading, logout } = useAuth()
 const { error: toastError, success } = useToast()
+const { balance, relayActive, ensureInit } = useCredits()
 
 const myRooms = ref<P2PRoom[]>([])
-const publicRooms = ref<P2PRoom[]>([])
+const memberStates = ref<Record<string, RoomMemberState>>({})
 const previews = ref<Record<string, string>>({})
 const showSheet = ref(false)
 const sheetTab = ref<'create' | 'join'>('create')
 const roomName = ref('')
 const joinCode = ref('')
 const busy = ref(false)
+/** 開啟動作選單的房間 id（⋯ 按鈕） */
+const menuRoomId = ref<string | null>(null)
 
 const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
 
 let unsubMine: (() => void) | null = null
-let unsubPublic: (() => void) | null = null
+let unsubFriends: (() => void) | null = null
+const friendships = ref<Friendship[]>([])
+/** 待我接受的邀請數（header 徽章） */
+const pendingCount = computed(
+  () => friendships.value.filter((f) => f.status === 'pending' && f.requestedBy !== user.value?.uid).length
+)
 
 watchEffect(() => {
   if (loading.value) return
@@ -29,19 +38,109 @@ watchEffect(() => {
   if (unsubMine) return
   const uid = user.value.uid
   featureLog('dashboard', 'init', { uid })
+  ensureInit() // 點數餘額載入（中繼狀態指示）
+  unsubFriends = FriendService.subscribeFriendships(uid, (list) => {
+    friendships.value = list
+  })
   unsubMine = RoomService.subscribeUserRooms(uid, (rooms: P2PRoom[]) => {
     myRooms.value = rooms.filter((r) => r.status !== 'closed')
     loadPreviews(myRooms.value)
-  })
-  unsubPublic = RoomService.subscribePublicRooms((rooms: P2PRoom[]) => {
-    publicRooms.value = rooms
+    // 成員狀態（已讀/釘選/軟刪除）批次載入；寫入走 optimistic 本地更新
+    RoomService.getMyMemberStates(rooms.map((r) => r.roomId), uid).then((map) => {
+      const next: Record<string, RoomMemberState> = {}
+      map.forEach((state, roomId) => { next[roomId] = state })
+      memberStates.value = next
+    }).catch(() => {})
   })
 })
 
 onUnmounted(() => {
   unsubMine?.()
-  unsubPublic?.()
+  unsubFriends?.()
 })
+
+/** DM 房顯示對方名字（roomName 是共享欄位，雙方視角不同 → 由 friendship 解析） */
+function displayNameFor(room: P2PRoom): string {
+  if (room.kind === 'dm') {
+    const f = friendships.value.find((x) => x.dmRoomId === room.roomId)
+    if (f && user.value) {
+      const other = f.uids.find((u) => u !== user.value!.uid)
+      const name = other ? f.names[other] : undefined
+      if (name) return name
+    }
+  }
+  return room.roomName ?? '未命名聊天室'
+}
+
+// ── 列表：隱藏已刪除；釘選一定高於未釘選；同狀態按最後更新新→舊 ──────
+const visibleRooms = computed(() => {
+  const stateOf = (r: P2PRoom) => memberStates.value[r.roomId]
+  const sortKey = (r: P2PRoom) => r.lastActiveAt ?? r.createdAt
+  return myRooms.value
+    .filter((r) => !stateOf(r)?.deletedAt)
+    .sort((a, b) => {
+      const pinA = stateOf(a)?.pinnedAt ? 1 : 0
+      const pinB = stateOf(b)?.pinnedAt ? 1 : 0
+      if (pinA !== pinB) return pinB - pinA
+      return sortKey(b) - sortKey(a)
+    })
+})
+
+function isPinned(room: P2PRoom): boolean {
+  return !!memberStates.value[room.roomId]?.pinnedAt
+}
+
+/** 未讀：房間最後活躍晚於我的最後已讀（皆為 metadata，內容不經伺服器） */
+function isUnread(room: P2PRoom): boolean {
+  const lastRead = memberStates.value[room.roomId]?.lastReadAt ?? 0
+  return (room.lastActiveAt ?? 0) > lastRead
+}
+
+function patchState(roomId: string, patch: Partial<RoomMemberState>) {
+  memberStates.value = {
+    ...memberStates.value,
+    [roomId]: { ...memberStates.value[roomId], ...patch },
+  }
+}
+
+async function togglePin(room: P2PRoom) {
+  if (!user.value) return
+  menuRoomId.value = null
+  const next = !isPinned(room)
+  patchState(room.roomId, { pinnedAt: next ? Date.now() : null })
+  try {
+    await RoomService.setPinned(room.roomId, user.value.uid, next)
+  } catch {
+    toastError('釘選失敗，請再試一次')
+    patchState(room.roomId, { pinnedAt: next ? null : Date.now() })
+  }
+}
+
+async function exitRoomAction(room: P2PRoom) {
+  if (!user.value) return
+  menuRoomId.value = null
+  if (!window.confirm(`退出「${room.roomName ?? '未命名聊天室'}」？其他成員仍保留此聊天室。`)) return
+  try {
+    await RoomService.exitRoom(room.roomId, user.value.uid)
+    success('已退出聊天室')
+  } catch {
+    toastError('退出失敗，請再試一次')
+  }
+}
+
+async function deleteRoomAction(room: P2PRoom) {
+  if (!user.value) return
+  menuRoomId.value = null
+  if (!window.confirm(`刪除「${room.roomName ?? '未命名聊天室'}」？此聊天室將從你的列表消失；所有成員都刪除後才會真正刪除。`)) return
+  patchState(room.roomId, { deletedAt: Date.now() })
+  try {
+    const result = await RoomService.softDeleteRoom(room.roomId, user.value.uid)
+    success(result === 'deleted' ? '聊天室已刪除（所有成員皆已刪除）' : '已從你的列表刪除')
+  } catch {
+    toastError('刪除失敗，請再試一次')
+    patchState(room.roomId, { deletedAt: undefined })
+  }
+}
 
 /** 最後一則訊息預覽：來源是本機 IndexedDB 聊天史（E2EE 下伺服器沒有明文可讀，這是誠實的唯一來源） */
 async function loadPreviews(rooms: P2PRoom[]) {
@@ -62,15 +161,12 @@ function previewFor(room: P2PRoom): string {
   return `${room.participants.length} 位成員 · 端對端加密`
 }
 
-/** 活動指示：房間的 lastActiveAt 比上次打開晚 → 藍點 */
-const OPENED_KEY = (id: string) => `nerilo-room-opened:${id}`
-function hasNewActivity(room: P2PRoom): boolean {
-  const opened = Number(localStorage.getItem(OPENED_KEY(room.roomId)) ?? 0)
-  return (room.lastActiveAt ?? 0) > opened
-}
-
 function openRoom(room: P2PRoom) {
-  localStorage.setItem(OPENED_KEY(room.roomId), String(Date.now()))
+  // 進房即已讀（optimistic + 背景寫入；聊天頁在房內收訊也會續刷）
+  if (user.value) {
+    patchState(room.roomId, { lastReadAt: Date.now() })
+    RoomService.markRead(room.roomId, user.value.uid).catch(() => {})
+  }
   if (room.status === 'waiting') navigateTo(`/waiting/${room.roomId}`)
   else navigateTo(`/chat/${room.roomId}`)
 }
@@ -153,25 +249,41 @@ function relativeTime(ts?: number): string {
     <header class="dash__header">
       <h1 class="dash__title">聊天</h1>
       <div class="dash__actions">
+        <button type="button" class="dash__icon-btn dash__icon-btn--friends" aria-label="好友" @click="navigateTo('/friends')">
+          👥<span v-if="pendingCount" class="dash__badge">{{ pendingCount }}</span>
+        </button>
         <button v-if="user && !user.isAnonymous" type="button" class="dash__icon-btn" aria-label="登出" @click="handleLogout">⏻</button>
         <NuxtLink v-else to="/login" class="dash__login-link">登入</NuxtLink>
         <button type="button" class="dash__icon-btn dash__icon-btn--primary" aria-label="建立或加入房間" @click="showSheet = true">＋</button>
       </div>
     </header>
 
+    <!-- 中繼狀態 × 點數（誠實顯示：只反映真實連線與真實進帳） -->
+    <section v-if="user" class="card dash__relay" aria-label="中繼狀態與點數">
+      <span class="dash__relay-dot" :class="{ 'dash__relay-dot--active': relayActive }" aria-hidden="true" />
+      <span class="dash__relay-text">{{ relayActive ? '節點中繼中 · 累積點數' : '節點待命中' }}</span>
+      <span class="dash__relay-balance">✦ {{ balance }}</span>
+    </section>
+
     <section v-if="loading" class="dash__skeleton">
       <div v-for="i in 3" :key="i" class="dash__skeleton-row" />
     </section>
 
     <template v-else>
-      <section v-if="myRooms.length" class="dash__list card">
-        <button v-for="(room, i) in myRooms" :key="room.roomId" type="button"
-                class="room-row stagger" :style="{ '--i': i }" @click="openRoom(room)">
+      <!-- 聊天室列表：持久、私人（連結即邀請）；釘選 > 未釘選，同組按最後更新 -->
+      <section v-if="visibleRooms.length" class="dash__list card">
+        <div v-for="(room, i) in visibleRooms" :key="room.roomId"
+             class="room-row stagger" :style="{ '--i': Math.min(i, 8) }"
+             role="button" tabindex="0"
+             @click="openRoom(room)" @keydown.enter="openRoom(room)">
           <span class="room-row__avatar" :style="{ background: gradientFor(room.roomId) }">
             {{ initialFor(room.roomName, '聊') }}
           </span>
           <span class="room-row__body">
-            <span class="room-row__name">{{ room.roomName ?? '未命名房間' }}</span>
+            <span class="room-row__name" :class="{ 'room-row__name--unread': isUnread(room) }">
+              <span v-if="isPinned(room)" class="room-row__pin" aria-label="已釘選">📌</span>
+              {{ displayNameFor(room) }}
+            </span>
             <span class="room-row__meta">{{ previewFor(room) }}</span>
           </span>
           <span class="room-row__right">
@@ -184,9 +296,19 @@ function relativeTime(ts?: number): string {
               </span>
             </span>
           </span>
-          <span v-if="hasNewActivity(room)" class="room-row__dot" aria-label="有新活動" />
-          <span v-else class="room-row__chevron">›</span>
-        </button>
+          <span v-if="isUnread(room)" class="room-row__dot" aria-label="有未讀訊息" />
+          <button type="button" class="room-row__more" :aria-label="`聊天室選項：${room.roomName ?? '未命名聊天室'}`"
+                  @click.stop="menuRoomId = menuRoomId === room.roomId ? null : room.roomId">⋯</button>
+
+          <!-- 動作選單：釘選 / 退出 / 刪除 -->
+          <div v-if="menuRoomId === room.roomId" class="room-menu" @click.stop>
+            <button type="button" @click="togglePin(room)">
+              {{ isPinned(room) ? '取消釘選' : '釘選置頂' }}
+            </button>
+            <button type="button" @click="exitRoomAction(room)">退出聊天室</button>
+            <button type="button" class="room-menu__danger" @click="deleteRoomAction(room)">刪除聊天室</button>
+          </div>
+        </div>
       </section>
 
       <section v-else class="dash__empty">
@@ -194,30 +316,9 @@ function relativeTime(ts?: number): string {
         <p class="dash__empty-title">還沒有任何對話</p>
         <p class="dash__empty-sub">你的訊息點對點直達，不經過伺服器</p>
         <button type="button" class="btn-primary dash__empty-cta" @click="showSheet = true; sheetTab = 'create'">
-          建立第一個房間
+          建立第一個聊天室
         </button>
       </section>
-
-      <template v-if="publicRooms.length">
-        <h2 class="dash__section-title">公開房間</h2>
-        <section class="dash__list card">
-          <button v-for="(room, i) in publicRooms" :key="room.roomId" type="button"
-                  class="room-row stagger" :style="{ '--i': Math.min(i, 8) }" @click="openRoom(room)">
-            <span class="room-row__avatar" :style="{ background: gradientFor(room.roomId) }">
-              {{ initialFor(room.roomName, '聊') }}
-            </span>
-            <span class="room-row__body">
-              <span class="room-row__name">{{ room.roomName ?? '未命名房間' }}</span>
-              <span class="room-row__meta">{{ room.participants.length }} 位成員</span>
-            </span>
-            <span class="room-row__stack">
-              <span v-for="p in room.participants.slice(0, 3)" :key="p"
-                    class="mini-avatar" :style="{ background: gradientFor(p) }" />
-            </span>
-            <span class="room-row__chevron">›</span>
-          </button>
-        </section>
-      </template>
     </template>
 
     <!-- 建立 / 加入 sheet -->
@@ -294,14 +395,89 @@ function relativeTime(ts?: number): string {
 }
 .dash__list { overflow: hidden; }
 .room-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   padding: 12px 16px;
   text-align: left;
+  cursor: pointer;
   transition: background var(--t-fast) var(--ease);
 }
+.room-row__name--unread { font-weight: 700; }
+.dash__icon-btn--friends { position: relative; }
+.dash__relay {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.dash__relay-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.dash__relay-dot--active {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+.dash__relay-text { flex: 1; color: var(--text-2); }
+.dash__relay-balance { font-weight: 700; color: var(--text); }
+.dash__badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.room-row__pin { font-size: 11px; margin-right: 2px; }
+.room-row__more {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+}
+.room-row__more:hover { background: var(--bubble-other); }
+.room-menu {
+  position: absolute;
+  top: 44px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-btn);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+.room-menu button {
+  padding: 11px 14px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+}
+.room-menu button:hover { background: var(--bubble-other); }
+.room-menu button:not(:last-child) { border-bottom: 0.5px solid var(--separator); }
+.room-menu__danger { color: var(--danger) !important; }
 .room-row:not(:last-child) { border-bottom: 0.5px solid var(--separator); }
 .room-row:active { background: var(--bg); }
 .room-row__avatar {

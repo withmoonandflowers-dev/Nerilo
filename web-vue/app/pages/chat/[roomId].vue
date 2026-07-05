@@ -78,8 +78,30 @@ function setConnectionState(state: ConnectionState) {
   connectionState.value = state
 }
 
+// 在房內收到訊息即已讀（節流 5s，metadata 寫入）
+let lastReadWriteAt = 0
+function touchRead() {
+  if (!user.value || !roomId.value) return
+  const now = Date.now()
+  if (now - lastReadWriteAt < 5_000) return
+  lastReadWriteAt = now
+  RoomService.markRead(roomId.value, user.value.uid).catch(() => {})
+}
+
 function onIncomingMessage(msg: ChatMessage) {
   addMessage(msg)
+  touchRead()
+}
+
+// 送訊後 bump 房間活躍度（節流 10s；只寫 lastActiveAt/ttl metadata，
+// 讓其他成員的列表排序/未讀點亮，內容不經伺服器）
+let lastBumpAt = 0
+function touchActivity() {
+  if (!roomId.value) return
+  const now = Date.now()
+  if (now - lastBumpAt < 10_000) return
+  lastBumpAt = now
+  RoomService.bumpActivity(roomId.value).catch(() => {})
 }
 
 async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) {
@@ -158,6 +180,7 @@ async function init() {
       featureLog('chat', 'room_joined', { roomId: roomId.value, uid })
       hasJoinedRoom = true
       startFallbackSubscription()
+      touchRead() // 進房即已讀
 
       await new Promise((r) => setTimeout(r, 500))
       if (disposed) return
@@ -229,10 +252,11 @@ onUnmounted(() => {
   clearInterval(gameBusPoll)
   meshChat?.cleanup().catch(() => {})
   meshChat = null
+  credits.stopEarning()
+  // 持久聊天室（2026-07-05 產品決策）：跳出畫面「不」等於離開聊天室——
+  // 不再 leaveRoom；退出/刪除由列表的動作選單明確操作。離頁補一次已讀。
   if (roomId.value && user.value) {
-    RoomService.leaveRoom(roomId.value, user.value.uid).catch((e: unknown) =>
-      console.error('[chat] leaveRoom failed', e)
-    )
+    RoomService.markRead(roomId.value, user.value.uid).catch(() => {})
   }
 })
 
@@ -285,6 +309,8 @@ async function sendMessage(content: string, existingMessageId?: string) {
     }
     updateMessageStatus(tempId, 'sent')
     setTimeout(() => updateMessageStatus(tempId, 'delivered'), 1500)
+    touchActivity()
+    touchRead()
   } catch (e) {
     console.error('[chat] send failed', e)
     updateMessageStatus(tempId, 'failed')
@@ -404,6 +430,13 @@ watch(
     else unseenCount.value += len - prevLen
   }
 )
+
+// 在線累積點數（ADR-0011）：只在實際 connected 時賺（誠實原則，同 React 版）
+const credits = useCredits()
+watch(connectionState, (s) => {
+  if (s === 'connected') credits.startEarning()
+  else credits.stopEarning()
+})
 
 // 非房主側的 ChannelBus 在遠端 DataChannel open 後才存在，且晚於 ICE
 // 'connected'（一次性 watch 會撲空後再也不觸發）。改輪詢直到取得、即停。

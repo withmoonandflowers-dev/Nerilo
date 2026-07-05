@@ -23,6 +23,8 @@ export interface P2PRoom {
   status: 'waiting' | 'open' | 'closed' | 'closing' | 'migrating'; // waiting: 等待其他人加入
   isPrivate: boolean;
   createdAt: number;
+  /** 房間種類：一般群聊（缺省）或好友雙人 DM */
+  kind?: 'dm';
   waitingTimeout?: number; // 等待超時時間（毫秒），預設 5 分鐘
   waitingStartedAt?: number; // 開始等待的時間戳
 
@@ -242,6 +244,16 @@ export interface HLCTimestamp {
   wallTime: number;
   logical: number;
   nodeId: string;
+}
+
+/**
+ * 成員在單一聊天室的個人狀態（p2pRooms/{roomId}/memberStates/{uid}）。
+ * 每人只寫自己的；已讀/釘選/軟刪除（持久聊天室，2026-07-05 產品決策）。
+ */
+export interface RoomMemberState {
+  lastReadAt?: number;
+  pinnedAt?: number | null;
+  deletedAt?: number;
 }
 
 // Gossip 訊息（小網狀架構）

@@ -32,7 +32,10 @@ vi.mock('firebase/firestore', () => ({
   limit: vi.fn(() => ({})),
   getDocs: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
   deleteDoc: vi.fn().mockResolvedValue(undefined),
-  Timestamp: { now: vi.fn(() => ({ toMillis: () => Date.now() })) },
+  Timestamp: {
+    now: vi.fn(() => ({ toMillis: () => Date.now() })),
+    fromMillis: vi.fn((ms: number) => ({ toMillis: () => ms })),
+  },
 }));
 
 // ── RTCPeerConnection mock ─────────────────────────────────────────────────────
