@@ -5,6 +5,7 @@ import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
+import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { StarTopologyController } from '~/lib/starTopology'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
 
@@ -29,7 +30,6 @@ const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(
   () => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value]
 )
-const meshNotice = ref(false)
 const peerTyping = ref(false)
 const inputValue = ref('')
 const isNearBottom = ref(true)
@@ -40,6 +40,11 @@ const textareaEl = ref<HTMLTextAreaElement | null>(null)
 
 const starTopology = new StarTopologyController()
 const roomSubscription = new RoomSubscriptionController()
+// mesh（3-5 人）：直接複用零框架依賴的 MeshChatService（gossip + anti-entropy 對帳）
+let meshChat: MeshChatService | null = null
+let meshStateInterval: ReturnType<typeof setInterval> | null = null
+/** 房間文件的最新參與者數（真相來源），mesh 覆蓋不足時的備援橋接條件用 */
+let participantCount = 0
 let migrationInProgress = false
 let hasJoinedRoom = false
 let fallbackUnsub: (() => void) | null = null
@@ -59,7 +64,7 @@ const statusText = computed(() => {
     case 'closed':
       return '連線已中斷'
     default:
-      return meshNotice.value ? '經伺服器備援通道' : '準備中…'
+      return '準備中…'
   }
 })
 
@@ -83,6 +88,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
   try {
     const uid = user.value!.uid
     const effectiveCount = effectiveParticipantCount ?? room.participants.length
+    participantCount = Math.max(participantCount, effectiveCount)
     if (room.status !== 'open' || effectiveCount < 2) return
 
     const decision = decideTopology(room, effectiveCount)
@@ -91,12 +97,27 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: decision, from: currentTopology.value })
 
     if (decision === 'mesh') {
-      // Vue 版 v1 尚未移植 mesh（MeshGossipManager 接線排下一輪）：
-      // 3+ 人房間走 Firestore 備援通道，誠實標示於 UI。
+      // 3-5 人 mesh：複用 @legacy MeshChatService（gossip + seq anti-entropy 對帳，
+      // 恰好一次保證見 docs/QA-REPORT-chat.md 第三輪）。star→mesh 遷移先清星型。
       starTopology.cleanup()
       currentTopology.value = 'mesh'
-      meshNotice.value = true
-      connectionState.value = 'idle'
+      connectionState.value = 'connecting'
+      const svc = new MeshChatService(roomId.value, uid)
+      await svc.initialize()
+      if (disposed) {
+        await svc.cleanup()
+        return
+      }
+      meshChat = svc
+      svc.onMessage((msg) => addMessage(msg))
+      svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
+      // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
+      meshStateInterval = setInterval(() => {
+        if (!meshChat) return
+        const s = meshChat.getConnectionState()
+        const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
+        if (mapped !== connectionState.value) connectionState.value = mapped
+      }, 2000)
       return
     }
 
@@ -204,6 +225,10 @@ onUnmounted(() => {
   typingUnsub?.()
   fallbackUnsub?.()
   starTopology.cleanup()
+  if (meshStateInterval) clearInterval(meshStateInterval)
+  clearInterval(gameBusPoll)
+  meshChat?.cleanup().catch(() => {})
+  meshChat = null
   if (roomId.value && user.value) {
     RoomService.leaveRoom(roomId.value, user.value.uid).catch((e: unknown) =>
       console.error('[chat] leaveRoom failed', e)
@@ -232,6 +257,17 @@ async function sendMessage(content: string, existingMessageId?: string) {
     if (connectionState.value === 'connected' && currentTopology.value === 'star') {
       await starTopology.sendMessage(content, tempId)
       featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_star' })
+    } else if (currentTopology.value === 'mesh' && connectionState.value === 'connected' && meshChat) {
+      await meshChat.sendMessage(content, tempId)
+      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_mesh' })
+      // 混合模式橋接（同 React 版）：mesh 連上數 < 應到人數-1 → 同 id 雙寫備援，
+      // 掉隊者收得到、mesh 成員兩份同 id 由 useChatMessages 去重
+      const coverage = meshChat.getMeshCoverage()
+      const expectedPeers = participantCount - 1
+      if (expectedPeers > 0 && coverage.connected < expectedPeers) {
+        await sendMessageViaFirestore(roomId.value, uid, { content }, tempId)
+        featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_bridge' })
+      }
     } else if (currentTopology.value === 'star' || currentTopology.value === null) {
       // ADR-0004：星型房的備援一律密文；金鑰未就緒時擲錯（訊息標失敗、可重送）
       const chatService = starTopology.getChatService()
@@ -239,11 +275,12 @@ async function sendMessage(content: string, existingMessageId?: string) {
         throw new Error('E2EE 金鑰尚未建立（P2P 交換未完成），無法經備援通道傳送')
       }
       const encrypted = await chatService.encryptForFallback(content)
-      await sendMessageViaFirestore(roomId.value, uid, { encrypted })
+      await sendMessageViaFirestore(roomId.value, uid, { encrypted }, tempId)
       featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_fallback' })
     } else {
-      // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文
-      await sendMessageViaFirestore(roomId.value, uid, { content })
+      // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文。
+      // tempId 貫穿寫入：否則 onSnapshot 以另一個 id 回吐自己的訊息 → 兩顆泡泡
+      await sendMessageViaFirestore(roomId.value, uid, { content }, tempId)
       featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_fallback' })
     }
     updateMessageStatus(tempId, 'sent')
@@ -368,12 +405,21 @@ watch(
   }
 )
 
-// 非房主側的 ChannelBus 在遠端 DataChannel 到達後才存在——連上時再取一次
-watch(connectionState, (s) => {
-  if (s === 'connected' && currentTopology.value === 'star') {
-    gameBus.value = starTopology.getChannelBus()
+// 非房主側的 ChannelBus 在遠端 DataChannel open 後才存在，且晚於 ICE
+// 'connected'（一次性 watch 會撲空後再也不觸發）。改輪詢直到取得、即停。
+const gameBusPoll = setInterval(() => {
+  if (gameBus.value) {
+    clearInterval(gameBusPoll)
+    return
   }
-})
+  if (currentTopology.value === 'star') {
+    const b = starTopology.getChannelBus()
+    if (b) {
+      gameBus.value = b
+      clearInterval(gameBusPoll)
+    }
+  }
+}, 500)
 
 function retryConnection() {
   connectionState.value = 'connecting'
@@ -424,8 +470,8 @@ async function leaveRoom() {
       <span>連線中斷了</span>
       <button type="button" @click="retryConnection">重新連線</button>
     </div>
-    <div v-else-if="meshNotice" class="chat__banner chat__banner--info">
-      <span>3 人以上房間的 P2P 連線即將推出，目前經伺服器備援傳送（未端對端加密）</span>
+    <div v-else-if="currentTopology === 'mesh'" class="chat__banner chat__banner--info">
+      <span>多人房間走 P2P mesh 傳輸（訊息最終一致；尚未端對端加密）</span>
     </div>
 
     <div ref="listEl" class="chat__list" @scroll="onScroll">
