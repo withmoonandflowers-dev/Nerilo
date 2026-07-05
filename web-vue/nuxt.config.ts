@@ -21,6 +21,12 @@ export default defineNuxtConfig({
     '@legacy': fileURLToPath(new URL('../src', import.meta.url)),
   },
   vite: {
+    define: {
+      // E2E 用開關：nuxt 的 vite env 只穩定讀 web-vue/.env*，process.env 的
+      // VITE_* 不保證進 import.meta.env——曾因此讓 E2E 打到正式 Firebase。
+      // 在 config 時間點顯式注入，杜絕環境歧義（見 src/config/firebase.ts）。
+      'import.meta.env.VITE_USE_EMULATOR': JSON.stringify(process.env.VITE_USE_EMULATOR ?? 'false'),
+    },
     resolve: {
       // ../src 的複用模組會就近解析到 Nerilo/node_modules 的 firebase 副本，
       // 與 web-vue 自己的副本形成兩個 @firebase/app 實例（auth 註冊不互通）。

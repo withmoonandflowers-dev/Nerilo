@@ -10,6 +10,7 @@ import type { Ref } from 'vue'
 import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
 import type { P2PEnvelope } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
+import { logger } from '@legacy/utils/logger'
 import {
   applyMove,
   initialState,
@@ -40,8 +41,9 @@ export function useTicTacToe(
       ts: Date.now(),
       from: selfId.value,
       payload: payload ?? {},
-    } as P2PEnvelope).catch(() => {
-      /* 送失敗 = 連線斷；UI 由 connectionState 進暫停態 */
+    } as P2PEnvelope).catch((error) => {
+      // 送失敗 = 連線斷；UI 由 connectionState 進暫停態。warn 保留診斷線索。
+      logger.warn('[useTicTacToe] send failed', { type, error })
     })
   }
 

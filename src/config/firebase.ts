@@ -17,7 +17,11 @@ import { logger } from '../utils/logger';
  * 正式環境則直接使用空字串（Firebase SDK 會在初始化時拋出更明確的錯誤）。
  */
 
-const IS_TEST_MODE = import.meta.env.MODE === 'test';
+// test 判定兩用：vite `--mode test`（React E2E 既有路徑），或顯式
+// `VITE_USE_EMULATOR=true`（nuxt/web-vue 的 dev server 無法自訂 vite mode，
+// Vue 版 E2E 走此開關）。兩者行為完全相同：假 config + 連本機 emulator。
+const IS_TEST_MODE =
+  import.meta.env.MODE === 'test' || import.meta.env.VITE_USE_EMULATOR === 'true';
 const IS_DEV = import.meta.env.DEV;
 
 const REQUIRED_VARS = [
@@ -77,8 +81,15 @@ if (IS_TEST_MODE) {
   // Expose to window for Playwright E2E security tests that need to make
   // direct Firestore calls (e.g. verify a non-participant can't read a
   // room, or that fallback messages are encrypted). Test mode only.
+  // The firestore SDK module is exposed too: bare specifiers like
+  // `import('firebase/firestore')` don't resolve inside page.evaluate
+  // (no import map in the browser), so tests must take it from here.
   if (typeof window !== 'undefined') {
-    (window as unknown as { __nerilo_test__?: unknown }).__nerilo_test__ = { app, auth, db };
+    const testExports: Record<string, unknown> = { app, auth, db };
+    (window as unknown as { __nerilo_test__?: unknown }).__nerilo_test__ = testExports;
+    import('firebase/firestore').then((m) => {
+      testExports.firestore = m;
+    });
   }
 }
 
