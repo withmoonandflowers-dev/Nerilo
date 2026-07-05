@@ -21,6 +21,46 @@ const joinCode = ref('')
 const busy = ref(false)
 /** 開啟動作選單的房間 id（⋯ 按鈕） */
 const menuRoomId = ref<string | null>(null)
+// 選單 Teleport 到 body + fixed 定位：列表卡片 overflow:hidden 會裁掉往下展開的
+// 選單（房少時退出/刪除點不到）。fixed 脫離裁切；點按鈕時算座標並依空間翻轉上下。
+const menuStyle = ref<Record<string, string>>({})
+
+function toggleMenu(roomId: string, event: MouseEvent) {
+  if (menuRoomId.value === roomId) {
+    menuRoomId.value = null
+    return
+  }
+  const btn = event.currentTarget as HTMLElement
+  const r = btn.getBoundingClientRect()
+  const MENU_W = 160
+  const MENU_H = 132 // 三項約略高度
+  const spaceBelow = window.innerHeight - r.bottom
+  const top = spaceBelow < MENU_H + 12 ? r.top - MENU_H - 4 : r.bottom + 4
+  const left = Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8))
+  menuStyle.value = { top: `${Math.max(8, top)}px`, left: `${left}px` }
+  menuRoomId.value = roomId
+}
+
+// 點外部 / 捲動 / Esc 關閉選單
+function closeMenu() {
+  menuRoomId.value = null
+}
+function onMenuKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    closeMenu()
+    confirmDialog.value = null
+  }
+}
+onMounted(() => {
+  window.addEventListener('click', closeMenu)
+  window.addEventListener('scroll', closeMenu, true)
+  window.addEventListener('keydown', onMenuKeydown)
+})
+onUnmounted(() => {
+  window.removeEventListener('click', closeMenu)
+  window.removeEventListener('scroll', closeMenu, true)
+  window.removeEventListener('keydown', onMenuKeydown)
+})
 
 const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
 
@@ -116,30 +156,63 @@ async function togglePin(room: P2PRoom) {
   }
 }
 
-async function exitRoomAction(room: P2PRoom) {
-  if (!user.value) return
-  menuRoomId.value = null
-  if (!window.confirm(`退出「${room.roomName ?? '未命名聊天室'}」？其他成員仍保留此聊天室。`)) return
-  try {
-    await RoomService.exitRoom(room.roomId, user.value.uid)
-    success('已退出聊天室')
-  } catch {
-    toastError('退出失敗，請再試一次')
-  }
+// 自訂確認 modal（取代 window.confirm）：原生 confirm 同步阻塞 renderer
+// （自動化/部分行動 webview 會卡死），且醜、破壞 neo 設計。改自訂非阻塞 modal。
+interface ConfirmDialog {
+  title: string
+  message: string
+  confirmText: string
+  danger: boolean
+  onConfirm: () => void | Promise<void>
+}
+const confirmDialog = ref<ConfirmDialog | null>(null)
+function askConfirm(opts: ConfirmDialog) {
+  confirmDialog.value = opts
+}
+async function runConfirm() {
+  const d = confirmDialog.value
+  confirmDialog.value = null
+  if (d) await d.onConfirm()
 }
 
-async function deleteRoomAction(room: P2PRoom) {
+function exitRoomAction(room: P2PRoom) {
   if (!user.value) return
   menuRoomId.value = null
-  if (!window.confirm(`刪除「${room.roomName ?? '未命名聊天室'}」？此聊天室將從你的列表消失；所有成員都刪除後才會真正刪除。`)) return
-  patchState(room.roomId, { deletedAt: Date.now() })
-  try {
-    const result = await RoomService.softDeleteRoom(room.roomId, user.value.uid)
-    success(result === 'deleted' ? '聊天室已刪除（所有成員皆已刪除）' : '已從你的列表刪除')
-  } catch {
-    toastError('刪除失敗，請再試一次')
-    patchState(room.roomId, { deletedAt: undefined })
-  }
+  askConfirm({
+    title: '退出聊天室',
+    message: `退出「${room.roomName ?? '未命名聊天室'}」？其他成員仍保留此聊天室。`,
+    confirmText: '退出',
+    danger: false,
+    onConfirm: async () => {
+      try {
+        await RoomService.exitRoom(room.roomId, user.value!.uid)
+        success('已退出聊天室')
+      } catch {
+        toastError('退出失敗，請再試一次')
+      }
+    },
+  })
+}
+
+function deleteRoomAction(room: P2PRoom) {
+  if (!user.value) return
+  menuRoomId.value = null
+  askConfirm({
+    title: '刪除聊天室',
+    message: `刪除「${room.roomName ?? '未命名聊天室'}」？此聊天室將從你的列表消失；所有成員都刪除後才會真正刪除。`,
+    confirmText: '刪除',
+    danger: true,
+    onConfirm: async () => {
+      patchState(room.roomId, { deletedAt: Date.now() })
+      try {
+        const result = await RoomService.softDeleteRoom(room.roomId, user.value!.uid)
+        success(result === 'deleted' ? '聊天室已刪除（所有成員皆已刪除）' : '已從你的列表刪除')
+      } catch {
+        toastError('刪除失敗，請再試一次')
+        patchState(room.roomId, { deletedAt: undefined })
+      }
+    },
+  })
 }
 
 /** 最後一則訊息預覽：來源是本機 IndexedDB 聊天史（E2EE 下伺服器沒有明文可讀，這是誠實的唯一來源） */
@@ -298,16 +371,18 @@ function relativeTime(ts?: number): string {
           </span>
           <span v-if="isUnread(room)" class="room-row__dot" aria-label="有未讀訊息" />
           <button type="button" class="room-row__more" :aria-label="`聊天室選項：${room.roomName ?? '未命名聊天室'}`"
-                  @click.stop="menuRoomId = menuRoomId === room.roomId ? null : room.roomId">⋯</button>
+                  @click.stop="toggleMenu(room.roomId, $event)">⋯</button>
 
-          <!-- 動作選單：釘選 / 退出 / 刪除 -->
-          <div v-if="menuRoomId === room.roomId" class="room-menu" @click.stop>
-            <button type="button" @click="togglePin(room)">
-              {{ isPinned(room) ? '取消釘選' : '釘選置頂' }}
-            </button>
-            <button type="button" @click="exitRoomAction(room)">退出聊天室</button>
-            <button type="button" class="room-menu__danger" @click="deleteRoomAction(room)">刪除聊天室</button>
-          </div>
+          <!-- 動作選單：Teleport 到 body + fixed，避免被列表卡片 overflow 裁切 -->
+          <Teleport to="body">
+            <div v-if="menuRoomId === room.roomId" class="room-menu" :style="menuStyle" @click.stop>
+              <button type="button" @click="togglePin(room)">
+                {{ isPinned(room) ? '取消釘選' : '釘選置頂' }}
+              </button>
+              <button type="button" @click="exitRoomAction(room)">退出聊天室</button>
+              <button type="button" class="room-menu__danger" @click="deleteRoomAction(room)">刪除聊天室</button>
+            </div>
+          </Teleport>
         </div>
       </section>
 
@@ -348,6 +423,23 @@ function relativeTime(ts?: number): string {
         </div>
       </div>
     </Transition>
+
+    <!-- 自訂確認 modal（取代 window.confirm；neo 風、非阻塞、可鍵盤操作） -->
+    <Teleport to="body">
+      <Transition name="confirm">
+        <div v-if="confirmDialog" class="confirm-backdrop" @click.self="confirmDialog = null">
+          <div class="confirm card" role="alertdialog" aria-modal="true">
+            <h3 class="confirm__title">{{ confirmDialog.title }}</h3>
+            <p class="confirm__msg">{{ confirmDialog.message }}</p>
+            <div class="confirm__actions">
+              <button type="button" class="confirm__cancel" @click="confirmDialog = null">取消</button>
+              <button type="button" class="confirm__ok" :class="{ 'confirm__ok--danger': confirmDialog.danger }"
+                      @click="runConfirm">{{ confirmDialog.confirmText }}</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </main>
 </template>
 
@@ -455,14 +547,14 @@ function relativeTime(ts?: number): string {
   line-height: 1;
 }
 .room-row__more:hover { background: var(--bubble-other); }
+/* Teleport 到 body：fixed 定位（top/left 由 :style 提供），脫離列表卡片
+   overflow:hidden 的裁切。scoped 的 data-v attribute 仍加在 Teleport 內容上，選擇器照常命中。 */
 .room-menu {
-  position: absolute;
-  top: 44px;
-  right: 12px;
-  z-index: 20;
+  position: fixed;
+  z-index: 200;
   display: flex;
   flex-direction: column;
-  min-width: 150px;
+  width: 160px;
   background: var(--surface);
   border: 1px solid var(--separator);
   border-radius: var(--r-btn);
@@ -626,4 +718,67 @@ function relativeTime(ts?: number): string {
 .sheet-enter-from { opacity: 0; }
 .sheet-enter-from .sheet { transform: translateY(100%); }
 .sheet-leave-to { opacity: 0; }
+
+/* 自訂確認 modal（Teleport 到 body） */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(6px);
+}
+.confirm {
+  width: 100%;
+  max-width: 340px;
+  padding: 22px 20px 16px;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-2);
+}
+.confirm__title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.confirm__msg {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.confirm__actions {
+  display: flex;
+  gap: 10px;
+}
+.confirm__cancel,
+.confirm__ok {
+  flex: 1;
+  padding: 11px;
+  border-radius: var(--r-btn);
+  font-size: 15px;
+  font-weight: 600;
+}
+.confirm__cancel {
+  background: var(--bubble-other);
+  color: var(--text);
+}
+.confirm__ok {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.confirm__ok--danger { background: var(--danger); }
+
+.confirm-enter-active,
+.confirm-leave-active { transition: opacity var(--t-fast) var(--ease); }
+.confirm-enter-active .confirm,
+.confirm-leave-active .confirm { transition: transform var(--t-fast) var(--spring); }
+.confirm-enter-from,
+.confirm-leave-to { opacity: 0; }
+.confirm-enter-from .confirm { transform: scale(0.92); }
 </style>
