@@ -21,7 +21,6 @@ test.describe('持久聊天室：跳出不離開、未讀、釘選、刪除', ()
     test.setTimeout(240_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
-    bob.page.on('dialog', (d) => d.accept()); // 退出/刪除的 confirm 一律接受
     try {
       const roomId = await createRoom(alice.page);
       await joinRoom(bob.page, roomId);
@@ -59,9 +58,10 @@ test.describe('持久聊天室：跳出不離開、未讀、釘選、刪除', ()
       await bob.page.locator('.room-menu').getByText('釘選置頂').click();
       await expect(bob.page.locator('.room-row__pin')).toBeVisible({ timeout: 10_000 });
 
-      // ── 刪除：B 軟刪除 → B 列表消失；A 回列表仍保留 ──
+      // ── 刪除：B 軟刪除 → 自訂 modal 確認 → B 列表消失；A 回列表仍保留 ──
       await bob.page.locator('.room-row__more').first().click();
       await bob.page.locator('.room-menu').getByText('刪除聊天室').click();
+      await bob.page.locator('.confirm .confirm__ok').click();
       await expect(bob.page.locator('.room-row')).toHaveCount(0, { timeout: 15_000 });
 
       await alice.page.getByRole('button', { name: '離開房間' }).click();
