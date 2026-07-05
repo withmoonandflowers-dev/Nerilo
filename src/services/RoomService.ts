@@ -1,8 +1,8 @@
-import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, Timestamp, runTransaction, increment } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, limit, Timestamp, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
 import { logger } from '../utils/logger';
-import type { P2PRoom, RoomStatus, RoomCapability } from '../types';
+import type { P2PRoom, RoomStatus, RoomCapability, RoomMemberState } from '../types';
 
 /** Firestore meshIdentity 文件的原始欄位型別（joinedAt 可能為 Timestamp） */
 interface FirestoreMeshIdentity {
@@ -15,6 +15,14 @@ interface FirestoreMeshIdentity {
 const DEBUG_ROOMS = import.meta.env.DEV || import.meta.env.VITE_DEBUG_ROOMS === 'true';
 
 export class RoomService {
+  /**
+   * 持久聊天室 TTL（2026-07-05 產品決策）：open 房不再 30 分鐘過期——
+   * 聊天室持續存在直到「所有成員都刪除」。以遠期 ttlExpireAt 實現：
+   * 與殭屍房過濾（ttlExpireAt > now）及 Firestore 原生 TTL 政策相容，
+   * 不需改任何查詢。waiting 房仍 5 分鐘過期（避免棄置房堆積）。
+   */
+  static readonly PERSISTENT_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+
   /**
    * 建立新房間（預設為 waiting 狀態）
    * 如果同一用戶已有其他房間，會先關閉它們（包括所有狀態的房間）
@@ -55,9 +63,10 @@ export class RoomService {
       logger.info('[RoomService] createRoom - test mode, allowing guest user', { ownerUid });
     }
 
-    // 先關閉同一用戶的所有房間（包括 waiting、open、closed 狀態）
-    // 這確保用戶不會有多個活躍房間
-    await this.closeAllUserRooms(ownerUid);
+    // 持久聊天室（2026-07-05 產品決策）：使用者可以同時擁有多個聊天室，
+    // 建新房「不再」關閉既有 open 房；只回收自己棄置中的 waiting 大廳
+    // （避免等待房堆積佔據列表）。
+    await this.closeAbandonedWaitingRooms(ownerUid);
 
     const roomId = generateUUID();
     const now = Date.now();
@@ -101,15 +110,6 @@ export class RoomService {
       ttlExpireAt: Timestamp.fromMillis(roomData.ttlExpireAt!),
     };
 
-    // Test mode：加入 e2eTestMode 標記讓 Firestore rules 允許匿名使用者建立房間
-    const isTestEnvForFirestore = typeof window !== 'undefined' && (
-      import.meta.env.MODE === 'test' ||
-      import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM === 'true'
-    );
-    if (isTestEnvForFirestore) {
-      firestoreData.e2eTestMode = true;
-    }
-
     await setDoc(doc(db, 'p2pRooms', roomId), firestoreData);
 
     return roomId;
@@ -119,6 +119,30 @@ export class RoomService {
    * 關閉同一用戶的所有房間（包括所有狀態：waiting、open、closed）
    * 這確保用戶建立新房間時，舊房間都被清理
    */
+  /** 只關閉自己「等待中」的房間（棄置大廳回收；open 房永不動——持久聊天室） */
+  static async closeAbandonedWaitingRooms(ownerUid: string): Promise<void> {
+    const roomsRef = collection(db, 'p2pRooms');
+    const q = query(
+      roomsRef,
+      where('ownerUid', '==', ownerUid),
+      where('status', '==', 'waiting')
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return;
+    await Promise.allSettled(
+      snapshot.docs.map((d) =>
+        updateDoc(doc(db, 'p2pRooms', d.id), {
+          status: 'closed',
+          closedAt: Timestamp.fromMillis(Date.now()),
+        })
+      )
+    );
+    logger.info('[RoomService] closed abandoned waiting rooms', {
+      ownerUid,
+      count: snapshot.size,
+    });
+  }
+
   static async closeAllUserRooms(ownerUid: string): Promise<void> {
     logger.info('[RoomService] closeAllUserRooms called', { ownerUid });
     
@@ -323,7 +347,7 @@ export class RoomService {
       // 當 waiting 房間滿 2 人時，自動轉為 open
       const shouldActivate = roomData.status === 'waiting' && newParticipants.length >= 2;
 
-      const OPEN_TTL_MS = 30 * 60 * 1000; // 30 min TTL for open rooms
+      const OPEN_TTL_MS = RoomService.PERSISTENT_TTL_MS; // 持久聊天室（2026-07-05 產品決策）
       const now = Date.now();
 
       const updateData: Record<string, unknown> = {
@@ -416,7 +440,7 @@ export class RoomService {
 
           // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
           // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
-          const OPEN_TTL_MS = 30 * 60 * 1000;
+          const OPEN_TTL_MS = RoomService.PERSISTENT_TTL_MS;
           const now = Date.now();
           transaction.update(roomDocRef, {
             participants: newParticipants,
@@ -509,8 +533,114 @@ export class RoomService {
    * Firestore 不會在刪除父文件時自動刪除子集合，需要手動逐筆刪除。
    * Best-effort：失敗不影響主流程。
    */
+  // ═══════════════════════════════════════════════════════════════════
+  // 持久聊天室：成員狀態（2026-07-05 產品決策）
+  //
+  // 每位成員在 p2pRooms/{roomId}/memberStates/{uid} 有自己的狀態文件
+  // （已讀/釘選/軟刪除），規則限制只能寫自己的——避免共享文件搶寫。
+  // 「刪除聊天室」是軟刪除（只對自己隱藏）；所有 participants 都軟刪除後，
+  // 執行最後一刪的 client 進行真刪除（文件+子集合）。
+  // 訊息內容永不上伺服器；列表預覽/未讀比對用本機 IndexedDB + 房間文件的
+  // lastActiveAt（僅 metadata，節流寫入）。
+  // ═══════════════════════════════════════════════════════════════════
+
+  private static memberStateDoc(roomId: string, uid: string) {
+    return doc(db, 'p2pRooms', roomId, 'memberStates', uid);
+  }
+
+  /** 取自己的成員狀態（不存在回 null） */
+  static async getMemberState(roomId: string, uid: string): Promise<RoomMemberState | null> {
+    const snap = await getDoc(this.memberStateDoc(roomId, uid));
+    return snap.exists() ? (snap.data() as RoomMemberState) : null;
+  }
+
+  /** 批次取多個房間中自己的狀態（dashboard 列表用；rooms ≤ 100） */
+  static async getMyMemberStates(
+    roomIds: string[],
+    uid: string
+  ): Promise<Map<string, RoomMemberState>> {
+    const out = new Map<string, RoomMemberState>();
+    await Promise.all(
+      roomIds.map(async (roomId) => {
+        try {
+          const s = await this.getMemberState(roomId, uid);
+          if (s) out.set(roomId, s);
+        } catch {
+          /* 單房失敗不擋整個列表 */
+        }
+      })
+    );
+    return out;
+  }
+
+  /** 標記已讀（進房與在房收到新訊息時呼叫） */
+  static async markRead(roomId: string, uid: string): Promise<void> {
+    await setDoc(this.memberStateDoc(roomId, uid), { lastReadAt: Date.now() }, { merge: true });
+  }
+
+  /** 釘選/取消釘選（列表排序：釘選一定高於未釘選，同狀態按 lastActiveAt） */
+  static async setPinned(roomId: string, uid: string, pinned: boolean): Promise<void> {
+    await setDoc(
+      this.memberStateDoc(roomId, uid),
+      { pinnedAt: pinned ? Date.now() : null },
+      { merge: true }
+    );
+  }
+
+  /**
+   * 軟刪除聊天室（對自己隱藏）。若「所有 participants 都已軟刪除」，
+   * 由本次呼叫執行真刪除（規則允許 participants 刪除房間文件）。
+   * 回傳 'hidden'（僅自己隱藏）或 'deleted'（全員刪除、已真刪）。
+   */
+  static async softDeleteRoom(roomId: string, uid: string): Promise<'hidden' | 'deleted'> {
+    await setDoc(this.memberStateDoc(roomId, uid), { deletedAt: Date.now() }, { merge: true });
+
+    const room = await this.getRoom(roomId, true);
+    if (!room) return 'deleted'; // 已被別人真刪
+
+    const states = await Promise.all(
+      room.participants.map(async (p) => ({
+        uid: p,
+        state: await this.getMemberState(roomId, p).catch(() => null),
+      }))
+    );
+    const allDeleted = states.every((s) => !!s.state?.deletedAt);
+    if (!allDeleted) return 'hidden';
+
+    try {
+      await this.deleteRoomSubcollections(roomId);
+      await deleteDoc(doc(db, 'p2pRooms', roomId));
+      logger.info('[RoomService] softDeleteRoom: all members deleted → hard delete', { roomId });
+      return 'deleted';
+    } catch (err) {
+      // 競態（他人同時操作）下真刪失敗無妨：房間對所有人都已隱藏
+      logger.warn('[RoomService] hard delete after all-soft-delete failed', { roomId, err });
+      return 'hidden';
+    }
+  }
+
+  /** 退出聊天室：把自己移出 participants（他人保留房間）並清掉自己的狀態。
+   *  順序固定：先刪狀態再退出——退出後規則不再視你為參與者，反序會被拒寫。 */
+  static async exitRoom(roomId: string, uid: string): Promise<void> {
+    try {
+      await deleteDoc(this.memberStateDoc(roomId, uid));
+    } catch {
+      /* 狀態文件不存在或刪除失敗皆無害（退出後列表查不到此房） */
+    }
+    await this.leaveRoom(roomId, uid);
+  }
+
+  /** 活躍度 bump：只寫 metadata（lastActiveAt + 遠期 ttl）。呼叫端請節流。 */
+  static async bumpActivity(roomId: string): Promise<void> {
+    const now = Date.now();
+    await updateDoc(doc(db, 'p2pRooms', roomId), {
+      lastActiveAt: now,
+      ttlExpireAt: Timestamp.fromMillis(now + this.PERSISTENT_TTL_MS),
+    });
+  }
+
   private static async deleteRoomSubcollections(roomId: string): Promise<void> {
-    const subcollections = ['signals', 'messages'];
+    const subcollections = ['signals', 'messages', 'memberStates'];
     for (const sub of subcollections) {
       try {
         const ref = collection(db, 'p2pRooms', roomId, sub);
@@ -673,10 +803,12 @@ export class RoomService {
     callback: (rooms: P2PRoom[]) => void
   ): () => void {
     const roomsRef = collection(db, 'p2pRooms');
-    // 監聽 open 和 waiting 狀態的房間
+    // 監聽自己參與的房間。limit 是效能上限（持久聊天室會累積）；
+    // 排序在 client 做（釘選/未讀等 per-user 狀態不在房間文件上）。
     const q = query(
       roomsRef,
-      where('participants', 'array-contains', uid)
+      where('participants', 'array-contains', uid),
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -685,12 +817,15 @@ export class RoomService {
         const data = doc.data();
         rooms.push({
           roomId: doc.id,
+          roomName: data.roomName,
           ownerUid: data.ownerUid,
           ownerName: data.ownerName,
           participants: data.participants || [],
           status: data.status || 'open',
           isPrivate: !!data.isPrivate,
           createdAt: data.createdAt?.toMillis() || Date.now(),
+          lastActiveAt: typeof data.lastActiveAt === 'number' ? data.lastActiveAt : data.lastActiveAt?.toMillis?.(),
+          kind: data.kind,
           waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
           waitingStartedAt: data.waitingStartedAt?.toMillis(),
         });
@@ -758,8 +893,14 @@ export class RoomService {
     callback: (rooms: P2PRoom[]) => void
   ): () => void {
     const roomsRef = collection(db, 'p2pRooms');
-    // 只用 status == 'open' 過濾，避免舊資料沒有 isPrivate 欄位時被排除
-    const q = query(roomsRef, where('status', '==', 'open'));
+    // status == 'open' + ttlExpireAt 未過期：殭屍房（全員斷線、心跳已停）在
+    // 原生 TTL 實際刪除前（可延遲 ~24h）就先從公開列表消失。
+    // isPrivate 仍在前端過濾，避免舊資料沒有該欄位時被排除。
+    const q = query(
+      roomsRef,
+      where('status', '==', 'open'),
+      where('ttlExpireAt', '>', Timestamp.now())
+    );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const rooms: P2PRoom[] = [];
@@ -775,6 +916,7 @@ export class RoomService {
           createdAt: data.createdAt?.toMillis() || Date.now(),
           waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
           waitingStartedAt: data.waitingStartedAt?.toMillis(),
+          lastActiveAt: typeof data.lastActiveAt === 'number' ? data.lastActiveAt : undefined,
         };
         rooms.push(room);
       });
