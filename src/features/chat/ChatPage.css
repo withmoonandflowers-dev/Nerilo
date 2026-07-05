@@ -980,3 +980,12 @@
   text-align: center;
   letter-spacing: 0.02em;
 }
+
+/* 井字棋 demo 浮動面板（header 下方右側） */
+.game-panel-float {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  z-index: 900;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.18));
+}

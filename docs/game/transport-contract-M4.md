@@ -16,7 +16,7 @@
 |---|---|---|---|---|
 | reliable-exactly-once | 最終各恰好一次、簽章、去重、anti-entropy 補送 | gossip `channel:'game'` | 回合制/lockstep 事件（出招、入座、seed commit-reveal、state hash） | ✅ 本次實作 |
 | star-broadcast | ordered+reliable（單一 DataChannel） | `P2PBusBroadcast`（ns:'game'） | 2 人星型 | ✅ 既有（ADR-0015） |
-| realtime-lossy | 無序、可丟、無重送 | 需 maxRetransmits=0 DataChannel + 二進位幀（ADR-0019 codec 已備） | 60Hz 位置/狀態流 | ❌ 未實作（僅契約定義） |
+| realtime-lossy | 無序、可丟、無重送、二進位幀 | `StateChannel`（ordered:false, maxRetransmits:0）+ ADR-0019 codec | 60Hz 位置/狀態流 | ✅ 星型已接（Beta，`p2pManager.getStateChannel()`）；mesh 未接 |
 
 ## 接線（mesh, 3–5 人）
 
@@ -62,12 +62,31 @@ GameFeature <── channel:'game' 過濾 ── MeshGossipManager.onMessage
 - 可靠性本體（去重、對帳收斂、5/5 診斷矩陣）由聊天通道的既有測試鏈
   背書——同一條管線，通道欄位不改變傳輸行為。
 
+## 遊戲事件「不做」Firestore 備援橋接（決策記錄，2026-07-05）
+
+聊天有備援橋接（正確性優先）；遊戲事件**刻意不做**：
+1. 回合制斷線的正確 UX 是「對局暫停」——雙方同時失去對方輸入，暫停是
+   誠實狀態；經伺服器續打反而掩蓋連線降級。
+2. 遊戲流量頻率高於聊天，橋接的 Firestore 讀寫成本與 P2P 敘事直接矛盾。
+3. lockstep/state-hash 對延遲敏感，Firestore 往返會放大 desync 窗口。
+實作：demo 面板在 `connectionState !== 'connected'` 顯示「連線中斷，
+對局暫停」並鎖操作（`TicTacToePanel`）。
+
+## 里程碑 1 已達（2026-07-05）
+
+「連線 → 出招 → 對方看到」：井字棋 demo（`src/features/game/`，
+ChatPage 🎮 進入，2 人星型房）。事件式（spec §2）ns:'ttt' 騎 bus，
+含 SYNC_REQ/SYNC_STATE 開面板對齊（手數多者為準、收端驗形狀重算勝負）。
+E2E：`tests/e2e/game-ttt.spec.ts` 雙向出招 + 回合輪替 + 晚開面板對齊，
+3 輪連跑全綠。**這是遊戲第一次真的跑在 Nerilo 傳輸層上。**
+
 ## 未盡事項（誠實清單）
 
-1. realtime-lossy 通道未實作（需第二條 DataChannel 設定 maxRetransmits=0）。
-2. 遊戲通道未接 Firestore 備援橋接：成員掉備援時遊戲事件到不了該成員
-   （聊天已橋接）。回合制下建議 UI 以「連線降級、暫停對局」處理。
-3. UI demo（房間內小遊戲）未做——本契約完成後即可在其上實作
-   （game-integration-spec 里程碑 1）。
-4. seq 跨頁面重載會重置（與聊天同源的已知缺口），重載即視為離席重入，
-   遊戲層以 SESSION_JOIN + 快照處理。
+1. realtime-lossy 通道 mesh 版未接（星型已有 `StateChannel`）；
+   等有即時遊戲消費者再接，避免無謂動剛穩定的 mesh 連線層。
+2. 井字棋 demo 限 2 人星型房；mesh 房遊戲（3+ 人、走 gossip 可靠通道）
+   是里程碑 2+ 的事。
+3. seq 跨頁面重載會重置（與聊天同源的已知缺口），重載即視為離席重入，
+   遊戲層以 SESSION_JOIN + 快照處理；demo 以 RESTART 收斂。
+4. bus 驗證要求 payload 必須存在——無 payload 的 envelope 整包被丟
+   （本輪踩到：SYNC_REQ 空 payload 被靜默丟棄；遊戲事件一律帶 `{}` 起跳）。
