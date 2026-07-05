@@ -178,6 +178,12 @@ async function startChat() {
   color: var(--primary);
   text-decoration: none;
   font-weight: 500;
+  /* 加大點擊區（原本只有文字寬，觸控/滑鼠都難點中） */
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px 8px 4px;
+  margin: -8px 0 -8px -4px;
+  min-height: 44px;
 }
 .waiting__center,
 .waiting__content {

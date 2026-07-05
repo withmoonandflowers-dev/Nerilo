@@ -10,6 +10,8 @@ import { gradientFor, initialFor } from '~/lib/avatar'
 const { user, loading, logout } = useAuth()
 const { error: toastError, success } = useToast()
 const { balance, relayActive, ensureInit } = useCredits()
+const { theme, cycleTheme } = useTheme()
+const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
 const myRooms = ref<P2PRoom[]>([])
 const memberStates = ref<Record<string, RoomMemberState>>({})
@@ -322,6 +324,8 @@ function relativeTime(ts?: number): string {
     <header class="dash__header">
       <h1 class="dash__title">聊天</h1>
       <div class="dash__actions">
+        <button type="button" class="dash__icon-btn" :aria-label="`切換主題（目前 ${themeLabel}）`"
+                :title="`主題：${themeLabel}`" @click="cycleTheme">◐</button>
         <button type="button" class="dash__icon-btn dash__icon-btn--friends" aria-label="好友" @click="navigateTo('/friends')">
           👥<span v-if="pendingCount" class="dash__badge">{{ pendingCount }}</span>
         </button>

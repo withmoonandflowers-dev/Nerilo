@@ -1,0 +1,41 @@
+<!-- Nuxt SPA 載入畫面：bundle 下載/hydrate 前顯示，取代白屏（純 HTML+inline CSS，無 JS）。neo 深色底 + 品牌脈動。 -->
+<div class="nerilo-splash">
+  <div class="nerilo-splash__logo">Nerilo</div>
+  <div class="nerilo-splash__ring"></div>
+</div>
+<style>
+  .nerilo-splash {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    background:
+      radial-gradient(600px 400px at 85% -5%, rgba(139, 92, 246, 0.18), transparent 70%),
+      radial-gradient(500px 380px at -10% 100%, rgba(255, 45, 138, 0.14), transparent 70%),
+      #0E0812;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'PingFang TC', sans-serif;
+  }
+  .nerilo-splash__logo {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: linear-gradient(135deg, #FF2D8A, #8B5CF6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: nerilo-pulse 1.6s ease-in-out infinite;
+  }
+  .nerilo-splash__ring {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 2.5px solid rgba(255, 255, 255, 0.12);
+    border-top-color: #FF2D8A;
+    animation: nerilo-spin 0.8s linear infinite;
+  }
+  @keyframes nerilo-spin { to { transform: rotate(360deg); } }
+  @keyframes nerilo-pulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+</style>
