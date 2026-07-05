@@ -36,6 +36,10 @@ export class MeshChatService {
 
     // 監聽 Gossip 訊息
     this.meshGossipManager.onMessage((gossipMessage: GossipMessage) => {
+      // 通道分流（M4）：gossip 管線同時載聊天與遊戲事件；非 chat 通道
+      // （如 'game'，content 是遊戲 envelope JSON）不得進聊天顯示。
+      if (gossipMessage.channel !== undefined && gossipMessage.channel !== 'chat') return;
+
       // 過濾自己的回音：anti-entropy / gossip 可能把本機訊息繞回；本機已樂觀顯示。
       // 必須比 mesh userId（senderId 的實際型別），比 firebase uid 永不命中。
       if (gossipMessage.senderId === this.meshUserId) return;

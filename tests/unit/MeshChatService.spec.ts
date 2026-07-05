@@ -141,6 +141,38 @@ describe('MeshChatService', () => {
       expect(received[0]!.from).toBe('remote-user');
     });
 
+    it('game 通道的 gossip 訊息不進聊天（M4 通道分流）', async () => {
+      const storage = makeMockStorage();
+      const service = new MeshChatService('room-1', 'user-1', storage);
+      await service.initialize();
+
+      const received: ChatMessage[] = [];
+      service.onMessage((msg) => received.push(msg));
+
+      // 遊戲事件與聊天共用 gossip 管線，靠 channel 分流；漏濾會把
+      // 遊戲 envelope JSON 當聊天泡泡顯示
+      capturedMessageHandler!({
+        senderId: 'remote-user',
+        seq: 1,
+        channel: 'game',
+        content: '{"ns":"game","type":"INPUT"}',
+        timestamp: Date.now(),
+      } as GossipMessage);
+      // 明確 channel:'chat' 照常進
+      capturedMessageHandler!({
+        senderId: 'remote-user',
+        seq: 2,
+        channel: 'chat',
+        content: 'real chat',
+        timestamp: Date.now(),
+      } as GossipMessage);
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(received).toHaveLength(1);
+      expect(received[0]!.content).toBe('real chat');
+    });
+
     it('取消訂閱後不再收到訊息', async () => {
       const storage = makeMockStorage();
       const service = new MeshChatService('room-1', 'user-1', storage);

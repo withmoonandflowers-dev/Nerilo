@@ -261,6 +261,12 @@ export interface GossipMessage {
    * 兩條路帶同一個 id，UI 以 id 去重 → 跨傳輸路徑仍恰好一次。
    */
   messageId?: string;
+  /**
+   * 應用通道（M4 傳輸契約）：同一條 gossip 可靠廣播管線服務多個上層應用。
+   * 'chat'（預設，缺欄位視同 chat）| 'game'（content 為遊戲 envelope JSON）。
+   * 有簽章保護——否則可把聊天訊息改標成遊戲事件（或反向）造成錯誤分發。
+   */
+  channel?: 'chat' | 'game';
 }
 
 // Mesh 身分資訊
