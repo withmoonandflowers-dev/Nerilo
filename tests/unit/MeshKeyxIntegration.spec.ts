@@ -190,4 +190,49 @@ describe('P2-②c keyx 整合模擬（真協調器 + 真 handler + 真 crypto）
     expect(d.displayed[0]).toContain('🔒'); // 新人無 epoch-0 金鑰 → 佔位
     expect(d.displayed[0]).not.toContain('epoch0-hello'); // 讀不到入群前內容
   });
+
+  it('移除成員：名冊縮小→產生方遞增 epoch 重發→離開者解不了新 epoch（前向保密）', async () => {
+    const net = new SimNetwork();
+    let roster = {
+      members: [] as Array<{ userId: string; ecdhPubKey?: string }>,
+      participantCount: 0,
+    };
+    const rosterFn = () => roster;
+
+    const a = await SimNode.create('n1-alice', net, rosterFn);
+    const b = await SimNode.create('n2-bob', net, rosterFn);
+    const c = await SimNode.create('n3-carol', net, rosterFn);
+    const abc = [a, b, c];
+    roster = {
+      members: abc.map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      participantCount: 3,
+    };
+
+    // 3 人收斂到 epoch 0
+    await settle(net, abc, () => abc.every((n) => n.handler.getMaxKnownEpoch() === 0));
+    expect(abc.every((n) => n.handler.getMaxKnownEpoch() === 0)).toBe(true);
+
+    // ── carol 離開：名冊＝仍在籍者（模擬 rosterFromRoom 交集 participants，排除離開者）──
+    // carol 仍在網路上收訊（模擬離開者/ex-member 尚在線），但已退出名冊
+    roster = {
+      members: [a, b].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      participantCount: 2,
+    };
+
+    // 產生方（alice）偵測名冊縮小 → 遞增 epoch 重發（只封給 bob）
+    await settle(net, [a, b], () => a.handler.getMaxKnownEpoch() === 1 && b.handler.getMaxKnownEpoch() === 1);
+    expect(a.handler.getMaxKnownEpoch()).toBe(1);
+    expect(b.handler.getMaxKnownEpoch()).toBe(1);
+    // carol 未被封 epoch-1 → 停在 epoch 0
+    expect(c.handler.getMaxKnownEpoch()).toBe(0);
+
+    // bob 送 epoch-1 密文：alice 解得開（明文）、carol 解不了（佔位）——前向保密
+    c.displayed.length = 0;
+    a.displayed.length = 0;
+    await b.handler.sendMessage('epoch1-after-carol-left', 'm2');
+    await net.flush();
+    expect(a.displayed).toContain('epoch1-after-carol-left'); // 留下者解得開
+    expect(c.displayed.some((s) => s.includes('🔒'))).toBe(true); // 離開者佔位
+    expect(c.displayed.some((s) => s.includes('epoch1-after-carol-left'))).toBe(false); // 讀不到離開後內容
+  });
 });

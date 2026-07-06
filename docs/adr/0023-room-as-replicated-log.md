@@ -205,6 +205,14 @@ keyx 不進聊天顯示（如同 game 通道分流），但照樣入 store／轉
 內容金鑰改為 **epoch → key 金鑰環**：送出用最高 epoch，解密按各密文信封 epoch 選鑰
 （加人/移除輪替後仍能解舊 epoch 歷史密文）。全程「無鑰退明文相容」不變——沒拿到 keyx 前 mesh 房照舊明文。
 
+### 決策 4：keyx 名冊＝`meshIdentities ∩ participants`（移除成員前向保密的前提）
+
+接續時發現：`RoomService.leaveRoom` 只縮 `participants`、**不清 `meshIdentities`**（離開者條目殘留）。
+若產生方直接用 `meshIdentities` 當名冊，離開者會（a）續留名冊使 sig 不變 → 不觸發重發、
+（b）被續封鑰 → **無前向保密**。故 `rosterFromRoom` 只認「仍在 `participants` 的成員」：
+離開即退出名冊 → 名冊縮小 → 新 epoch 新金鑰只封給留下者 → 離開者持舊 epoch 鑰、解不了新 epoch。
+以確定性整合測（`tests/unit/MeshKeyxIntegration.spec.ts`）驗證加人/移除兩向的 epoch 輪替與前向保密。
+
 ### P2 分階段狀態更新
 
 | 階段 | 狀態 |

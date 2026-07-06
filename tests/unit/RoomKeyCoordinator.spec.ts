@@ -7,7 +7,7 @@
  * - 密碼學鏈：分發的 keyx 內，成員以自己的 ECDH 私鑰開得出「與本機安裝的同一把」金鑰
  */
 import { describe, it, expect, vi } from 'vitest';
-import { RoomKeyCoordinator } from '../../src/core/mesh/RoomKeyCoordinator';
+import { RoomKeyCoordinator, rosterFromRoom } from '../../src/core/mesh/RoomKeyCoordinator';
 import type { RoomKeyCoordinatorDeps } from '../../src/core/mesh/RoomKeyCoordinator';
 import { openSealedRoomKey } from '../../src/core/mesh/RoomKeyDistribution';
 import { encryptRecordContent, decryptRecordContent } from '../../src/core/mesh/RecordCrypto';
@@ -194,6 +194,28 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     });
     await tickStable(coord);
     expect(sendKeyx).not.toHaveBeenCalled();
+  });
+
+  it('rosterFromRoom：名冊＝meshIdentities ∩ participants（離開者被排除，前向保密前提）', () => {
+    const meshIdentities = {
+      uidA: { userId: 'a-user', ecdhPubKey: 'A'.repeat(60) },
+      uidB: { userId: 'b-user', ecdhPubKey: 'B'.repeat(60) },
+      uidC: { userId: 'c-user', ecdhPubKey: 'C'.repeat(60) }, // 已離開但 meshIdentity 殘留
+    };
+    // C 已 leaveRoom → 不在 participants
+    const r = rosterFromRoom(meshIdentities, ['uidA', 'uidB']);
+    expect(r.participantCount).toBe(2);
+    expect(r.members.map((m) => m.userId).sort()).toEqual(['a-user', 'b-user']);
+    // 關鍵：離開者 c-user 不在名冊 → 產生方不會續封鑰給它
+    expect(r.members.some((m) => m.userId === 'c-user')).toBe(false);
+  });
+
+  it('rosterFromRoom：空/未定義輸入安全', () => {
+    expect(rosterFromRoom(undefined, undefined)).toEqual({ members: [], participantCount: 0 });
+    expect(rosterFromRoom({ u: { userId: 'x', ecdhPubKey: 'p' } }, [])).toEqual({
+      members: [],
+      participantCount: 0,
+    });
   });
 
   it('密碼學鏈：成員用自己 ECDH 私鑰開出 keyx → 與本機安裝的同一把金鑰', async () => {
