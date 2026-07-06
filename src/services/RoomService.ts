@@ -8,6 +8,7 @@ import type { P2PRoom, RoomStatus, RoomCapability, RoomMemberState } from '../ty
 interface FirestoreMeshIdentity {
   userId: string;
   pubKey: string;
+  ecdhPubKey?: string;
   joinedAt: { toMillis?: () => number } | number;
 }
 
@@ -231,6 +232,7 @@ export class RoomService {
           {
             userId: value.userId,
             pubKey: value.pubKey,
+            ...(value.ecdhPubKey ? { ecdhPubKey: value.ecdhPubKey } : {}),
             joinedAt: (typeof value.joinedAt === 'object' && value.joinedAt?.toMillis?.()) || (typeof value.joinedAt === 'number' ? value.joinedAt : Date.now()),
           },
         ])
@@ -942,7 +944,9 @@ export class RoomService {
     roomId: string,
     firebaseUid: string,
     userId: string,
-    pubKey: string
+    pubKey: string,
+    /** ECDH 公鑰（Base64 SPKI），供 keyx 成對封裝（ADR-0023 P2-②c）。可選（舊 client 不帶）。 */
+    ecdhPubKey?: string
   ): Promise<void> {
     const roomDoc = doc(db, 'p2pRooms', roomId);
 
@@ -956,6 +960,15 @@ export class RoomService {
     // 驗證 pubKey 是合法的 Base64
     if (!/^[A-Za-z0-9+/]+=*$/.test(pubKey)) {
       throw new Error('Invalid pubKey format: must be valid Base64');
+    }
+    // ecdhPubKey 同格式驗證（若提供）
+    if (ecdhPubKey !== undefined) {
+      if (typeof ecdhPubKey !== 'string' || ecdhPubKey.length < 40 || ecdhPubKey.length > 512) {
+        throw new Error('Invalid ecdhPubKey format: must be 40-512 characters');
+      }
+      if (!/^[A-Za-z0-9+/]+=*$/.test(ecdhPubKey)) {
+        throw new Error('Invalid ecdhPubKey format: must be valid Base64');
+      }
     }
 
     // 寫入 meshIdentities[自己]。firestore.rules 以「更新前 doc 的 participants
@@ -971,7 +984,12 @@ export class RoomService {
         throw new Error('join-not-propagated'); // 可重試：join 尚未生效
       }
       const meshIdentities = data.meshIdentities || {};
-      meshIdentities[firebaseUid] = { userId, pubKey, joinedAt: Date.now() };
+      meshIdentities[firebaseUid] = {
+        userId,
+        pubKey,
+        ...(ecdhPubKey ? { ecdhPubKey } : {}),
+        joinedAt: Date.now(),
+      };
       await updateDoc(roomDoc, {
         meshIdentities,
         topology: 'mesh', // 標記為 mesh 拓撲
@@ -1006,20 +1024,25 @@ export class RoomService {
   /**
    * 獲取房間內所有節點的 mesh 身分資訊
    */
-  static async getMeshIdentities(roomId: string): Promise<Map<string, { userId: string; pubKey: string }>> {
-    const room = await this.getRoom(roomId, true);
+  static async getMeshIdentities(
+    roomId: string,
+    /** true=強制 server 讀（連線建立需最新名冊）；false=允許快取（keyx 週期輪詢，省讀取） */
+    forceServer = true
+  ): Promise<Map<string, { userId: string; pubKey: string; ecdhPubKey?: string }>> {
+    const room = await this.getRoom(roomId, forceServer);
     if (!room || !room.meshIdentities) {
       return new Map();
     }
-    
-    const identities = new Map<string, { userId: string; pubKey: string }>();
+
+    const identities = new Map<string, { userId: string; pubKey: string; ecdhPubKey?: string }>();
     for (const [firebaseUid, identity] of Object.entries(room.meshIdentities)) {
       identities.set(firebaseUid, {
         userId: identity.userId,
         pubKey: identity.pubKey,
+        ...(identity.ecdhPubKey ? { ecdhPubKey: identity.ecdhPubKey } : {}),
       });
     }
-    
+
     return identities;
   }
 }

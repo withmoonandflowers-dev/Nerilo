@@ -32,7 +32,12 @@ export interface P2PRoom {
   meshIdentities?: {
     [firebaseUid: string]: {
       userId: string; // hash(pubKey)
-      pubKey: string; // Base64 編碼的公鑰
+      pubKey: string; // Base64 編碼的簽章公鑰（ECDSA SPKI）
+      /**
+       * Base64 編碼的 ECDH 公鑰（SPKI）；成對封裝房間內容金鑰用（ADR-0023 P2-②c keyx）。
+       * 可選：舊資料/舊 client 無此欄位時視為「不參與密文化」→ 該房退明文相容。
+       */
+      ecdhPubKey?: string;
       joinedAt: number;
     };
   };
@@ -275,17 +280,34 @@ export interface GossipMessage {
   messageId?: string;
   /**
    * 應用通道（M4 傳輸契約）：同一條 gossip 可靠廣播管線服務多個上層應用。
-   * 'chat'（預設，缺欄位視同 chat）| 'game'（content 為遊戲 envelope JSON）。
-   * 有簽章保護——否則可把聊天訊息改標成遊戲事件（或反向）造成錯誤分發。
+   * 'chat'（預設，缺欄位視同 chat）| 'game'（content 為遊戲 envelope JSON）
+   * | 'keyx'（content 為房間內容金鑰分發紀錄，ADR-0023 P2-②c；不進聊天顯示，
+   * 收端據 forMember 開出金鑰）。有簽章保護——否則可把金鑰紀錄改標成聊天造成誤分發。
    */
-  channel?: 'chat' | 'game';
+  channel?: 'chat' | 'game' | 'keyx';
 }
 
 // Mesh 身分資訊
 export interface MeshIdentity {
   userId: string; // hash(pubKey)
-  pubKey: string; // Base64 編碼的公鑰
+  pubKey: string; // Base64 編碼的簽章公鑰（ECDSA SPKI）
+  /** Base64 編碼的 ECDH 公鑰（SPKI）；keyx 成對封裝用（ADR-0023 P2-②c）。可選。 */
+  ecdhPubKey?: string;
   joinedAt: number;
+}
+
+/**
+ * keyx 紀錄的 content payload（ADR-0023 P2-②c）：channel:'keyx' 的 GossipMessage.content
+ * 序列化字串。產生方（在場成員 userId 字典序最小者）用自己的 ECDH 私鑰對每位成員的
+ * ECDH 公鑰成對封裝同一把房間內容金鑰。收端據 forMember 找到自己那份、以自己的 ECDH
+ * 私鑰 + producerEcdh 開出。producerEcdh 內嵌於已簽章紀錄 → 隨簽章一併驗真、免另查名冊。
+ */
+export interface KeyxRecordPayload {
+  v: 'keyx1';
+  /** 產生方的 ECDH 公鑰（Base64 SPKI），供收端 openSealedRoomKey */
+  producerEcdh: string;
+  /** 每位成員一份的封裝金鑰（見 RoomKeyDistribution.SealedRoomKey） */
+  keys: Array<{ forMember: string; epoch: number; enc: string; iv: string }>;
 }
 
 // ========== 房間合併/分岔：Chain Marker Payload 型別 ==========
