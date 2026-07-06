@@ -9,7 +9,11 @@ import {
   encryptRecordContent,
   decryptRecordContent,
   isEncryptedContent,
+  contentEpoch,
 } from './RecordCrypto';
+import { openSealedRoomKey } from './RoomKeyDistribution';
+import { base64ToArrayBuffer } from '../../utils/crypto';
+import type { KeyxRecordPayload } from '../../types';
 import type { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 
@@ -51,19 +55,47 @@ export class GossipMessageHandler {
   ) {}
 
   // ── 內容金鑰（ADR-0023 P2-②）─────────────────────────────────────────────
-  /** 房間內容金鑰；null = 尚未就緒 → 收送退明文相容（行為同 P2 之前） */
-  private contentKey: CryptoKey | null = null;
-  /** 金鑰 epoch（輪替遞增；寫入密文信封供解密端選鑰） */
-  private keyEpoch = 0;
+  /**
+   * epoch → 房間內容金鑰 的金鑰環。空 = 尚未就緒 → 收送退明文相容（行為同 P2 之前）。
+   * 保留多個 epoch：加人/移除輪替後，仍能解舊 epoch 的歷史密文（前向保密下的相容補歷史）。
+   */
+  private keyRing: Map<number, CryptoKey> = new Map();
+  /** 目前送出用的 epoch（金鑰環中最高者）；送出一律用最新金鑰。null = 無金鑰。 */
+  private sendEpoch: number | null = null;
+  /**
+   * 本機 ECDH 私鑰（開出封給自己的 keyx）。null = 不參與密文化（無鑰退明文）。
+   * 由 MeshGossipManager 於初始化後注入（IdentityManager.getEcdhPrivateKey）。
+   */
+  private ecdhPrivateKey: CryptoKey | null = null;
 
   /**
-   * 設定/清除房間內容金鑰。金鑰就緒後：送出時加密 content（簽章覆蓋密文，
-   * 盲信使可存可驗不可解）、顯示前解密。store/轉發/對帳一律保持密文原封。
-   * 分發協議（keyx 紀錄）為 P2-②b；此處只負責「有鑰就用」。
+   * 加入/設定一把房間內容金鑰到金鑰環。key=null 清空整個環（退明文）。
+   * epoch 較高者成為送出用金鑰；解密則按各密文信封的 epoch 選環中對應金鑰。
+   * 送出時加密 content（簽章覆蓋密文，盲信使可存可驗不可解）、顯示前解密；
+   * store/轉發/對帳一律保持密文原封。分發協議（keyx 紀錄）見 consumeKeyx / MeshGossipManager。
    */
   setContentKey(key: CryptoKey | null, epoch = 0): void {
-    this.contentKey = key;
-    this.keyEpoch = epoch;
+    if (key === null) {
+      this.keyRing.clear();
+      this.sendEpoch = null;
+      return;
+    }
+    this.keyRing.set(epoch, key);
+    if (this.sendEpoch === null || epoch >= this.sendEpoch) {
+      this.sendEpoch = epoch;
+    }
+  }
+
+  /** 注入本機 ECDH 私鑰，啟用 keyx 消費（開出封給自己的房間金鑰）。 */
+  setKeyxPrivateKey(ecdhPrivateKey: CryptoKey | null): void {
+    this.ecdhPrivateKey = ecdhPrivateKey;
+  }
+
+  /** 金鑰環中已知最高 epoch（-1 = 尚無金鑰）；供產生方交接時 epoch 單調遞增。 */
+  getMaxKnownEpoch(): number {
+    let max = -1;
+    for (const ep of this.keyRing.keys()) if (ep > max) max = ep;
+    return max;
   }
 
   /**
@@ -135,10 +167,13 @@ export class GossipMessageHandler {
 
     // 內容密文化（P2-②）：金鑰就緒才加密，否則明文相容。
     // 加密在簽章「之前」→ 簽章覆蓋密文，任何人（含盲信使）可驗真偽而無需金鑰。
+    // keyx 通道例外：其 content 本身就是（成對 ECDH 封裝的）金鑰分發紀錄，
+    // 不可用房間金鑰再加密（否則要有房間金鑰才能讀房間金鑰，循環）。
     let wireContent = content;
-    if (this.contentKey) {
+    const sendKey = this.sendEpoch !== null ? this.keyRing.get(this.sendEpoch) : undefined;
+    if (channel !== 'keyx' && sendKey) {
       try {
-        wireContent = await encryptRecordContent(content, this.contentKey, this.keyEpoch);
+        wireContent = await encryptRecordContent(content, sendKey, this.sendEpoch!);
       } catch (err) {
         // 加密失敗不得默默送明文（會洩漏）——直接拋，讓上層標記傳送失敗
         logger.error('[GossipMessageHandler] content encryption failed', {
@@ -301,10 +336,17 @@ export class GossipMessageHandler {
         ttl: message.ttl,
       });
 
-      // 顯示訊息。注意：顯示不受 ttl 限制——ttl 只限制主動洪泛半徑，
-      // 訊息既已到達（含 anti-entropy 補送），對使用者就必須恰好一次呈現。
-      // 密文化（P2-②）：僅「顯示副本」解密；store/轉發/對帳沿用密文原封（盲信使相容）。
-      this.notifyMessageListeners(await this.toDisplayMessage(message));
+      // 通道分流（P2-②c）：keyx 是金鑰分發紀錄，不進聊天顯示——消費它（開出封給
+      // 自己的房間金鑰 → 加入金鑰環）。它照樣入 store／轉發／對帳（key-as-record：
+      // 遲入/重進/盲信使靠同一套補齊），故消費與轉發並存、僅「不顯示」。
+      if (message.channel === 'keyx') {
+        await this.consumeKeyx(message);
+      } else {
+        // 顯示訊息。注意：顯示不受 ttl 限制——ttl 只限制主動洪泛半徑，
+        // 訊息既已到達（含 anti-entropy 補送），對使用者就必須恰好一次呈現。
+        // 密文化（P2-②）：僅「顯示副本」解密；store/轉發/對帳沿用密文原封（盲信使相容）。
+        this.notifyMessageListeners(await this.toDisplayMessage(message));
+      }
 
       // 轉發（建立副本以避免修改傳入物件）；ttl 耗盡則不轉發，缺口由對帳補
       if (message.ttl > 0) {
@@ -506,17 +548,65 @@ export class GossipMessageHandler {
    */
   private async toDisplayMessage(message: GossipMessage): Promise<GossipMessage> {
     if (!isEncryptedContent(message.content)) return message; // 明文相容路徑
-    if (!this.contentKey) {
+    // 按信封 epoch 從金鑰環選鑰（加人/移除輪替後仍能解舊 epoch 歷史密文）
+    const ep = contentEpoch(message.content);
+    const key = ep !== null ? this.keyRing.get(ep) : undefined;
+    if (!key) {
       return { ...message, content: '[🔒 訊息已加密，尚未取得金鑰]' };
     }
     try {
-      const plain = await decryptRecordContent(message.content, this.contentKey);
+      const plain = await decryptRecordContent(message.content, key);
       return { ...message, content: plain };
     } catch (err) {
       logger.warn('[GossipMessageHandler] decrypt for display failed', {
         roomId: this.roomId, senderId: message.senderId, seq: message.seq, err,
       });
       return { ...message, content: '[🔒 無法解密此訊息]' };
+    }
+  }
+
+  /**
+   * 消費 keyx 紀錄（ADR-0023 P2-②c）：找出封給自己（forMember == 本機 userId）的那份，
+   * 以本機 ECDH 私鑰 + 紀錄內嵌的 producerEcdh 開出房間金鑰 → 加入金鑰環（該 epoch）。
+   *
+   * 已在 handleReceivedMessage 通過簽章驗證（producerEcdh 隨簽章一併驗真）才進來。
+   * 無 ECDH 私鑰（不參與密文化）、非封給自己、或開鑰失敗 → 靜默略過（無鑰退明文相容）。
+   */
+  private async consumeKeyx(message: GossipMessage): Promise<void> {
+    if (!this.ecdhPrivateKey) return; // 不參與密文化
+    let payload: KeyxRecordPayload;
+    try {
+      payload = JSON.parse(message.content) as KeyxRecordPayload;
+    } catch {
+      return; // 畸形 keyx，忽略
+    }
+    if (payload?.v !== 'keyx1' || typeof payload.producerEcdh !== 'string' || !Array.isArray(payload.keys)) {
+      return;
+    }
+    const mine = payload.keys.find((k) => k?.forMember === this.userId);
+    if (!mine) return; // 沒有封給我的份（例如我加入前的舊 epoch keyx）
+
+    try {
+      const producerEcdh = await crypto.subtle.importKey(
+        'spki',
+        base64ToArrayBuffer(payload.producerEcdh),
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        []
+      );
+      const roomKey = await openSealedRoomKey(
+        { forMember: mine.forMember, epoch: mine.epoch, enc: mine.enc, iv: mine.iv },
+        this.ecdhPrivateKey,
+        producerEcdh
+      );
+      this.setContentKey(roomKey, mine.epoch);
+      logger.info('[GossipMessageHandler] keyx consumed — room key installed', {
+        roomId: this.roomId, epoch: mine.epoch, from: message.senderId,
+      });
+    } catch (err) {
+      logger.warn('[GossipMessageHandler] keyx open failed', {
+        roomId: this.roomId, epoch: mine.epoch, err,
+      });
     }
   }
 

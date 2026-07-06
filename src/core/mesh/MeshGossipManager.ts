@@ -2,6 +2,7 @@ import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import { GossipMessageHandler } from './GossipMessageHandler';
+import { RoomKeyCoordinator } from './RoomKeyCoordinator';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import { RoomService } from '../../services/RoomService';
@@ -26,6 +27,12 @@ export class MeshGossipManager {
   private peerScoring: PeerScoring | null = null;
   private initialized = false;
   private neighborCheckInterval: ReturnType<typeof setInterval> | null = null;
+  /** 房間內容金鑰協調器（ADR-0023 P2-②c keyx）；產生方側編排 */
+  private keyCoordinator: RoomKeyCoordinator | null = null;
+  /** keyx 週期評估計時器（產生方偵測名冊變動並分發） */
+  private keyxInterval: ReturnType<typeof setInterval> | null = null;
+  /** keyx 評估週期：稍慢於鄰居掃描，且用快取讀名冊，省 Firestore server 讀 */
+  private static readonly KEYX_TICK_MS = 4000;
 
   constructor(private roomId: string) {
     this.identityManager = new IdentityManager();
@@ -48,6 +55,15 @@ export class MeshGossipManager {
       await this.identityManager.initialize();
       const userId = this.identityManager.getUserId();
       const pubKey = await this.identityManager.exportPublicKey();
+      // ECDH 公鑰（keyx 成對封裝用，ADR-0023 P2-②c）；失敗不擋 mesh（退明文相容）
+      let ecdhPubKey: string | undefined;
+      try {
+        ecdhPubKey = await this.identityManager.exportEcdhPublicKey();
+      } catch (err) {
+        logger.warn('[MeshGossipManager] ECDH pubkey unavailable — room stays plaintext', {
+          roomId: this.roomId, err,
+        });
+      }
 
       // 2. 註冊身分到 Firestore
       const firebaseUid = auth.currentUser?.uid;
@@ -55,7 +71,7 @@ export class MeshGossipManager {
         throw new Error('User not authenticated');
       }
 
-      await RoomService.updateMeshIdentity(this.roomId, firebaseUid, userId, pubKey);
+      await RoomService.updateMeshIdentity(this.roomId, firebaseUid, userId, pubKey, ecdhPubKey);
       logger.info('[MeshGossipManager] Identity registered', {
         roomId: this.roomId,
         firebaseUid,
@@ -91,6 +107,39 @@ export class MeshGossipManager {
       // 連線建立前先從複本重生（seq 水位、紀錄、floors）
       await this.messageHandler.hydrate();
 
+      // keyx 消費啟用（ADR-0023 P2-②c）：注入本機 ECDH 私鑰，讓 handler 能開出封給
+      // 自己的房間金鑰。ECDH 不可用（持久失敗且無 webcrypto）時退明文相容。
+      if (ecdhPubKey) {
+        try {
+          this.messageHandler.setKeyxPrivateKey(this.identityManager.getEcdhPrivateKey());
+          this.keyCoordinator = new RoomKeyCoordinator({
+            localUserId: userId,
+            getEcdhPrivateKey: () => this.identityManager.getEcdhPrivateKey(),
+            getEcdhPublicKeyBase64: () => this.identityManager.exportEcdhPublicKey(),
+            // 快取讀（forceServer=false）：keyx 週期輪詢不需每次強制 server 讀。
+            // 同時回傳 participants 人數，供「全員 ecdh 就緒」閘門。
+            loadRoster: async () => {
+              const room = await RoomService.getRoom(this.roomId, false);
+              const members = room?.meshIdentities
+                ? Object.values(room.meshIdentities).map((v) => ({
+                    userId: v.userId,
+                    ecdhPubKey: v.ecdhPubKey,
+                  }))
+                : [];
+              return { members, participantCount: room?.participants?.length ?? 0 };
+            },
+            sendKeyx: (content) => this.messageHandler!.sendMessage(content, undefined, 'keyx'),
+            applyLocalKey: (key, epoch) => this.messageHandler!.setContentKey(key, epoch),
+            getMaxKnownEpoch: () => this.messageHandler!.getMaxKnownEpoch(),
+          });
+        } catch (err) {
+          logger.warn('[MeshGossipManager] keyx coordinator init failed — plaintext room', {
+            roomId: this.roomId, err,
+          });
+          this.keyCoordinator = null;
+        }
+      }
+
       // 5. 初始化心跳服務
       this.heartbeatService = new HeartbeatService(userId);
       this.heartbeatService.onUnreachable((peerId) => {
@@ -113,6 +162,10 @@ export class MeshGossipManager {
 
         // 設置鄰居連線的訊息監聽（在連線建立後）
         this.setupNeighborMessageHandlers();
+
+        // 啟動 keyx 週期評估（ADR-0023 P2-②c）：產生方偵測名冊變動 → 分發內容金鑰。
+        // 非產生方為 no-op（純等 keyx 進來由 handler 消費）。與鄰居掃描解耦、獨立計時。
+        this.startKeyxCoordination();
       }
 
       this.initialized = true;
@@ -203,6 +256,19 @@ export class MeshGossipManager {
   }
 
   /**
+   * 啟動 keyx 週期評估計時器。coordinator.tick() 內部冪等（穩定名冊只分發一次），
+   * 非產生方為 no-op。任一 tick 失敗留待下輪重試，不影響 mesh 收送（無鑰退明文）。
+   */
+  private startKeyxCoordination(): void {
+    if (!this.keyCoordinator) return; // ECDH 不可用 → 房間維持明文相容
+    // 立即先跑一次（縮短形成期到密文化的空窗），再進週期
+    void this.keyCoordinator.tick();
+    this.keyxInterval = setInterval(() => {
+      void this.keyCoordinator?.tick();
+    }, MeshGossipManager.KEYX_TICK_MS);
+  }
+
+  /**
    * 發送訊息
    * @param messageId 應用層訊息 id，貫穿至 gossip payload（跨傳輸路徑去重）
    * @param channel 應用通道（M4）：缺省 'chat'；遊戲事件帶 'game'，
@@ -281,6 +347,11 @@ export class MeshGossipManager {
       clearInterval(this.neighborCheckInterval);
       this.neighborCheckInterval = null;
     }
+    if (this.keyxInterval) {
+      clearInterval(this.keyxInterval);
+      this.keyxInterval = null;
+    }
+    this.keyCoordinator = null;
     if (this.heartbeatService) {
       this.heartbeatService.stop();
       this.heartbeatService = null;
