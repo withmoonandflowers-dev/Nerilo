@@ -163,3 +163,53 @@ P2 把紀錄內容密文化。加解密原語已落地並測試（`RecordCrypto`
 
 star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後，盲信使（P4）
 只需 mesh 房密文化（P2-②）即可先行驗證於 3-5 人房。
+
+---
+
+## 修訂四（2026-07-06）：P2-②c keyx 接進 live mesh（接線決策）
+
+把 keyx 分發接進 live mesh（`MeshGossipManager`／`GossipMessageHandler`／新增
+`RoomKeyCoordinator`），讓 3-5 人 mesh 房真正端到端加密。以下決策在接線時定案。
+
+### 決策 1：ECDH 公鑰走 `meshIdentities`（擴充欄位），非另發 gossip announce
+
+每成員的 ECDH 公鑰是「靜態身分」（如同既有 ECDSA 簽章公鑰），故加一個
+`meshIdentities[uid].ecdhPubKey` 欄位隨身分一起發布，而非用一筆 gossip 紀錄廣播。
+- **低風險**：沿用既有身分註冊路徑（`RoomService.updateMeshIdentity`），不新增 gossip 通道語義。
+- **MITM 防護沿用**：`firestore.rules` 的 `meshIdentitiesChangeIsValid`
+  （`affectedKeys ⊆ {auth.uid}`）本就擋下覆寫他人條目；另補 `ecdhPubKey` 格式驗證（可選、有才驗）。
+- ECDH 金鑰對持久化於 IndexedDB（`IdentityManager`，與 ECDSA 身分同 blob、獨立金鑰對）——
+  全員斷線重生後舊 keyx（封給舊 ECDH 公鑰）仍開得了，符合「金鑰韌性 = 資料韌性」。
+  持久失敗（Safari 隱私模式/node）退 session 內暫時金鑰（該裝置重啟後無法解舊 epoch，已記錄取捨）。
+
+對比「一筆 gossip announce 廣播 ECDH 公鑰」：雖與 key-as-record 更一致，但需新通道 + 收端信任處理，
+風險高於擴充靜態身分欄位；且 keyx 紀錄本身已走 gossip（下述），靜態公鑰無需再走一次。
+
+### 決策 2：keyx 紀錄走 gossip；產生方＝完整穩定名冊的最小 userId（三道閘門）
+
+內容金鑰產生方用 `RoomKeyDistribution.sealRoomKeyForAll` 封給所有在場成員，以
+`channel:'keyx'` 寫進 gossip 管線（與一般訊息同一條對帳，遲入/重進靠 anti-entropy 補齊）。
+產生方 deterministic 選舉＝在場成員 userId 字典序最小者。
+
+**接線中發現並修復的關鍵 bug（雙產生方 epoch 碰撞）**：形成期若以殘缺名冊搶先分發，
+兩個「各自視圖的最小者」會各發一把 epoch-0 金鑰（不同鑰、同 epoch）→ 金鑰環相互覆蓋
+→ 收端解密失敗。修法為 `RoomKeyCoordinator` 三道分發閘門：
+①全員 ecdh 就緒（eligible == participants）②名冊連續穩定數輪 ③我是完整名冊最小者。
+令「只有最終完整名冊的最小者」分發。殘留（Firestore 傳播 > 穩定窗的持久分裂視圖）極不可能且
+會在收斂後以 `getMaxKnownEpoch()+1` 自癒（新一輪 epoch 遞增，不再同號）。
+
+### 決策 3：消費在 `GossipMessageHandler`；金鑰環按信封 epoch 選鑰
+
+收到 `channel:'keyx'` 且 `forMember == 自己` → `openSealedRoomKey` → `setContentKey(key, epoch)`；
+keyx 不進聊天顯示（如同 game 通道分流），但照樣入 store／轉發／對帳（盲信使/遲入者補齊）。
+內容金鑰改為 **epoch → key 金鑰環**：送出用最高 epoch，解密按各密文信封 epoch 選鑰
+（加人/移除輪替後仍能解舊 epoch 歷史密文）。全程「無鑰退明文相容」不變——沒拿到 keyx 前 mesh 房照舊明文。
+
+### P2 分階段狀態更新
+
+| 階段 | 狀態 |
+|---|---|
+| P2-②a `GossipMessageHandler` 收送加解密接線（金鑰為閘、無鑰退明文） | ✅ 完成 |
+| P2-②b `RoomKeyDistribution` 成對封裝協議（純函數） | ✅ 完成 |
+| **P2-②c keyx 接進 live mesh（本修訂）** | ✅ 完成（3 人 mesh E2E：UI 明文、複本密文；mesh-diagnostic 未迴歸） |
+| P2-③ 2 人房切 gossip、star 退役 | 🎯 待接續 |
