@@ -26,7 +26,13 @@ service cloud.firestore {
         && identity.userId.size() <= 64
         && identity.pubKey is string
         && identity.pubKey.size() >= 40
-        && identity.pubKey.size() <= 512;
+        && identity.pubKey.size() <= 512
+        // ecdhPubKey 可選（ADR-0023 P2-②c keyx）；提供時驗格式。
+        // 覆寫他人條目已由 meshIdentitiesChangeIsValid（affectedKeys ⊆ {auth.uid}）擋下。
+        && (!('ecdhPubKey' in identity) || (
+             identity.ecdhPubKey is string
+             && identity.ecdhPubKey.size() >= 40
+             && identity.ecdhPubKey.size() <= 512));
     }
 
     // 任何 update 都只能影響到 meshIdentities[auth.uid] 這個 key。
