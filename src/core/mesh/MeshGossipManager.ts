@@ -2,7 +2,7 @@ import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import { GossipMessageHandler } from './GossipMessageHandler';
-import { RoomKeyCoordinator } from './RoomKeyCoordinator';
+import { RoomKeyCoordinator, rosterFromRoom } from './RoomKeyCoordinator';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import { RoomService } from '../../services/RoomService';
@@ -117,16 +117,11 @@ export class MeshGossipManager {
             getEcdhPrivateKey: () => this.identityManager.getEcdhPrivateKey(),
             getEcdhPublicKeyBase64: () => this.identityManager.exportEcdhPublicKey(),
             // 快取讀（forceServer=false）：keyx 週期輪詢不需每次強制 server 讀。
-            // 同時回傳 participants 人數，供「全員 ecdh 就緒」閘門。
+            // 名冊＝meshIdentities ∩ participants（離開者 meshIdentity 未即時清 →
+            // 必須交集 participants，否則離開者續留名冊、續被封鑰 → 無前向保密，見 rosterFromRoom）。
             loadRoster: async () => {
               const room = await RoomService.getRoom(this.roomId, false);
-              const members = room?.meshIdentities
-                ? Object.values(room.meshIdentities).map((v) => ({
-                    userId: v.userId,
-                    ecdhPubKey: v.ecdhPubKey,
-                  }))
-                : [];
-              return { members, participantCount: room?.participants?.length ?? 0 };
+              return rosterFromRoom(room?.meshIdentities, room?.participants);
             },
             sendKeyx: (content) => this.messageHandler!.sendMessage(content, undefined, 'keyx'),
             applyLocalKey: (key, epoch) => this.messageHandler!.setContentKey(key, epoch),

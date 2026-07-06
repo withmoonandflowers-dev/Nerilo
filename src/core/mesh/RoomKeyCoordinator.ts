@@ -143,6 +143,25 @@ export class RoomKeyCoordinator {
   }
 }
 
+/**
+ * 由房間文件算出 keyx 名冊：**meshIdentities ∩ participants**。
+ *
+ * 關鍵：`RoomService.leaveRoom` 只縮 participants、不即時清 meshIdentities（離開者條目殘留）。
+ * 若直接用 meshIdentities 當名冊，離開者會（a）續留名冊使 sig 不變 → 不觸發重發、
+ * （b）被產生方繼續封鑰 → 無前向保密。故只認「仍在 participants 的成員」，離開即退出名冊
+ * → 名冊縮小 → 新 epoch 新金鑰只封給留下者 → 離開者持舊 epoch 鑰、解不了新 epoch（前向保密）。
+ */
+export function rosterFromRoom(
+  meshIdentities: Record<string, { userId: string; ecdhPubKey?: string }> | undefined,
+  participants: string[] | undefined
+): { members: Array<{ userId: string; ecdhPubKey?: string }>; participantCount: number } {
+  const parts = new Set(participants ?? []);
+  const members = Object.entries(meshIdentities ?? {})
+    .filter(([firebaseUid]) => parts.has(firebaseUid))
+    .map(([, v]) => ({ userId: v.userId, ecdhPubKey: v.ecdhPubKey }));
+  return { members, participantCount: parts.size };
+}
+
 /** 匯入成員 ECDH 公鑰（Base64 SPKI）；公鑰無 key usages。 */
 async function importEcdhPublic(b64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
