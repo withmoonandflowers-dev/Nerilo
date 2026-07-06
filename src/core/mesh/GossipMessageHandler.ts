@@ -5,6 +5,11 @@ import { MeshTopologyManager } from './MeshTopologyManager';
 import type { MeshConnection } from './MeshConnection';
 import { computeDigest, normalizeDigest, peerLacks } from './antiEntropy';
 import type { IGossipPersistence } from './GossipPersistence';
+import {
+  encryptRecordContent,
+  decryptRecordContent,
+  isEncryptedContent,
+} from './RecordCrypto';
 import type { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 
@@ -44,6 +49,22 @@ export class GossipMessageHandler {
     /** 複本持久化（ADR-0023 P1）；null = 記憶體模式（行為同 P1 之前） */
     private persistence: IGossipPersistence | null = null
   ) {}
+
+  // ── 內容金鑰（ADR-0023 P2-②）─────────────────────────────────────────────
+  /** 房間內容金鑰；null = 尚未就緒 → 收送退明文相容（行為同 P2 之前） */
+  private contentKey: CryptoKey | null = null;
+  /** 金鑰 epoch（輪替遞增；寫入密文信封供解密端選鑰） */
+  private keyEpoch = 0;
+
+  /**
+   * 設定/清除房間內容金鑰。金鑰就緒後：送出時加密 content（簽章覆蓋密文，
+   * 盲信使可存可驗不可解）、顯示前解密。store/轉發/對帳一律保持密文原封。
+   * 分發協議（keyx 紀錄）為 P2-②b；此處只負責「有鑰就用」。
+   */
+  setContentKey(key: CryptoKey | null, epoch = 0): void {
+    this.contentKey = key;
+    this.keyEpoch = epoch;
+  }
 
   /**
    * 從持久複本重生（ADR-0023 P1）：載入紀錄與 floors 進記憶體 store。
@@ -112,6 +133,21 @@ export class GossipMessageHandler {
     // 從拓撲管理器讀取動態 gossip 設定
     const gossipConfig = this.topologyManager.getGossipConfig();
 
+    // 內容密文化（P2-②）：金鑰就緒才加密，否則明文相容。
+    // 加密在簽章「之前」→ 簽章覆蓋密文，任何人（含盲信使）可驗真偽而無需金鑰。
+    let wireContent = content;
+    if (this.contentKey) {
+      try {
+        wireContent = await encryptRecordContent(content, this.contentKey, this.keyEpoch);
+      } catch (err) {
+        // 加密失敗不得默默送明文（會洩漏）——直接拋，讓上層標記傳送失敗
+        logger.error('[GossipMessageHandler] content encryption failed', {
+          roomId: this.roomId, err,
+        });
+        throw new Error('content encryption failed');
+      }
+    }
+
     // 建立訊息（channel 缺省 = 'chat'；游戲事件帶 'game'，同管線同保證）
     const message: Omit<GossipMessage, 'signature'> = {
       roomId: this.roomId,
@@ -119,7 +155,7 @@ export class GossipMessageHandler {
       pubKey: await this.identityManager.exportPublicKey(),
       seq: this.seq,
       timestamp: Date.now(),
-      content,
+      content: wireContent,
       ttl: gossipConfig.ttl,
       ...(messageId !== undefined ? { messageId } : {}),
       ...(channel !== undefined ? { channel } : {}),
@@ -267,7 +303,8 @@ export class GossipMessageHandler {
 
       // 顯示訊息。注意：顯示不受 ttl 限制——ttl 只限制主動洪泛半徑，
       // 訊息既已到達（含 anti-entropy 補送），對使用者就必須恰好一次呈現。
-      this.notifyMessageListeners(message);
+      // 密文化（P2-②）：僅「顯示副本」解密；store/轉發/對帳沿用密文原封（盲信使相容）。
+      this.notifyMessageListeners(await this.toDisplayMessage(message));
 
       // 轉發（建立副本以避免修改傳入物件）；ttl 耗盡則不轉發，缺口由對帳補
       if (message.ttl > 0) {
@@ -462,6 +499,27 @@ export class GossipMessageHandler {
   /**
    * 通知監聽器
    */
+  /**
+   * 產生「顯示用副本」：content 是密文且持有對應金鑰 → 解密副本；明文 → 原封；
+   * 密文但無金鑰（尚未補齊 keyx）→ 佔位字串誠實呈現（如同備援解不開的路徑）。
+   * 不修改傳入物件——store/轉發/對帳要的是密文原封。
+   */
+  private async toDisplayMessage(message: GossipMessage): Promise<GossipMessage> {
+    if (!isEncryptedContent(message.content)) return message; // 明文相容路徑
+    if (!this.contentKey) {
+      return { ...message, content: '[🔒 訊息已加密，尚未取得金鑰]' };
+    }
+    try {
+      const plain = await decryptRecordContent(message.content, this.contentKey);
+      return { ...message, content: plain };
+    } catch (err) {
+      logger.warn('[GossipMessageHandler] decrypt for display failed', {
+        roomId: this.roomId, senderId: message.senderId, seq: message.seq, err,
+      });
+      return { ...message, content: '[🔒 無法解密此訊息]' };
+    }
+  }
+
   private notifyMessageListeners(message: GossipMessage): void {
     this.messageListeners.forEach(listener => {
       try {
