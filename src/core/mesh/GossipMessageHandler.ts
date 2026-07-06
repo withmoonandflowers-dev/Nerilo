@@ -4,6 +4,7 @@ import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import type { MeshConnection } from './MeshConnection';
 import { computeDigest, normalizeDigest, peerLacks } from './antiEntropy';
+import type { IGossipPersistence } from './GossipPersistence';
 import type { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 
@@ -39,8 +40,44 @@ export class GossipMessageHandler {
     private identityManager: IdentityManager,
     private securityManager: SecurityManager,
     private topologyManager: MeshTopologyManager,
-    private peerScoring: PeerScoring | null = null
+    private peerScoring: PeerScoring | null = null,
+    /** 複本持久化（ADR-0023 P1）；null = 記憶體模式（行為同 P1 之前） */
+    private persistence: IGossipPersistence | null = null
   ) {}
+
+  /**
+   * 從持久複本重生（ADR-0023 P1）：載入紀錄與 floors 進記憶體 store。
+   * 必須在任何收送之前呼叫。失敗非致命——退回記憶體模式（Safari 隱私模式等）。
+   */
+  async hydrate(): Promise<void> {
+    if (!this.persistence) return;
+    try {
+      const { records, floors } = await this.persistence.loadRoom(this.roomId);
+      for (const { senderId, floor } of floors) {
+        this.floors.set(senderId, floor);
+      }
+      let loaded = 0;
+      for (const msg of records) {
+        if (
+          typeof msg?.senderId !== 'string' || msg.senderId.length === 0 ||
+          typeof msg?.seq !== 'number' || !Number.isInteger(msg.seq) || msg.seq < 1
+        ) continue;
+        if (msg.seq < (this.floors.get(msg.senderId) ?? 1)) continue;
+        this.storePut(msg, /* persist */ false); // 來自持久層，不回寫
+        loaded++;
+      }
+      // 自己的 seq 水位以 reserveSeq 為真相；此處僅對齊記憶體值供無持久化路徑参考
+      const own = this.store.get(this.userId);
+      if (own) for (const s of own.keys()) if (s > this.seq) this.seq = s;
+      logger.info('[GossipMessageHandler] hydrated from replica', {
+        roomId: this.roomId, records: loaded, floors: this.floors.size,
+      });
+    } catch (err) {
+      logger.warn('[GossipMessageHandler] hydrate failed — memory-only mode', {
+        roomId: this.roomId, err,
+      });
+    }
+  }
 
   /**
    * 發送訊息
@@ -56,8 +93,21 @@ export class GossipMessageHandler {
       throw new Error('Rate limit exceeded');
     }
 
-    // seq += 1
-    this.seq++;
+    // reserve-then-send（ADR-0023 P1）：先在持久層原子保留 seq 再送。
+    // 重載/重進後 seq 續增永不重用 → 不會與對方複本的舊 seq 碰撞被當重複丟棄。
+    // crash 於保留與送出之間只留 seq 空洞，anti-entropy 容忍。
+    if (this.persistence) {
+      try {
+        this.seq = await this.persistence.reserveSeq(this.roomId, this.userId);
+      } catch (err) {
+        logger.warn('[GossipMessageHandler] reserveSeq failed, falling back to memory seq', {
+          roomId: this.roomId, err,
+        });
+        this.seq++;
+      }
+    } else {
+      this.seq++;
+    }
 
     // 從拓撲管理器讀取動態 gossip 設定
     const gossipConfig = this.topologyManager.getGossipConfig();
@@ -234,8 +284,13 @@ export class GossipMessageHandler {
     return this.store.get(senderId)?.has(seq) ?? false;
   }
 
-  /** 寫入 store；超過每 sender 上限時淘汰最舊 seq 並推進 floor */
-  private storePut(message: GossipMessage): void {
+  /**
+   * 寫入 store；超過每 sender 上限時淘汰最舊 seq 並推進 floor。
+   * @param persist 寫入持久複本（hydrate 回灌時傳 false 避免無謂回寫）。
+   *   持久寫入為非阻塞 best-effort：最壞情況重載後缺一筆「已顯示」紀錄，
+   *   由任一持有的成員經對帳補回（複本互補正是本架構的保證）。
+   */
+  private storePut(message: GossipMessage, persist = true): void {
     let seqs = this.store.get(message.senderId);
     if (!seqs) {
       seqs = new Map();
@@ -244,6 +299,12 @@ export class GossipMessageHandler {
     if (seqs.has(message.seq)) return;
     seqs.set(message.seq, message);
 
+    if (persist && this.persistence) {
+      void this.persistence.saveRecord(this.roomId, message).catch((err) => {
+        logger.warn('[GossipMessageHandler] saveRecord failed', { roomId: this.roomId, err });
+      });
+    }
+
     while (seqs.size > this.MAX_STORE_PER_SENDER) {
       let oldest = Infinity;
       for (const s of seqs.keys()) {
@@ -251,7 +312,15 @@ export class GossipMessageHandler {
       }
       seqs.delete(oldest);
       const floor = this.floors.get(message.senderId) ?? 1;
-      this.floors.set(message.senderId, Math.max(floor, oldest + 1));
+      const newFloor = Math.max(floor, oldest + 1);
+      this.floors.set(message.senderId, newFloor);
+      if (this.persistence) {
+        void this.persistence
+          .evictRecord(this.roomId, message.senderId, oldest, newFloor)
+          .catch((err) => {
+            logger.warn('[GossipMessageHandler] evictRecord failed', { roomId: this.roomId, err });
+          });
+      }
     }
   }
 

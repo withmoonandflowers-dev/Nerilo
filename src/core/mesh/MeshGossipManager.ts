@@ -5,6 +5,7 @@ import { GossipMessageHandler } from './GossipMessageHandler';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import { RoomService } from '../../services/RoomService';
+import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
 import { auth } from '../../config/firebase';
 import { RelayManager } from '../relay/RelayManager';
 import { PeerScoring } from '../relay/PeerScoring';
@@ -76,15 +77,19 @@ export class MeshGossipManager {
       });
       await this.relayManager.initialize();
 
-      // 5. 初始化訊息處理器（注入 PeerScoring）
+      // 5. 初始化訊息處理器（注入 PeerScoring + 複本持久化，ADR-0023 P1）。
+      // 持久層不可用（node 測試/Safari 隱私模式）時為 null → 記憶體模式。
       this.messageHandler = new GossipMessageHandler(
         this.roomId,
         userId,
         this.identityManager,
         this.securityManager,
         this.topologyManager,
-        this.peerScoring
+        this.peerScoring,
+        getGossipReplicaStore()
       );
+      // 連線建立前先從複本重生（seq 水位、紀錄、floors）
+      await this.messageHandler.hydrate();
 
       // 5. 初始化心跳服務
       this.heartbeatService = new HeartbeatService(userId);

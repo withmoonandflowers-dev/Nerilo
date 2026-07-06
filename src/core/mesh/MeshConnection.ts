@@ -72,6 +72,34 @@ export class MeshConnection {
         reject(new Error('MeshConnection timeout: ChannelBus not ready after 30s'));
       }, 30_000);
     });
+
+    this.startBusRebindWatch();
+  }
+
+  /**
+   * ChannelBus 換代追蹤（ADR-0023 P1 發現的斷點）：
+   * 對方離開再進時，會用「同一 channelLabel」發全新 offer；本端 pc 完成重新協商後，
+   * P2PManager 在 ondatachannel 換上新 bus——但本類原本把初始 bus 快取死了，
+   * 訂閱掛在舊 bus、send 也送死通道 → 對方重進後訊息單向黑洞。
+   * 這裡輪詢偵測 bus 實例更換，重掛訂閱。舊 bus 若仍殘留造成雙路收，
+   * 由 GossipMessageHandler 的 (senderId, seq) 去重擋住，安全。
+   */
+  private busRebindWatch: ReturnType<typeof setInterval> | null = null;
+
+  private startBusRebindWatch(): void {
+    if (this.busRebindWatch) return;
+    this.busRebindWatch = setInterval(() => {
+      const bus = this.p2pManager.getChannelBus();
+      if (bus && bus !== this.channelBus && bus.getReadyState() === 'open') {
+        logger.info('[MeshConnection] Rebinding to new ChannelBus (peer session renewed)', {
+          roomId: this.roomId,
+          remoteFirebaseUid: this.remoteFirebaseUid,
+          meshUserId: this.meshUserId,
+        });
+        this.channelBus = bus;
+        this.setupMessageHandlers();
+      }
+    }, 1000);
   }
 
   /**
@@ -212,6 +240,10 @@ export class MeshConnection {
    * 關閉連線
    */
   async close(): Promise<void> {
+    if (this.busRebindWatch) {
+      clearInterval(this.busRebindWatch);
+      this.busRebindWatch = null;
+    }
     await this.p2pManager.close();
     this.messageListeners.clear();
     this.digestListeners.clear();

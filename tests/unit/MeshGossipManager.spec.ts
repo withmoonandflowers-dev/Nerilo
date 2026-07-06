@@ -45,6 +45,7 @@ vi.mock('../../src/core/mesh/MeshTopologyManager', () => ({
 const mockMessageHandler = {
   sendMessage: vi.fn().mockResolvedValue(undefined),
   onMessage: vi.fn().mockReturnValue(() => {}),
+  hydrate: vi.fn().mockResolvedValue(undefined),
 };
 
 vi.mock('../../src/core/mesh/GossipMessageHandler', () => ({
