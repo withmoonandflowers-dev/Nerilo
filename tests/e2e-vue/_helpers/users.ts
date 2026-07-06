@@ -22,7 +22,12 @@ export async function setupUser(browser: Browser): Promise<User> {
   const tag = `U${++userSeq}`;
   page.on('console', (msg) => {
     const text = msg.text();
-    if (msg.type() === 'error' || msg.type() === 'warning' || text.includes('NERILO')) {
+    if (
+      msg.type() === 'error' ||
+      msg.type() === 'warning' ||
+      text.includes('NERILO') ||
+      /GossipMessageHandler|MeshGossipManager|MeshTopologyManager|MeshConnection/.test(text)
+    ) {
       console.log(`[${tag}]`, msg.type(), text);
     }
   });
