@@ -15,16 +15,12 @@ import {
 } from './_helpers/users';
 
 test.describe('Vue 版重進聊天室', () => {
-  // fixme：重現「離開再進聊天室就收不到訊息」的已知 bug（2 人 star 房）。
-  // 根因（Chrome + E2E 實測確認）：
-  //  1. 留房者 A 沒偵測到對方離開，connectionState 停在 connected，繼續往已死的
-  //     P2P DataChannel 送訊（黑洞），從不 fallback。
-  //  2. 重進者 B 作為 answerer 死等 offer，star 無自動重連。
-  //  3. star 房備援是 E2EE 密文，B 沒完成 P2P 金鑰交換就解不開 → 必須 P2P 真正重連。
-  // 嘗試過 Vue 層看門狗自動重連，但雙方重新握手的 signaling session 對不上（在
-  // P2PConnectionManager 深層）——需 perfect-negotiation + 重連 session 協調，屬
-  // P2P 核心工程（且與 React 生產共用），另闢一輪謹慎處理。
-  test.fixme('B 離開回 dashboard 再進房，仍收得到 A 之後發的訊息', async ({ browser }) => {
+  // ADR-0023 P2-③：star 特例退役，2 人房改走 gossip 複寫日誌後，本 bug 整類消滅。
+  // 舊根因是「連線中心」世界觀（訊息綁在那一條 P2P 連線上，連線死＝訊息丟，star
+  // 無自動重連）。改資料中心後：重進＝cold→syncing→live，B 重連 mesh、缺的訊息
+  // 由留房者 A 經 anti-entropy 補齊（複本落地 IndexedDB, P1；內容 E2EE, keyx P2-②c）。
+  // 因此無需 star 的「連線復活術」（perfect-negotiation）——那正是前兩次修復失敗處。
+  test('B 離開回 dashboard 再進房，仍收得到 A 之後發的訊息', async ({ browser }) => {
     test.setTimeout(180_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
