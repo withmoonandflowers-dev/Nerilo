@@ -4,9 +4,10 @@ import { sendMessageViaFirestore, subscribeToFirestoreMessages } from '@legacy/s
 import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
-import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { StarTopologyController } from '~/lib/starTopology'
+import { MeshGameBus } from '~/lib/meshGameBus'
+import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
 
 type Topology = 'star' | 'mesh'
@@ -22,10 +23,12 @@ const { messages, addMessage, updateMessageStatus } = useChatMessages()
 const roomName = ref<string | undefined>(undefined)
 const connectionState = ref<ConnectionState>('idle')
 const currentTopology = ref<Topology | null>(null)
-// ── 遊戲（整合頁：聊天 × 井字棋，2 人星型房）────────────────────────
+// ── 遊戲（整合頁：聊天 × 井字棋，2 人房；星型或 mesh 皆可，見 MeshGameBus）──
 const showGame = ref(false)
-const gameBus = ref<P2PChannelBus | null>(null)
+const gameBus = ref<GameBus | null>(null)
 const isRoomOwner = ref(false)
+/** 房間成員數（reactive，供模板閘控：遊戲僅 2 人房、mesh 橫幅僅 3+ 人房） */
+const memberCount = ref(0)
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(
   () => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value]
@@ -68,10 +71,14 @@ const statusText = computed(() => {
   }
 })
 
-/** decideArchitecture — 對齊 React 版 useP2PArchitecture：3+ 人或明確標記 → mesh */
-function decideTopology(room: P2PRoom, effectiveCount: number): Topology {
-  if (room.topology === 'mesh') return 'mesh'
-  return effectiveCount >= 3 ? 'mesh' : 'star'
+/**
+ * ADR-0023 P2-③：2 人房也走 gossip 複寫日誌，star 特例退役。
+ * 「離開再進收不到」整類消滅（重進＝cold→syncing→live，缺的訊息由留房者
+ * 經 anti-entropy 補；不再靠 star 連線復活術）。2 人房因此獲得 E2EE（keyx,
+ * P2-②c）＋斷線重生。typing/遊戲已於 Phase 1/2 移植到 mesh，零功能回退。
+ */
+function decideTopology(_room: P2PRoom, _effectiveCount: number): Topology {
+  return 'mesh'
 }
 
 function setConnectionState(state: ConnectionState) {
@@ -111,6 +118,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     const uid = user.value!.uid
     const effectiveCount = effectiveParticipantCount ?? room.participants.length
     participantCount = Math.max(participantCount, effectiveCount)
+    memberCount.value = participantCount
     if (room.status !== 'open' || effectiveCount < 2) return
 
     const decision = decideTopology(room, effectiveCount)
@@ -119,11 +127,13 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: decision, from: currentTopology.value })
 
     if (decision === 'mesh') {
-      // 3-5 人 mesh：複用 @legacy MeshChatService（gossip + seq anti-entropy 對帳，
+      // 2-5 人 mesh：複用 @legacy MeshChatService（gossip + seq anti-entropy 對帳，
       // 恰好一次保證見 docs/QA-REPORT-chat.md 第三輪）。star→mesh 遷移先清星型。
       starTopology.cleanup()
       currentTopology.value = 'mesh'
       connectionState.value = 'connecting'
+      // 房主＝井字棋 X（與星型一致）；2 人房遊戲騎 mesh gossip（MeshGameBus）
+      isRoomOwner.value = room.ownerUid === uid
       const svc = new MeshChatService(roomId.value, uid)
       await svc.initialize()
       if (disposed) {
@@ -131,6 +141,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
         return
       }
       meshChat = svc
+      gameBus.value = new MeshGameBus(svc)
       svc.onMessage((msg) => addMessage(msg))
       // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
       typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
@@ -466,6 +477,11 @@ function retryConnection() {
   connectionState.value = 'connecting'
   currentTopology.value = null
   starTopology.cleanup()
+  // mesh 也要收乾淨再重建，否則舊 MeshChatService 續跑（interval/連線洩漏）
+  if (meshStateInterval) { clearInterval(meshStateInterval); meshStateInterval = null }
+  meshChat?.cleanup().catch(() => {})
+  meshChat = null
+  gameBus.value = null
   RoomService.getRoom(roomId.value, true).then((room) => {
     if (room && room.status === 'open') initializeP2P(room, Math.max(room.participants.length, 2))
   })
@@ -477,13 +493,13 @@ async function leaveRoom() {
 </script>
 
 <template>
-  <main class="chat" :class="{ 'chat--game': showGame && currentTopology === 'star' }">
+  <main class="chat" :class="{ 'chat--game': showGame && !!gameBus && memberCount === 2 }">
     <header class="chat__header">
       <button type="button" class="chat__back" aria-label="離開房間" @click="leaveRoom">‹</button>
       <div class="chat__head-center">
         <h1 class="chat__title">
           {{ roomName ?? '聊天室' }}
-          <span v-if="currentTopology === 'star'" class="chat__lock" title="端對端加密">🔒</span>
+          <span v-if="currentTopology !== null" class="chat__lock" title="端對端加密">🔒</span>
         </h1>
         <p class="chat__status" :class="`chat__status--${connectionState}`">{{ statusText }}</p>
       </div>
@@ -496,7 +512,7 @@ async function leaveRoom() {
           @click="cycleTheme"
         >◐</button>
         <button
-          v-if="currentTopology === 'star'"
+          v-if="gameBus && memberCount === 2"
           type="button"
           class="chat__action"
           :class="{ 'chat__action--on': showGame }"
@@ -511,8 +527,8 @@ async function leaveRoom() {
       <span>連線中斷了</span>
       <button type="button" @click="retryConnection">重新連線</button>
     </div>
-    <div v-else-if="currentTopology === 'mesh'" class="chat__banner chat__banner--info">
-      <span>多人房間走 P2P mesh 傳輸（訊息最終一致；尚未端對端加密）</span>
+    <div v-else-if="currentTopology === 'mesh' && memberCount > 2" class="chat__banner chat__banner--info">
+      <span>多人房間走 P2P mesh 傳輸（訊息最終一致、端對端加密）</span>
     </div>
 
     <div ref="listEl" class="chat__list" @scroll="onScroll">
@@ -551,7 +567,7 @@ async function leaveRoom() {
 
     <!-- 井字棋：桌面右側玻璃卡、窄幕底部抽屜；斷線由面板顯示對局暫停 -->
     <Transition name="game">
-      <aside v-if="showGame && currentTopology === 'star' && user" class="chat__game">
+      <aside v-if="showGame && gameBus && memberCount === 2 && user" class="chat__game">
         <TicTacToePanel
           :bus="gameBus"
           :is-initiator="isRoomOwner"
