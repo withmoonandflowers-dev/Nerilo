@@ -159,7 +159,7 @@ P2 把紀錄內容密文化。加解密原語已落地並測試（`RecordCrypto`
 |---|---|---|---|
 | **P2-①** | `RecordCrypto` 加解密原語 + 單元 | 零（純函數、無接線） | ✅ 完成 |
 | **P2-②** | keyx 分發紀錄接進 gossip 管線 + GossipMessageHandler 收送時加解密（mesh 房，內容金鑰就緒才啟用；未就緒退明文相容） | 中（動 mesh 收送路徑，有 mesh-diagnostic/rejoin E2E 護欄） | 🎯 next |
-| **P2-③** | 2 人房切 gossip 管線、star 退役；typing/遊戲/備援跟隨 | 高（改唯一穩定的 2 人路徑）→ 專注階段 | 🎯 待 P2-② 穩定後 |
+| **P2-③** | 2 人房切 gossip 管線、star 退役；typing/遊戲/備援跟隨 | 高（改唯一穩定的 2 人路徑）→ 專注階段 | ✅ 完成（見修訂五） |
 
 star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後，盲信使（P4）
 只需 mesh 房密文化（P2-②）即可先行驗證於 3-5 人房。
@@ -220,4 +220,39 @@ keyx 不進聊天顯示（如同 game 通道分流），但照樣入 store／轉
 | P2-②a `GossipMessageHandler` 收送加解密接線（金鑰為閘、無鑰退明文） | ✅ 完成 |
 | P2-②b `RoomKeyDistribution` 成對封裝協議（純函數） | ✅ 完成 |
 | **P2-②c keyx 接進 live mesh（本修訂）** | ✅ 完成（3 人 mesh E2E：UI 明文、複本密文；mesh-diagnostic 未迴歸） |
-| P2-③ 2 人房切 gossip、star 退役 | 🎯 待接續 |
+| P2-③ 2 人房切 gossip、star 退役 | ✅ 完成（見修訂五） |
+
+---
+
+## 修訂五（2026-07-07）：P2-③ 2 人房切 mesh、star 退役（Vue 版）
+
+Vue 版（web-vue，ADR-0017 重寫；React 生產版凍結、仍星型）2 人房從此走
+gossip 複寫日誌，star 特例邏輯退役（`decideTopology` 一律回 mesh）。分三階段
+（characterization-first，每階段逐層閘門 + 連跑確認非 flaky）：
+
+- **Phase 1 — mesh typing**：typing 是暫態信號，走 `MeshConnection` 新增的
+  `ns:'presence'` lossy 通道（不進 gossip 可靠日誌/對帳，仿 `relay:forward` 分流）。
+  `MeshGossipManager.broadcastTyping/onTyping`，Vue chat page 依拓撲分流 `emitTyping`。
+- **Phase 2 — mesh 遊戲**：`useTicTacToe`/`TicTacToePanel` 的 bus 型別由具象
+  `P2PChannelBus` 放寬為最小 `GameBus` 介面（星型結構相容、零回退）；
+  `MeshChatService.sendGameEnvelope/onGameMessage` 走 M4 `channel:'game'` 可靠管線；
+  `MeshGameBus`（web-vue）轉接。回合制事件走可靠管線比星型 lossy bus 更穩。
+- **Phase 3 — 切換 + rejoin**：chat page 2 人房接 `MeshGameBus` + mesh typing +
+  房主=X；🔒 指示器/遊戲鈕/橫幅改按 mesh 現況（已 E2EE, keyx）與 2 人房閘控。
+  **`tests/e2e-vue/rejoin.spec.ts` 由 fixme 轉綠（連跑 3 次穩定）**——「離開再進
+  收不到」整類消滅：重進＝cold→syncing→live，B 重連 mesh、缺的訊息由留房者經
+  anti-entropy 補齊。前兩次修復卡在的 star signaling 復活術，整個繞過。
+
+驗收：全 Vue E2E 套件綠（golden-path/game-theme/rejoin×3/mesh-diagnostic/mesh-e2ee/
+all-offline-revival/friends/persistent-rooms/room-manage/mesh-rejoin）；單元 1196 綠；
+React 護欄未迴歸。
+
+### 誠實邊界（本修訂未解決）
+
+- **2 人房 Firestore 備援仍為明文**：mesh 主路徑已 E2EE（keyx），但 P2P 全斷時的
+  Firestore 橋接送的是明文 `{content}`（沿用既有 mesh 備援行為，非本修訂新增）。
+  星型舊路徑的備援是 ChatService 密文——就「備援層加密」這點屬**回退**。
+  但 rejoin 靠 P2P 重連 + anti-entropy 達成（已驗證），不觸發此橋接；橋接是
+  P2P 全滅時的末端保險。收斂方向：mesh 備援改採 keyx 密文（後續工作）。
+- **star 程式碼邏輯退役、實體仍在**：`StarTopologyController` 等尚未刪除（死碼），
+  留待獨立 cleanup pass；`decideTopology` 已不再選 star，故不影響行為。
