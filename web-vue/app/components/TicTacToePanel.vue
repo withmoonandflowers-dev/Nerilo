@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
+import type { GameBus } from '~/lib/gameBus'
 
 const props = defineProps<{
-  bus: P2PChannelBus | null
+  bus: GameBus | null
   isInitiator: boolean
   selfId: string
   /** P2P 活著才可互動；false = 對局暫停（遊戲不走伺服器備援） */

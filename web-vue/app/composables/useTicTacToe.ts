@@ -7,7 +7,7 @@
  * 純邏輯（applyMove/sanitizeState/moveCount）與 React 版共用 @legacy 同一份。
  */
 import type { Ref } from 'vue'
-import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
+import type { GameBus } from '~/lib/gameBus'
 import type { P2PEnvelope } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { logger } from '@legacy/utils/logger'
@@ -23,7 +23,7 @@ import {
 const GAME_NS = 'ttt'
 
 export function useTicTacToe(
-  bus: Ref<P2PChannelBus | null>,
+  bus: Ref<GameBus | null>,
   isInitiator: Ref<boolean>,
   selfId: Ref<string>
 ) {

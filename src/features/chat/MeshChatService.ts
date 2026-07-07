@@ -1,7 +1,7 @@
 import { MeshGossipManager } from '../../core/mesh/MeshGossipManager';
 import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
-import type { ChatMessage, GossipMessage } from '../../types';
+import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
 import { logger } from '../../utils/logger';
 
 /**
@@ -12,6 +12,8 @@ export class MeshChatService {
   private meshGossipManager: MeshGossipManager;
   private chatStorage: IChatStorage;
   private messageListeners: Set<(message: ChatMessage) => void> = new Set();
+  /** 遊戲事件監聽器（M4 channel:'game'）。content 是 P2PEnvelope JSON，不進聊天顯示。 */
+  private gameListeners: Set<(env: P2PEnvelope) => void> = new Set();
   private messageCounter = 0;
   /** 本機的 mesh userId（hash pubKey）。gossip senderId 用此，非 firebase uid。 */
   private meshUserId: string | null = null;
@@ -36,8 +38,28 @@ export class MeshChatService {
 
     // 監聽 Gossip 訊息
     this.meshGossipManager.onMessage((gossipMessage: GossipMessage) => {
-      // 通道分流（M4）：gossip 管線同時載聊天與遊戲事件；非 chat 通道
-      // （如 'game'，content 是遊戲 envelope JSON）不得進聊天顯示。
+      // 遊戲事件（M4 channel:'game'）：content 是 P2PEnvelope JSON → 分流給遊戲監聽器，
+      // 不進聊天顯示。走同一條可靠 gossip 管線（回合制/lockstep 適用，見 transport-contract-M4）。
+      if (gossipMessage.channel === 'game') {
+        let env: P2PEnvelope;
+        try {
+          env = JSON.parse(gossipMessage.content) as P2PEnvelope;
+        } catch {
+          logger.warn('[MeshChatService] malformed game envelope ignored', {
+            roomId: this.roomId, senderId: gossipMessage.senderId, seq: gossipMessage.seq,
+          });
+          return;
+        }
+        this.gameListeners.forEach((l) => {
+          try {
+            l(env);
+          } catch (error) {
+            logger.error('[MeshChatService] Error in game listener', { error });
+          }
+        });
+        return;
+      }
+      // 通道分流（M4）：非 chat 通道（如 'keyx'）不進聊天顯示。
       if (gossipMessage.channel !== undefined && gossipMessage.channel !== 'chat') return;
 
       // 過濾自己的回音：anti-entropy / gossip 可能把本機訊息繞回；本機已樂觀顯示。
@@ -113,6 +135,22 @@ export class MeshChatService {
   }
 
   /**
+   * 送遊戲事件 envelope（M4 channel:'game'，走可靠 gossip 管線）。
+   * envelope.id 作 messageId 貫穿去重。供 MeshGameBus 轉接 TicTacToe 用。
+   */
+  async sendGameEnvelope(env: P2PEnvelope): Promise<void> {
+    await this.meshGossipManager.sendMessage(JSON.stringify(env), env.id, 'game');
+  }
+
+  /** 監聽遊戲事件（channel:'game' 的 P2PEnvelope）；聊天/keyx 不會進來 */
+  onGameMessage(listener: (env: P2PEnvelope) => void): () => void {
+    this.gameListeners.add(listener);
+    return () => {
+      this.gameListeners.delete(listener);
+    };
+  }
+
+  /**
    * 載入歷史訊息
    */
   async loadHistory(): Promise<ChatMessage[]> {
@@ -166,5 +204,6 @@ export class MeshChatService {
   async cleanup(): Promise<void> {
     await this.meshGossipManager.cleanup();
     this.messageListeners.clear();
+    this.gameListeners.clear();
   }
 }
