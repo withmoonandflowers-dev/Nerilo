@@ -8,15 +8,19 @@
  *
  * Covers (from docs/E2E_TEST_PLAN.md § P2):
  *   P2.1 Non-participant cannot read a room
- *   P2.3 Anonymous user cannot create a room (when flag is off — bypassed in
- *        test mode, so we drive Firestore directly to verify the rule)
+ *   P2.3 Anonymous user cannot create a room (driven directly against
+ *        Firestore to verify the rule)
  *   P2.4 meshIdentities[someoneElse] write is rejected (covers H-01 fix)
  *   P2.5 Fallback messages in Firestore are ciphertext, not plaintext
+ *   P2.6 A non-owner participant can remove themself from participants
+ *        (leaveRoom), but a leave-shaped update removing someone else is
+ *        rejected
  */
 
 import { test, expect } from '@playwright/test';
 import {
   setupUser,
+  setupAnonUser,
   teardown,
   createRoom,
   joinRoom,
@@ -37,10 +41,11 @@ test.describe('P2 security', () => {
       const result = await eve.page.evaluate(async (rid) => {
         type FirestoreTestExports = {
           db: unknown;
+          firestore?: typeof import('firebase/firestore');
         };
         const w = window as unknown as { __nerilo_test__?: FirestoreTestExports };
-        if (!w.__nerilo_test__) return { ok: false, error: 'test exports missing' };
-        const { doc, getDoc } = await import('firebase/firestore');
+        if (!w.__nerilo_test__?.firestore) return { ok: false, error: 'test exports missing' };
+        const { doc, getDoc } = w.__nerilo_test__.firestore;
         try {
           const ref = doc(w.__nerilo_test__.db as Parameters<typeof doc>[0], 'p2pRooms', rid);
           const snap = await getDoc(ref);
@@ -72,11 +77,17 @@ test.describe('P2 security', () => {
 
       // Bob attempts to overwrite Alice's meshIdentity with his own pubKey.
       const result = await bob.page.evaluate(async (rid) => {
-        type FirestoreTestExports = { db: unknown; auth: { currentUser: { uid: string } | null } };
+        type FirestoreTestExports = {
+          db: unknown;
+          auth: { currentUser: { uid: string } | null };
+          firestore?: typeof import('firebase/firestore');
+        };
         const w = window as unknown as { __nerilo_test__?: FirestoreTestExports };
-        if (!w.__nerilo_test__?.auth?.currentUser) return { ok: false, error: 'no auth' };
+        if (!w.__nerilo_test__?.auth?.currentUser || !w.__nerilo_test__.firestore) {
+          return { ok: false, error: 'no auth' };
+        }
         const myUid = w.__nerilo_test__.auth.currentUser.uid;
-        const { doc, getDoc, updateDoc } = await import('firebase/firestore');
+        const { doc, getDoc, updateDoc } = w.__nerilo_test__.firestore;
         try {
           const ref = doc(w.__nerilo_test__.db as Parameters<typeof doc>[0], 'p2pRooms', rid);
           const snap = await getDoc(ref);
@@ -104,6 +115,85 @@ test.describe('P2 security', () => {
       expect(result.error ?? '').toMatch(/permission|insufficient/i);
     } finally {
       await teardown(alice, bob);
+    }
+  });
+
+  test('P2.6 participant can remove only themself from participants — leaveRoom rule', async ({ browser }) => {
+    const alice = await setupUser(browser);
+    const guest = await setupAnonUser(browser);
+    try {
+      const roomId = await createRoom(alice.page);
+      await joinRoom(guest.page, roomId);
+      await expectChatReady(alice.page);
+      await expectChatReady(guest.page);
+
+      const result = await guest.page.evaluate(async (rid) => {
+        type FirestoreTestExports = {
+          db: unknown;
+          auth: { currentUser: { uid: string } | null };
+          firestore?: typeof import('firebase/firestore');
+        };
+        const w = window as unknown as { __nerilo_test__?: FirestoreTestExports };
+        if (!w.__nerilo_test__?.auth?.currentUser || !w.__nerilo_test__.firestore) {
+          return { precondition: 'no auth', meshSelfPresent: false, kickError: null, leaveError: null };
+        }
+        const myUid = w.__nerilo_test__.auth.currentUser.uid;
+        const { doc, getDoc, updateDoc, Timestamp } = w.__nerilo_test__.firestore;
+        const ref = doc(w.__nerilo_test__.db as Parameters<typeof doc>[0], 'p2pRooms', rid);
+        const snap = await getDoc(ref);
+        const data = snap.data() as
+          | { participants?: string[]; meshIdentities?: Record<string, unknown> }
+          | undefined;
+        const participants = data?.participants ?? [];
+        if (!participants.includes(myUid)) {
+          return { precondition: 'not a participant', meshSelfPresent: false, kickError: null, leaveError: null };
+        }
+        // If this 2-person room somehow has a mesh identity for us, the
+        // "update own meshIdentity" rule branch could legitimately admit the
+        // kick attempt below — flag it so the test can skip that assertion.
+        const meshSelfPresent = data?.meshIdentities?.[myUid] != null;
+
+        // Mirror RoomService.leaveRoom's exact write shape.
+        const now = Date.now();
+        const leaveShape = (newParticipants: string[]) => ({
+          participants: newParticipants,
+          participantCount: newParticipants.length,
+          lastActiveAt: now,
+          ttlExpireAt: Timestamp.fromMillis(now + 30 * 60 * 1000),
+        });
+
+        // 1) Kick attempt: a leave-shaped update that also removes another
+        //    participant. Must be denied — the leave branch only allows
+        //    removing yourself.
+        let kickError: string | null = null;
+        try {
+          await updateDoc(ref, leaveShape([]));
+          // [] removes everyone: ourselves AND the other participant(s)
+        } catch (e) {
+          kickError = (e as Error).message ?? String(e);
+        }
+
+        // 2) Legit leave: remove only ourselves.
+        let leaveError: string | null = null;
+        try {
+          await updateDoc(ref, leaveShape(participants.filter((p) => p !== myUid)));
+        } catch (e) {
+          leaveError = (e as Error).message ?? String(e);
+        }
+
+        return { precondition: null, meshSelfPresent, kickError, leaveError };
+      }, roomId);
+
+      expect(result.precondition).toBeNull();
+      if (!result.meshSelfPresent) {
+        expect(result.kickError ?? '').toMatch(/permission|insufficient/i);
+      }
+      // The bug this covers: before the isSelfLeaveOnly branch, a non-owner's
+      // self-removal was always permission-denied (after the update the caller
+      // is no longer in participants, so no other branch matched).
+      expect(result.leaveError).toBeNull();
+    } finally {
+      await teardown(alice, guest);
     }
   });
 
@@ -140,10 +230,13 @@ test.describe('P2 security', () => {
 
       // Now read the messages subcollection directly and look for the plaintext.
       const result = await alice.page.evaluate(async (rid) => {
-        type FirestoreTestExports = { db: unknown };
+        type FirestoreTestExports = {
+          db: unknown;
+          firestore?: typeof import('firebase/firestore');
+        };
         const w = window as unknown as { __nerilo_test__?: FirestoreTestExports };
-        if (!w.__nerilo_test__) return { ok: false, raw: [] as string[] };
-        const { collection, getDocs } = await import('firebase/firestore');
+        if (!w.__nerilo_test__?.firestore) return { ok: false, raw: [] as string[] };
+        const { collection, getDocs } = w.__nerilo_test__.firestore;
         try {
           const col = collection(
             w.__nerilo_test__.db as Parameters<typeof collection>[0],
@@ -175,19 +268,25 @@ test.describe('P2 security', () => {
   test('P2.3 anonymous user cannot create a room — direct rule check', async ({ browser }) => {
     // The app's UI allows anonymous room creation in test mode via
     // VITE_ALLOW_GUEST_CREATE_ROOM, so we exercise the rule directly
-    // by attempting a Firestore write with an e2eTestMode=false document.
-    const eve = await setupUser(browser);
+    // with a raw Firestore write from an anonymous session.
+    const eve = await setupAnonUser(browser);
     try {
       const result = await eve.page.evaluate(async () => {
-        type FirestoreTestExports = { db: unknown; auth: { currentUser: { uid: string; isAnonymous: boolean } | null } };
+        type FirestoreTestExports = {
+          db: unknown;
+          auth: { currentUser: { uid: string; isAnonymous: boolean } | null };
+          firestore?: typeof import('firebase/firestore');
+        };
         const w = window as unknown as { __nerilo_test__?: FirestoreTestExports };
-        if (!w.__nerilo_test__?.auth?.currentUser) return { ok: false, anon: false, error: 'no auth' };
+        if (!w.__nerilo_test__?.auth?.currentUser || !w.__nerilo_test__.firestore) {
+          return { ok: false, anon: false, error: 'no auth' };
+        }
         const cu = w.__nerilo_test__.auth.currentUser;
         if (!cu.isAnonymous) {
           // Test env should have an anonymous user; skip if not.
           return { ok: false, anon: false, error: 'not anonymous' };
         }
-        const { doc, setDoc } = await import('firebase/firestore');
+        const { doc, setDoc } = w.__nerilo_test__.firestore;
         const id = `e2e-anon-${Date.now()}`;
         try {
           await setDoc(
@@ -198,8 +297,6 @@ test.describe('P2 security', () => {
               status: 'waiting',
               createdAt: Date.now(),
               isPrivate: false,
-              // e2eTestMode flag deliberately OMITTED — the rule should fall
-              // back to the 'not anonymous' branch and reject.
             },
           );
           return { ok: true, anon: true, error: null };
