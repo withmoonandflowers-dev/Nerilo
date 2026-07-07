@@ -325,6 +325,17 @@ export class MeshGossipManager {
     };
   }
 
+  /** 備援層加密（房間金鑰）；無金鑰回 null。見 GossipMessageHandler.encryptForFallback。 */
+  async encryptForFallback(plaintext: string): Promise<string | null> {
+    return this.messageHandler ? this.messageHandler.encryptForFallback(plaintext) : null;
+  }
+
+  /** 備援層解密（房間金鑰，按信封 epoch 選鑰）。 */
+  async decryptForFallback(envelope: string): Promise<string> {
+    if (!this.messageHandler) throw new Error('MeshGossipManager not initialized');
+    return this.messageHandler.decryptForFallback(envelope);
+  }
+
   /**
    * 監聽訊息
    */

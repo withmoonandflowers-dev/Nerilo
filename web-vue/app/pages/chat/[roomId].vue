@@ -242,9 +242,9 @@ function startFallbackSubscription() {
   }, {
     localUid: uid,
     decrypt: (payload: unknown, senderId: string) => {
-      const chatService = starTopology.getChatService()
-      if (!chatService) return Promise.reject(new Error('ChatService not ready'))
-      return chatService.decryptFromFallback(payload as never, senderId)
+      // 2 人房已一律 mesh（P2-③）：備援密文用房間金鑰（keyx）解，非星型 sender key。
+      if (!meshChat) return Promise.reject(new Error('mesh chat not ready'))
+      return meshChat.decryptFromFallback(payload as never, senderId)
     },
   })
 }
@@ -291,34 +291,26 @@ async function sendMessage(content: string, existingMessageId?: string) {
   }
 
   try {
-    if (connectionState.value === 'connected' && currentTopology.value === 'star') {
-      await starTopology.sendMessage(content, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_star' })
-    } else if (currentTopology.value === 'mesh' && connectionState.value === 'connected' && meshChat) {
-      await meshChat.sendMessage(content, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_mesh' })
-      // 混合模式橋接（同 React 版）：mesh 連上數 < 應到人數-1 → 同 id 雙寫備援，
-      // 掉隊者收得到、mesh 成員兩份同 id 由 useChatMessages 去重
-      const coverage = meshChat.getMeshCoverage()
-      const expectedPeers = participantCount - 1
-      if (expectedPeers > 0 && coverage.connected < expectedPeers) {
-        await sendMessageViaFirestore(roomId.value, uid, { content }, tempId)
+    // ADR-0023 P2-③：2 人房一律走 gossip 複寫日誌（star 退役）。
+    if (!meshChat) {
+      throw new Error('連線建立中，請稍候再送')
+    }
+    // store-first：先入複寫日誌（此刻沒連上也會由 anti-entropy 補送），liveness 不綁當下連線。
+    await meshChat.sendMessage(content, tempId)
+    featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_mesh' })
+    // 覆蓋不足（有成員不在 mesh，多半離線/連線中）→ 加密備援橋接，讓其收得到。
+    // 用房間金鑰（keyx）加密；無金鑰則「不送明文」——靠 mesh anti-entropy 補齊，
+    // 不再明文洩漏到 Firestore（P2-③ 收尾；星型舊路徑的密文備援等價）。
+    const coverage = meshChat.getMeshCoverage()
+    const expectedPeers = participantCount - 1
+    if (expectedPeers > 0 && coverage.connected < expectedPeers) {
+      const encrypted = await meshChat.encryptForFallback(content)
+      if (encrypted) {
+        await sendMessageViaFirestore(roomId.value, uid, { encrypted }, tempId)
         featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_bridge' })
+      } else {
+        featureLog('chat', 'fallback_skipped_no_key', { roomId: roomId.value })
       }
-    } else if (currentTopology.value === 'star' || currentTopology.value === null) {
-      // ADR-0004：星型房的備援一律密文；金鑰未就緒時擲錯（訊息標失敗、可重送）
-      const chatService = starTopology.getChatService()
-      if (!chatService) {
-        throw new Error('E2EE 金鑰尚未建立（P2P 交換未完成），無法經備援通道傳送')
-      }
-      const encrypted = await chatService.encryptForFallback(content)
-      await sendMessageViaFirestore(roomId.value, uid, { encrypted }, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_fallback' })
-    } else {
-      // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文。
-      // tempId 貫穿寫入：否則 onSnapshot 以另一個 id 回吐自己的訊息 → 兩顆泡泡
-      await sendMessageViaFirestore(roomId.value, uid, { content }, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_fallback' })
     }
     updateMessageStatus(tempId, 'sent')
     setTimeout(() => updateMessageStatus(tempId, 'delivered'), 1500)
