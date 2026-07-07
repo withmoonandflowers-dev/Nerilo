@@ -5,12 +5,12 @@ import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
-import { StarTopologyController } from '~/lib/starTopology'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
 
-type Topology = 'star' | 'mesh'
+// star 特例已退役（ADR-0023 P2-③）；保留具名型別供 currentTopology 語義清楚。
+type Topology = 'mesh'
 
 definePageMeta({ pageTransition: { name: 'slide', mode: 'out-in' } })
 
@@ -41,7 +41,6 @@ const unseenCount = ref(0)
 const listEl = ref<HTMLElement | null>(null)
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 
-const starTopology = new StarTopologyController()
 const roomSubscription = new RoomSubscriptionController()
 // mesh（3-5 人）：直接複用零框架依賴的 MeshChatService（gossip + anti-entropy 對帳）
 let meshChat: MeshChatService | null = null
@@ -59,7 +58,7 @@ let disposed = false
 const statusText = computed(() => {
   switch (connectionState.value) {
     case 'connected':
-      return currentTopology.value === 'star' ? '已連線 · P2P 直連' : '已連線'
+      return '已連線'
     case 'connecting':
       return '連線中…'
     case 'failed':
@@ -71,20 +70,6 @@ const statusText = computed(() => {
   }
 })
 
-/**
- * ADR-0023 P2-③：2 人房也走 gossip 複寫日誌，star 特例退役。
- * 「離開再進收不到」整類消滅（重進＝cold→syncing→live，缺的訊息由留房者
- * 經 anti-entropy 補；不再靠 star 連線復活術）。2 人房因此獲得 E2EE（keyx,
- * P2-②c）＋斷線重生。typing/遊戲已於 Phase 1/2 移植到 mesh，零功能回退。
- */
-function decideTopology(_room: P2PRoom, _effectiveCount: number): Topology {
-  return 'mesh'
-}
-
-function setConnectionState(state: ConnectionState) {
-  connectionState.value = state
-}
-
 // 在房內收到訊息即已讀（節流 5s，metadata 寫入）
 let lastReadWriteAt = 0
 function touchRead() {
@@ -93,11 +78,6 @@ function touchRead() {
   if (now - lastReadWriteAt < 5_000) return
   lastReadWriteAt = now
   RoomService.markRead(roomId.value, user.value.uid).catch(() => {})
-}
-
-function onIncomingMessage(msg: ChatMessage) {
-  addMessage(msg)
-  touchRead()
 }
 
 // 送訊後 bump 房間活躍度（節流 10s；只寫 lastActiveAt/ttl metadata，
@@ -121,52 +101,34 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     memberCount.value = participantCount
     if (room.status !== 'open' || effectiveCount < 2) return
 
-    const decision = decideTopology(room, effectiveCount)
-    if (currentTopology.value === decision) return
+    if (currentTopology.value === 'mesh') return // 已建立，勿重複初始化
 
-    featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: decision, from: currentTopology.value })
+    featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: 'mesh', from: currentTopology.value })
 
-    if (decision === 'mesh') {
-      // 2-5 人 mesh：複用 @legacy MeshChatService（gossip + seq anti-entropy 對帳，
-      // 恰好一次保證見 docs/QA-REPORT-chat.md 第三輪）。star→mesh 遷移先清星型。
-      starTopology.cleanup()
-      currentTopology.value = 'mesh'
-      connectionState.value = 'connecting'
-      // 房主＝井字棋 X（與星型一致）；2 人房遊戲騎 mesh gossip（MeshGameBus）
-      isRoomOwner.value = room.ownerUid === uid
-      const svc = new MeshChatService(roomId.value, uid)
-      await svc.initialize()
-      if (disposed) {
-        await svc.cleanup()
-        return
-      }
-      meshChat = svc
-      gameBus.value = new MeshGameBus(svc)
-      svc.onMessage((msg) => addMessage(msg))
-      // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
-      typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
-      svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
-      // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
-      meshStateInterval = setInterval(() => {
-        if (!meshChat) return
-        const s = meshChat.getConnectionState()
-        const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
-        if (mapped !== connectionState.value) connectionState.value = mapped
-      }, 2000)
+    // ADR-0023 P2-③：一律走 gossip 複寫日誌（star 退役）。複用 @legacy MeshChatService
+    // （gossip + seq anti-entropy 對帳，恰好一次見 docs/QA-REPORT-chat.md 第三輪）。
+    currentTopology.value = 'mesh'
+    connectionState.value = 'connecting'
+    isRoomOwner.value = room.ownerUid === uid // 房主＝井字棋 X；遊戲騎 mesh gossip（MeshGameBus）
+    const svc = new MeshChatService(roomId.value, uid)
+    await svc.initialize()
+    if (disposed) {
+      await svc.cleanup()
       return
     }
-
-    if (currentTopology.value === null) {
-      const isInitiator = room.ownerUid === uid
-      isRoomOwner.value = isInitiator
-      await starTopology.initialize(roomId.value, uid, isInitiator, setConnectionState, onIncomingMessage)
-      currentTopology.value = 'star'
-      // 遊戲騎同一條 bus（ns:'ttt'）；連線建立後 bus 才存在
-      gameBus.value = starTopology.getChannelBus()
-      typingUnsub = starTopology.onTyping(({ userId, isTyping }) => {
-        if (userId !== uid) peerTyping.value = isTyping
-      })
-    }
+    meshChat = svc
+    gameBus.value = new MeshGameBus(svc)
+    svc.onMessage((msg) => addMessage(msg))
+    // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
+    typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
+    svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
+    // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
+    meshStateInterval = setInterval(() => {
+      if (!meshChat) return
+      const s = meshChat.getConnectionState()
+      const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
+      if (mapped !== connectionState.value) connectionState.value = mapped
+    }, 2000)
   } catch (e) {
     console.error('[chat] initializeP2P failed', e)
     connectionState.value = 'failed'
@@ -260,9 +222,7 @@ onUnmounted(() => {
   roomSubscription.unsubscribe()
   typingUnsub?.()
   fallbackUnsub?.()
-  starTopology.cleanup()
   if (meshStateInterval) clearInterval(meshStateInterval)
-  clearInterval(gameBusPoll)
   meshChat?.cleanup().catch(() => {})
   meshChat = null
   credits.stopEarning()
@@ -352,9 +312,8 @@ function autoGrow() {
 }
 
 function sendTypingSignal(isTyping: boolean) {
-  // 依當前拓撲分流：mesh 走 gossip presence 通道，star 走 P2P bus。
-  if (currentTopology.value === 'mesh') meshChat?.sendTyping(isTyping)
-  else starTopology.sendTyping(isTyping)
+  // mesh gossip presence 通道（lossy）；star 退役後無其他路徑。
+  meshChat?.sendTyping(isTyping)
 }
 
 function emitTyping(isTyping: boolean) {
@@ -449,27 +408,10 @@ watch(connectionState, (s) => {
   else credits.stopEarning()
 })
 
-// 非房主側的 ChannelBus 在遠端 DataChannel open 後才存在，且晚於 ICE
-// 'connected'（一次性 watch 會撲空後再也不觸發）。改輪詢直到取得、即停。
-const gameBusPoll = setInterval(() => {
-  if (gameBus.value) {
-    clearInterval(gameBusPoll)
-    return
-  }
-  if (currentTopology.value === 'star') {
-    const b = starTopology.getChannelBus()
-    if (b) {
-      gameBus.value = b
-      clearInterval(gameBusPoll)
-    }
-  }
-}, 500)
-
 function retryConnection() {
   connectionState.value = 'connecting'
   currentTopology.value = null
-  starTopology.cleanup()
-  // mesh 也要收乾淨再重建，否則舊 MeshChatService 續跑（interval/連線洩漏）
+  // mesh 收乾淨再重建，否則舊 MeshChatService 續跑（interval/連線洩漏）
   if (meshStateInterval) { clearInterval(meshStateInterval); meshStateInterval = null }
   meshChat?.cleanup().catch(() => {})
   meshChat = null

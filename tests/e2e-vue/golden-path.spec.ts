@@ -14,7 +14,7 @@ import {
 } from './_helpers/users';
 
 test.describe('Vue 版黃金路徑', () => {
-  test('2 人星型：雙向訊息、寄收兩端各恰好一次', async ({ browser }) => {
+  test('2 人 mesh：雙向訊息、寄收兩端各恰好一次', async ({ browser }) => {
     test.setTimeout(180_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
