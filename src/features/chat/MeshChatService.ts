@@ -96,6 +96,23 @@ export class MeshChatService {
   }
 
   /**
+   * 送 typing 暫態信號（lossy，走 mesh presence 通道，不進 gossip 日誌）。
+   * best-effort：失敗吞掉，下次 keystroke 再送。對齊星型 ChatService.sendTyping。
+   */
+  async sendTyping(isTyping: boolean): Promise<void> {
+    try {
+      await this.meshGossipManager.broadcastTyping(isTyping);
+    } catch {
+      /* typing 是 best-effort */
+    }
+  }
+
+  /** 監聽 peer 的 typing（{userId,isTyping}，對齊星型 ChatService.onTyping） */
+  onTyping(listener: (data: { userId: string; isTyping: boolean }) => void): () => void {
+    return this.meshGossipManager.onTyping(listener);
+  }
+
+  /**
    * 載入歷史訊息
    */
   async loadHistory(): Promise<ChatMessage[]> {

@@ -13,6 +13,11 @@ export class MeshConnection {
   private channelBus: P2PChannelBus | null = null;
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
   private digestListeners: Set<(digest: GossipDigest) => void> = new Set();
+  /**
+   * 暫態信號（typing 等）監聽器。走 ns:'presence'，**不進** gossip store /
+   * anti-entropy 對帳——lossy（best-effort、掉了不補），語義同星型的 TYPING。
+   */
+  private ephemeralListeners: Set<(env: { type: string; from?: string; payload: unknown }) => void> = new Set();
   private readyPromise: Promise<void>;
   private meshUserId: string; // 用於 Gossip 的 userId
 
@@ -140,6 +145,17 @@ export class MeshConnection {
         });
       }
     });
+
+    // 暫態信號（typing 等）：獨立 ns，不碰 gossip store / 對帳。
+    this.channelBus.subscribe('presence', async (envelope) => {
+      this.ephemeralListeners.forEach(listener => {
+        try {
+          listener({ type: envelope.type, from: envelope.from, payload: envelope.payload });
+        } catch (error) {
+          logger.error('[MeshConnection] Error in ephemeral listener', { error });
+        }
+      });
+    });
   }
 
   /**
@@ -184,6 +200,36 @@ export class MeshConnection {
       to: this.remoteFirebaseUid,
       payload: digest,
     });
+  }
+
+  /**
+   * 送暫態信號（typing 等）。lossy：bus 未 open 直接丟棄，**不** waitForReady——
+   * typing 遲送無意義，且不可拖住呼叫端。不進 gossip 日誌、不參與對帳。
+   */
+  async sendEphemeral(type: string, payload: unknown): Promise<void> {
+    if (this.channelBus?.getReadyState() !== 'open') return;
+    try {
+      await this.channelBus.send({
+        v: 1,
+        ns: 'presence',
+        type,
+        id: `${Date.now()}-${Math.random()}`,
+        ts: Date.now(),
+        from: this.localFirebaseUid,
+        to: this.remoteFirebaseUid,
+        payload,
+      });
+    } catch {
+      /* best-effort：掉了就掉了，下次 keystroke 再送 */
+    }
+  }
+
+  /** 監聽對方送來的暫態信號（typing 等）；不受 ttl/對帳影響 */
+  onEphemeral(listener: (env: { type: string; from?: string; payload: unknown }) => void): () => void {
+    this.ephemeralListeners.add(listener);
+    return () => {
+      this.ephemeralListeners.delete(listener);
+    };
   }
 
   /** 監聽對方送來的 digest */

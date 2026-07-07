@@ -33,6 +33,11 @@ export class MeshGossipManager {
   private keyxInterval: ReturnType<typeof setInterval> | null = null;
   /** keyx 評估週期：稍慢於鄰居掃描，且用快取讀名冊，省 Firestore server 讀 */
   private static readonly KEYX_TICK_MS = 4000;
+  /**
+   * 暫態信號（typing）監聽器。走 ns:'presence' lossy 通道，不進 gossip 日誌/對帳。
+   * 對齊星型 ChatService.onTyping 的 {userId,isTyping} 契約，讓 UI 兩路可共用。
+   */
+  private typingListeners: Set<(data: { userId: string; isTyping: boolean }) => void> = new Set();
 
   constructor(private roomId: string) {
     this.identityManager = new IdentityManager();
@@ -230,6 +235,21 @@ export class MeshGossipManager {
           neighbor.onDigest((digest) => {
             void this.messageHandler?.handleDigest(digest, neighbor);
           });
+
+          // 暫態信號（typing）：lossy、不進 store/對帳。payload.userId = 送出者 mesh userId，
+          // 只轉發給 typing 監聽器（UI 據此顯示「輸入中…」）。
+          neighbor.onEphemeral((env) => {
+            if (env.type !== 'TYPING') return;
+            const p = env.payload as { userId?: unknown; isTyping?: unknown };
+            if (typeof p?.userId !== 'string' || typeof p?.isTyping !== 'boolean') return;
+            this.typingListeners.forEach((l) => {
+              try {
+                l({ userId: p.userId as string, isTyping: p.isTyping as boolean });
+              } catch (err) {
+                logger.error('[MeshGossipManager] typing listener error', { roomId: this.roomId, err });
+              }
+            });
+          });
         }
 
         // 週期性 anti-entropy 對帳：送 digest 給已連上鄰居，對方回補我缺的訊息。
@@ -278,6 +298,31 @@ export class MeshGossipManager {
       throw new Error('MeshGossipManager not initialized. Call initialize() first.');
     }
     return await this.messageHandler.sendMessage(content, messageId, channel);
+  }
+
+  /**
+   * 廣播 typing 暫態信號給所有已連上鄰居（lossy、best-effort）。
+   * 不進 gossip 日誌/對帳——typing 遲送無意義。payload 帶自己的 mesh userId
+   * 供收端過濾（雖 mesh 不回吐自送，2 人房收端天然只收到對方）。
+   */
+  async broadcastTyping(isTyping: boolean): Promise<void> {
+    if (!this.initialized || !this.topologyManager) return;
+    const me = this.getUserId();
+    if (!me) return;
+    const neighbors = this.topologyManager
+      .getNeighbors()
+      .filter((n) => n.getState() === 'connected');
+    await Promise.all(
+      neighbors.map((n) => n.sendEphemeral('TYPING', { userId: me, isTyping }))
+    );
+  }
+
+  /** 監聽 peer 的 typing 信號（{userId,isTyping}，對齊星型 ChatService.onTyping） */
+  onTyping(listener: (data: { userId: string; isTyping: boolean }) => void): () => void {
+    this.typingListeners.add(listener);
+    return () => {
+      this.typingListeners.delete(listener);
+    };
   }
 
   /**
@@ -364,6 +409,7 @@ export class MeshGossipManager {
     }
     this.topologyManager = null;
     this.messageHandler = null;
+    this.typingListeners.clear();
     this.initialized = false;
     logger.info('[MeshGossipManager] Cleaned up', { roomId: this.roomId });
   }
