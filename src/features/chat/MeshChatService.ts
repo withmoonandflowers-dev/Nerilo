@@ -2,6 +2,7 @@ import { MeshGossipManager } from '../../core/mesh/MeshGossipManager';
 import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
+import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallback';
 import { logger } from '../../utils/logger';
 
 /**
@@ -148,6 +149,26 @@ export class MeshChatService {
     return () => {
       this.gameListeners.delete(listener);
     };
+  }
+
+  /**
+   * 備援層加密（ADR-0023 P2-③：mesh 房 Firestore 備援不再明文）。
+   * 用房間金鑰把明文加成 RecordCrypto 信封，映射成 FallbackEncryptedContent。
+   * 無金鑰回 null → 呼叫端「不送明文橋接」（等 keyx 或靠 anti-entropy 補）。
+   */
+  async encryptForFallback(content: string): Promise<FallbackEncryptedContent | null> {
+    const env = await this.meshGossipManager.encryptForFallback(content);
+    if (!env) return null;
+    const p = JSON.parse(env) as { ct: string; iv: string; ep: number };
+    return { ciphertext: p.ct, iv: p.iv, senderKeyEpoch: p.ep, seq: 0 };
+  }
+
+  /** 解備援層密文（房間金鑰）。senderId 未用（房間金鑰非 per-sender），保留簽名相容。 */
+  async decryptFromFallback(payload: FallbackEncryptedContent, _senderId: string): Promise<string> {
+    const env = JSON.stringify({
+      v: 'nrec1', ct: payload.ciphertext, iv: payload.iv, ep: payload.senderKeyEpoch,
+    });
+    return this.meshGossipManager.decryptForFallback(env);
   }
 
   /**

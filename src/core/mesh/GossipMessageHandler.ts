@@ -99,6 +99,28 @@ export class GossipMessageHandler {
   }
 
   /**
+   * 用目前送出金鑰把明文加成 RecordCrypto 信封字串，供 Firestore 備援層使用
+   * （ADR-0023 P2-③：mesh 房備援不再明文）。無金鑰回 null——呼叫端據此「不送」，
+   * 而非退明文洩漏（等 keyx 就緒或靠 anti-entropy 補，不走明文橋接）。
+   */
+  async encryptForFallback(plaintext: string): Promise<string | null> {
+    const key = this.sendEpoch !== null ? this.keyRing.get(this.sendEpoch) : undefined;
+    if (!key || this.sendEpoch === null) return null;
+    return encryptRecordContent(plaintext, key, this.sendEpoch);
+  }
+
+  /**
+   * 解 Firestore 備援層的 RecordCrypto 信封字串 → 明文，按信封 epoch 選環中金鑰。
+   * 無對應 epoch 金鑰（未在籍/未補齊）→ 拋錯，呼叫端顯示佔位（同 store 路徑語義）。
+   */
+  async decryptForFallback(envelope: string): Promise<string> {
+    const ep = contentEpoch(envelope);
+    const key = ep !== null ? this.keyRing.get(ep) : undefined;
+    if (!key) throw new Error('no room key for fallback decrypt');
+    return decryptRecordContent(envelope, key);
+  }
+
+  /**
    * 從持久複本重生（ADR-0023 P1）：載入紀錄與 floors 進記憶體 store。
    * 必須在任何收送之前呼叫。失敗非致命——退回記憶體模式（Safari 隱私模式等）。
    */
