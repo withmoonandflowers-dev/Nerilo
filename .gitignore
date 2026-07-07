@@ -61,3 +61,6 @@ reports/
 # Production smoke test artifacts (local only)
 smoke-artifacts/
 .smoke-credentials.json
+
+# Vitest coverage output (generated)
+coverage/
