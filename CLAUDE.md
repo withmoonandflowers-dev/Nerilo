@@ -22,8 +22,10 @@ npm run ci           # type-check + lint + unit tests
 
 ## Tech Stack
 
-- **Frontend:** React 18 + TypeScript 5 + Vite 5
-- **Styling:** Tailwind CSS + shadcn/ui
+- **Frontend (production):** React 18 + TypeScript 5 + Vite 5，手寫 CSS + design tokens（variables.css）
+- **Frontend (重寫中, ADR-0017):** Vue 3 + Nuxt（SPA）於 `web-vue/`，iMessage 風設計系統；
+  複用 `src/core|services|types|utils`（零 React 依賴）。nuxt 釘 4.4.2（4.4.4/4.4.5 ssr:false regression）。
+  React 版凍結新功能，切換前仍是 production。
 - **Auth/DB:** Firebase Auth + Firestore (signaling + fallback)
 - **P2P:** WebRTC DataChannel (primary transport)
 - **Crypto:** SubtleCrypto (ECDSA P-256 identity, ECDH key exchange, AES-256-GCM encryption)
