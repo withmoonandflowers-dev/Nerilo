@@ -132,6 +132,8 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
       }
       meshChat = svc
       svc.onMessage((msg) => addMessage(msg))
+      // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
+      typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
       svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
       // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
       meshStateInterval = setInterval(() => {
@@ -346,11 +348,17 @@ function autoGrow() {
   emitTyping(true)
 }
 
+function sendTypingSignal(isTyping: boolean) {
+  // 依當前拓撲分流：mesh 走 gossip presence 通道，star 走 P2P bus。
+  if (currentTopology.value === 'mesh') meshChat?.sendTyping(isTyping)
+  else starTopology.sendTyping(isTyping)
+}
+
 function emitTyping(isTyping: boolean) {
-  starTopology.sendTyping(isTyping)
+  sendTypingSignal(isTyping)
   if (typingDebounce) clearTimeout(typingDebounce)
   if (isTyping) {
-    typingDebounce = setTimeout(() => starTopology.sendTyping(false), 2500)
+    typingDebounce = setTimeout(() => sendTypingSignal(false), 2500)
   }
 }
 
