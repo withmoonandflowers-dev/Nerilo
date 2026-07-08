@@ -259,3 +259,28 @@ React 護欄未迴歸。
 - **② star 死碼清除**（commit 收尾②）：`StarTopologyController` 與 `starTopology.ts`
   刪除，chat page 的 star 分支/輪詢/typing-star 分歧/`decideTopology` 全移除，
   `Topology` 型別收斂為 `'mesh'`。全 Vue E2E 套件（11 spec）仍綠。
+
+---
+
+## 修訂六（2026-07-07）：P4-A 全站節點名冊地基（盲信使前置）
+
+盲信使（R1 / ADR-0024）＝非成員為他人房間保存密文複本並參與補齊。硬前提「紀錄
+密文化」已由 P2-②c 完成，剩下的地基是「非成員怎麼找到要幫誰、怎麼連上」。P4 依相依
+分四塊：**A 名冊 → B 陌生節點 signaling → C 寄存/對帳 → D 計量**。本修訂交付 **A**。
+
+盤點發現 `src/core/relay/` 與 `transport/` 有大量休眠但已測的模組（`RelayManager`/
+Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndForward`），
+0 個 app 檔引用。`RelayCoordinator` 自己標注「全域 overlay 尚未建立」。故 P4 多為接線。
+
+- **P4-A.1**（commit）：`FirestoreRelayDirectory` — `IRelayDirectory` 的 production
+  adapter，宣告寫 `relayDirectory/{ownerUid}`，query 濾 TTL/exclude/sort/limit（對齊
+  記憶體版語義）。firestore.rules：只能寫自己那格（docId==auth.uid、ownerUid 相符、
+  非匿名反女巫、announcedAt ±60s）、任何登入者可讀。單元 4 + 整合 rules 7 綠。
+- **P4-A.2**（commit）：`useNodePresence` — dashboard 掛載即宣告本節點（nodeId=mesh
+  userId）+ 週期查在線節點數，離頁撤回；誠實條款（只有非匿名宣告成功才顯示，匿名/
+  被拒靜默降級）。UI「還有 N 個節點一起守護」。E2E：兩瀏覽器 dashboard 互相發現。
+
+**尚未做（P4-B/C/D）**：陌生節點 ↔ 成員的 relay-only DataChannel（現行 signaling 綁房，
+非成員進不來）；盲信使寄存協議（收密文紀錄→存→anti-entropy 服務回，配額/TTL/LRU/
+簽章墓碑見 ADR-0024）；共簽收據→點數計量（ADR-0022）。名冊只是「誰在線」，還沒到
+「幫誰存、存了什麼」。
