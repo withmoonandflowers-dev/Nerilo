@@ -216,6 +216,29 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && request.auth.uid in resource.data.uids;
     }
 
+    // 全站節點名冊（ADR-0023 P4-A）：線上節點宣告可中繼/當盲信使，供陌生節點
+    // 互相發現、建立站級 overlay。id = 宣告者的 auth.uid（一使用者/裝置一則）。
+    // 隱私：宣告只含 nodeId + 粗略 metrics + regionHint，不含 IP。
+    match /relayDirectory/{ownerUid} {
+      // 讀：任何登入者可查名冊（發現候選節點）。
+      allow read: if isAuthenticated();
+      // 寫：只能寫自己那一則（防冒名/覆寫他人宣告 → 反女巫、防名冊污染）；非匿名才可
+      // 宣告；announcedAt 需在 server 時間 ±60s（防灌陳舊/未來宣告佔位）；nodeId 格式限制。
+      allow create, update: if isAuthenticated()
+        && ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.nodeId is string
+        && request.resource.data.nodeId.size() >= 8
+        && request.resource.data.nodeId.size() <= 64
+        && request.resource.data.announcedAt is number
+        && request.resource.data.announcedAt > request.time.toMillis() - 60000
+        && request.resource.data.announcedAt < request.time.toMillis() + 60000
+        && request.resource.size() < 4 * 1024;
+      // 撤回：只能撤自己。
+      allow delete: if isAuthenticated() && ownerUid == request.auth.uid;
+    }
+
     // 明確禁止其他集合儲存敏感內容
     match /{document=**} {
       allow read, write: if false;
