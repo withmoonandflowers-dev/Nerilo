@@ -448,7 +448,9 @@ describe(
       const { db } = await signInWithToken('member-create', token);
       await addDoc(
         collection(db, 'p2pRooms', ROOM_ID, 'messages'),
-        { from: UID_MEMBER, content: 'world', timestamp: serverTimestamp(), edited: false, deleted: false }
+        // createdAt 為 messages 規則的必要欄位（防 replay ±30s 窗）；production 的
+        // sendMessageViaFirestore 有寫，此測試原本漏了 → 修正對齊。
+        { from: UID_MEMBER, content: 'world', createdAt: serverTimestamp(), timestamp: serverTimestamp(), edited: false, deleted: false }
       );
     });
 
@@ -478,6 +480,97 @@ describe(
       await assertDenied(() =>
         getDoc(doc(db, 'sensitiveCollection', 'doc'))
       );
+    });
+  })
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 7. /relayDirectory/{ownerUid}（ADR-0023 P4-A 全站節點名冊）
+// ─────────────────────────────────────────────────────────────────────────
+
+describe(
+  'Firestore Rules: /relayDirectory',
+  withEmulator(() => {
+    const freshAnnounce = (ownerUid: string, nodeId = 'node-abcdef12') => ({
+      nodeId,
+      ownerUid,
+      announcedAt: Date.now(),
+      capacity: 1,
+    });
+
+    beforeEach(async () => {
+      await clearEmulatorData();
+    });
+
+    it('非匿名使用者可宣告自己那格', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db, uid } = await signInWithToken('rd-owner', token);
+      await setDoc(doc(db, 'relayDirectory', uid), freshAnnounce(uid));
+      const snap = await getDoc(doc(db, 'relayDirectory', uid));
+      expect(snap.exists()).toBe(true);
+    });
+
+    it('不能寫別人那格（docId ≠ auth.uid）', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db } = await signInWithToken('rd-owner2', token);
+      await assertDenied(() =>
+        setDoc(doc(db, 'relayDirectory', UID_STRANGER), freshAnnounce(UID_STRANGER))
+      );
+    });
+
+    it('ownerUid 欄位與 docId 不符 → 拒絕（防冒名）', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db, uid } = await signInWithToken('rd-owner3', token);
+      await assertDenied(() =>
+        setDoc(doc(db, 'relayDirectory', uid), { ...freshAnnounce(uid), ownerUid: UID_STRANGER })
+      );
+    });
+
+    it('匿名使用者不可宣告（反女巫）', async () => {
+      const { db, uid } = await signInAnon('rd-anon');
+      await assertDenied(() =>
+        setDoc(doc(db, 'relayDirectory', uid), freshAnnounce(uid))
+      );
+    });
+
+    it('announcedAt 過舊（>60s）→ 拒絕', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db, uid } = await signInWithToken('rd-stale', token);
+      await assertDenied(() =>
+        setDoc(doc(db, 'relayDirectory', uid), { ...freshAnnounce(uid), announcedAt: Date.now() - 120_000 })
+      );
+    });
+
+    it('任何登入者可讀名冊；未登入不可讀', async () => {
+      // owner seed 一則
+      const ownerToken = await createTestUser(UID_OWNER);
+      const owner = await signInWithToken('rd-read-owner', ownerToken);
+      await setDoc(doc(owner.db, 'relayDirectory', owner.uid), freshAnnounce(owner.uid));
+
+      // 另一登入者可讀
+      const otherToken = await createTestUser(UID_MEMBER);
+      const other = await signInWithToken('rd-read-other', otherToken);
+      const snap = await getDoc(doc(other.db, 'relayDirectory', owner.uid));
+      expect(snap.exists()).toBe(true);
+
+      // 未登入不可讀
+      await assertDenied(() => getDoc(doc(unauthDb('rd-unauth'), 'relayDirectory', owner.uid)));
+    });
+
+    it('只能撤自己那格', async () => {
+      const ownerToken = await createTestUser(UID_OWNER);
+      const owner = await signInWithToken('rd-del-owner', ownerToken);
+      await setDoc(doc(owner.db, 'relayDirectory', owner.uid), freshAnnounce(owner.uid));
+
+      // 別人不能刪我的
+      const otherToken = await createTestUser(UID_MEMBER);
+      const other = await signInWithToken('rd-del-other', otherToken);
+      await assertDenied(() => deleteDoc(doc(other.db, 'relayDirectory', owner.uid)));
+
+      // 自己可以刪自己的
+      await deleteDoc(doc(owner.db, 'relayDirectory', owner.uid));
+      const snap = await getDoc(doc(owner.db, 'relayDirectory', owner.uid));
+      expect(snap.exists()).toBe(false);
     });
   })
 );
