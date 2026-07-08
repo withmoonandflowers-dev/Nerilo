@@ -239,6 +239,40 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && ownerUid == request.auth.uid;
     }
 
+    // 陌生節點站級 signaling（ADR-0023 P4-B）：非成員與成員在不綁房的 pairwise
+    // 通道上交換 WebRTC signals，建 relay-only DataChannel（盲信使補齊的傳輸）。
+    // channelId = 雙方 uid 排序後串接。只有通道 participants 內兩人能讀寫。
+    match /relaySignals/{channelId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      // 開通道：必須是雙方之一、participants 恰好 2 人、非匿名（反女巫）。
+      allow create: if isAuthenticated()
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() == 2
+        && request.auth.uid in request.resource.data.participants
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      // 更新（ensureChannel merge 續期）：participants 不得變更。
+      allow update: if isAuthenticated()
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.participants == resource.data.participants;
+      allow delete: if isAuthenticated() && request.auth.uid in resource.data.participants;
+
+      // signals 子集合：append-only 的 offer/answer/ice。
+      match /signals/{signalId} {
+        function chanParticipants() {
+          return get(/databases/$(database)/documents/relaySignals/$(channelId)).data.participants;
+        }
+        allow read: if isAuthenticated() && request.auth.uid in chanParticipants();
+        allow create: if isAuthenticated()
+          && request.auth.uid in chanParticipants()
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.type in ['offer', 'answer', 'ice']
+          && request.resource.size() < 10 * 1024
+          && (request.resource.data.createdAt is number || request.resource.data.createdAt is timestamp);
+        allow update: if false; // append-only
+        allow delete: if isAuthenticated() && resource.data.from == request.auth.uid;
+      }
+    }
+
     // 明確禁止其他集合儲存敏感內容
     match /{document=**} {
       allow read, write: if false;
