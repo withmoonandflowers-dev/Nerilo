@@ -21,7 +21,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import {
-  doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc,
+  doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
   collection, serverTimestamp,
 } from 'firebase/firestore';
 import {
@@ -571,6 +571,83 @@ describe(
       await deleteDoc(doc(owner.db, 'relayDirectory', owner.uid));
       const snap = await getDoc(doc(owner.db, 'relayDirectory', owner.uid));
       expect(snap.exists()).toBe(false);
+    });
+  })
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 8. /relaySignals/{channelId}（ADR-0023 P4-B 陌生節點站級 signaling）
+// ─────────────────────────────────────────────────────────────────────────
+
+describe(
+  'Firestore Rules: /relaySignals',
+  withEmulator(() => {
+    const chanId = (a: string, b: string) => [a, b].sort().join('__');
+
+    beforeEach(async () => {
+      await clearEmulatorData();
+    });
+
+    it('雙方之一可開 pairwise 通道', async () => {
+      const { db, uid } = await signInWithToken('rs-open', await createTestUser(UID_OWNER));
+      const cid = chanId(uid, UID_MEMBER);
+      await setDoc(doc(db, 'relaySignals', cid), {
+        participants: [uid, UID_MEMBER].sort(),
+        createdAt: serverTimestamp(),
+      });
+      expect((await getDoc(doc(db, 'relaySignals', cid))).exists()).toBe(true);
+    });
+
+    it('非 participant 不可開通道（participants 不含自己）', async () => {
+      const { db } = await signInWithToken('rs-notpart', await createTestUser(UID_OWNER));
+      const cid = chanId(UID_MEMBER, UID_STRANGER);
+      await assertDenied(() =>
+        setDoc(doc(db, 'relaySignals', cid), {
+          participants: [UID_MEMBER, UID_STRANGER].sort(),
+          createdAt: serverTimestamp(),
+        })
+      );
+    });
+
+    it('匿名不可開通道（反女巫）', async () => {
+      const { db, uid } = await signInAnon('rs-anon');
+      const cid = chanId(uid, UID_MEMBER);
+      await assertDenied(() =>
+        setDoc(doc(db, 'relaySignals', cid), {
+          participants: [uid, UID_MEMBER].sort(),
+          createdAt: serverTimestamp(),
+        })
+      );
+    });
+
+    it('participant 可寫/讀 signal；from 必須==自己；第三方不可讀', async () => {
+      const owner = await signInWithToken('rs-sig-owner', await createTestUser(UID_OWNER));
+      const cid = chanId(owner.uid, UID_MEMBER);
+      await setDoc(doc(owner.db, 'relaySignals', cid), {
+        participants: [owner.uid, UID_MEMBER].sort(),
+        createdAt: serverTimestamp(),
+      });
+
+      // owner 寫 offer（from==自己）→ OK
+      await addDoc(collection(owner.db, 'relaySignals', cid, 'signals'), {
+        from: owner.uid, type: 'offer', payload: { type: 'offer', sdp: 'x' }, createdAt: serverTimestamp(),
+      });
+
+      // 對方（member）可讀 signals
+      const member = await signInWithToken('rs-sig-member', await createTestUser(UID_MEMBER));
+      const sigs = await getDocs(collection(member.db, 'relaySignals', cid, 'signals'));
+      expect(sigs.empty).toBe(false);
+
+      // from ≠ 自己 → 拒（防冒名代送）
+      await assertDenied(() =>
+        addDoc(collection(member.db, 'relaySignals', cid, 'signals'), {
+          from: owner.uid, type: 'ice', payload: {}, createdAt: serverTimestamp(),
+        })
+      );
+
+      // 第三方（stranger）不可讀該通道 signals
+      const stranger = await signInWithToken('rs-sig-stranger', await createTestUser(UID_STRANGER));
+      await assertDenied(() => getDocs(collection(stranger.db, 'relaySignals', cid, 'signals')));
     });
   })
 );
