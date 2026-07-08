@@ -10,6 +10,8 @@ import { gradientFor, initialFor } from '~/lib/avatar'
 const { user, loading, logout } = useAuth()
 const { error: toastError, success } = useToast()
 const { balance, relayActive, ensureInit } = useCredits()
+// 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護，並看得到其他在線節點數。
+const { peerCount, announcing, start: startPresence, stop: stopPresence } = useNodePresence()
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
@@ -62,6 +64,7 @@ onUnmounted(() => {
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('scroll', closeMenu, true)
   window.removeEventListener('keydown', onMenuKeydown)
+  void stopPresence()
 })
 
 const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
@@ -81,6 +84,7 @@ watchEffect(() => {
   const uid = user.value.uid
   featureLog('dashboard', 'init', { uid })
   ensureInit() // 點數餘額載入（中繼狀態指示）
+  void startPresence(uid) // 宣告本節點在線可守護 + 週期查在線節點數
   unsubFriends = FriendService.subscribeFriendships(uid, (list) => {
     friendships.value = list
   })
@@ -337,8 +341,11 @@ function relativeTime(ts?: number): string {
 
     <!-- 中繼狀態 × 點數（誠實顯示：只反映真實連線與真實進帳） -->
     <section v-if="user" class="card dash__relay" aria-label="中繼狀態與點數">
-      <span class="dash__relay-dot" :class="{ 'dash__relay-dot--active': relayActive }" aria-hidden="true" />
-      <span class="dash__relay-text">{{ relayActive ? '節點中繼中 · 累積點數' : '節點待命中' }}</span>
+      <span class="dash__relay-dot" :class="{ 'dash__relay-dot--active': relayActive || announcing }" aria-hidden="true" />
+      <span class="dash__relay-text">
+        {{ relayActive ? '節點中繼中 · 累積點數' : '節點待命中' }}
+        <template v-if="announcing && peerCount > 0"> · 還有 <span data-testid="online-node-count">{{ peerCount }}</span> 個節點一起守護</template>
+      </span>
       <span class="dash__relay-balance">✦ {{ balance }}</span>
     </section>
 
