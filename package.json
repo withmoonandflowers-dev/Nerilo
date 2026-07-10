@@ -40,7 +40,8 @@
     "ci:full": "npm run type-check && npm run lint && npm run test:emulator",
     "ci:fast": "npm run type-check && npm run test:run",
     "check": "npm run ci",
-    "test:property": "vitest run --config vitest.unit.config.mjs tests/unit/**/*.property.spec.ts"
+    "test:property": "vitest run --config vitest.unit.config.mjs tests/unit/**/*.property.spec.ts",
+    "test:mutation": "stryker run"
   },
   "dependencies": {
     "@netlify/functions": "^5.3.0",
@@ -68,6 +69,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^18.2.43",
