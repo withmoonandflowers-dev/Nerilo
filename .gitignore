@@ -64,3 +64,7 @@ smoke-artifacts/
 
 # Vitest coverage output (generated)
 coverage/
+
+# Stryker mutation testing
+reports/
+.stryker-tmp/
