@@ -17,7 +17,7 @@
  */
 
 import type { ConnectionState } from '../../types';
-import { P2PConnectionManager } from '../p2p/P2PConnectionManager';
+import { P2PManager } from '../p2p/P2PManager';
 import { RelaySignalingTransport } from '../p2p/SignalingTransport';
 import { RelaySignalingChannel, relayChannelId } from './RelaySignaling';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -26,17 +26,25 @@ import { logger } from '../../utils/logger';
 
 const RELAY_LABEL = 'relay';
 
-/** RelayConnector 對連線管理器的最小需求（供測試注入假件） */
+/**
+ * RelayConnector 對連線的最小需求（供測試注入假件）。
+ * initialize() 一步完成整個連線建立：主動方建 DataChannel + 送 offer；中繼方等對端 DataChannel。
+ * ——必須用 P2PManager（它建 DataChannel），不能用裸 P2PConnectionManager（無 m-line → ICE 永不起）。
+ */
 export interface RelayConnLike {
   initialize(): Promise<void>;
-  createOffer(): Promise<void>;
   getState(): ConnectionState;
   close(): Promise<void>;
 }
 
 export interface RelayConnectorDeps {
-  /** 建連線管理器（預設真 P2PConnectionManager，注入 RelaySignalingTransport） */
-  makeConn?: (channelId: string, localUid: string, remoteUid: string) => RelayConnLike;
+  /** 建連線（預設真 P2PManager，注入 RelaySignalingTransport）。isInitiator 決定主動/中繼角色。 */
+  makeConn?: (
+    channelId: string,
+    localUid: string,
+    remoteUid: string,
+    isInitiator: boolean
+  ) => RelayConnLike;
   /** 監聽「participants 含 localUid」的 relaySignals channel（預設 Firestore query） */
   watchMyChannels?: (
     localUid: string,
@@ -44,11 +52,22 @@ export interface RelayConnectorDeps {
   ) => () => void;
 }
 
-function defaultMakeConn(channelId: string, localUid: string, remoteUid: string): RelayConnLike {
+function defaultMakeConn(
+  channelId: string,
+  localUid: string,
+  remoteUid: string,
+  isInitiator: boolean
+): RelayConnLike {
   const channel = new RelaySignalingChannel(localUid, remoteUid);
   const transport = new RelaySignalingTransport(channel);
-  // pseudo roomId = channelId（雙方一致、穩定）；channelLabel='relay'（relay-only 連線）
-  return new P2PConnectionManager(channelId, localUid, RELAY_LABEL, transport);
+  // pseudo roomId = channelId（雙方一致、穩定）；channelLabel='relay'（relay-only 連線）。
+  // P2PManager 負責 DataChannel + offer（主動方）／等待對端 DataChannel（中繼方）。
+  const mgr = new P2PManager(channelId, localUid, RELAY_LABEL, isInitiator, transport);
+  return {
+    initialize: () => mgr.initialize(),
+    getState: () => mgr.getConnectionManager().getState(),
+    close: () => mgr.close(),
+  };
 }
 
 function defaultWatchMyChannels(
@@ -90,10 +109,9 @@ export class RelayConnector {
     const existing = this.active.get(channelId);
     if (existing) return existing; // 已在連，不重複
     this.initiated.add(channelId);
-    const conn = this.makeConn(channelId, this.localUid, strangerUid);
+    const conn = this.makeConn(channelId, this.localUid, strangerUid, true); // initiator
     this.active.set(channelId, conn);
-    await conn.initialize();
-    await conn.createOffer();
+    await conn.initialize(); // 建 DataChannel + 送 offer（P2PManager initiator 路徑）
     return conn;
   }
 
@@ -107,7 +125,7 @@ export class RelayConnector {
       if (this.active.has(channelId)) return; // 已在處理
       const remoteUid = participants.find((p) => p !== this.localUid);
       if (!remoteUid) return;
-      const conn = this.makeConn(channelId, this.localUid, remoteUid);
+      const conn = this.makeConn(channelId, this.localUid, remoteUid, false); // responder
       this.active.set(channelId, conn);
       void conn.initialize().then(
         () => onIncoming?.(conn, remoteUid),
@@ -126,5 +144,10 @@ export class RelayConnector {
   /** 目前 relay 連線數（監控/測試） */
   activeCount(): number {
     return this.active.size;
+  }
+
+  /** 目前所有 relay 連線的狀態（監控/E2E 觀察是否 connected） */
+  states(): ConnectionState[] {
+    return [...this.active.values()].map((c) => c.getState());
   }
 }
