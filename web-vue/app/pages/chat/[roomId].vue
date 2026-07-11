@@ -31,6 +31,7 @@ const showGame = ref(false)
 const selectedGame = ref<'ttt' | 'gomoku'>('ttt') // 房內小遊戲選擇（同一條 mesh game 通道）
 const gameBus = ref<GameBus | null>(null)
 const isRoomOwner = ref(false)
+const roomOwnerId = ref('') // 房主 firebase uid（座位模型：座 0 恆房主）
 // ── 表情 reactions ──
 const reactions = ref<ReactionMap>({})
 const myMeshId = ref('')
@@ -50,8 +51,24 @@ function reactionChips(messageId: string): Array<{ emoji: string; count: number;
     emoji, count: froms.length, mine: froms.includes(myMeshId.value),
   }))
 }
-/** 房間成員數（reactive，供模板閘控：遊戲僅 2 人房、mesh 橫幅僅 3+ 人房） */
+/** 房間成員數（reactive，供模板閘控：遊戲 2+ 人房、mesh 橫幅僅 3+ 人房） */
 const memberCount = ref(0)
+
+// ── 遊戲座位（3–5 人房：2 人對戰、其餘觀戰；2 人房非房主自動入座）──
+const { role: seatRole, canSit, releaseSeat, claimSeat } = useGameSeats(
+  gameBus,
+  computed(() => user.value?.uid ?? ''),
+  roomOwnerId,
+  isRoomOwner,
+  memberCount
+)
+const tttMark = computed<'X' | 'O' | null>(() =>
+  seatRole.value === 'first' ? 'X' : seatRole.value === 'second' ? 'O' : null
+)
+const gomokuMark = computed<'B' | 'W' | null>(() =>
+  seatRole.value === 'first' ? 'B' : seatRole.value === 'second' ? 'W' : null
+)
+
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(
   () => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value]
@@ -132,7 +149,8 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     // （gossip + seq anti-entropy 對帳，恰好一次見 docs/QA-REPORT-chat.md 第三輪）。
     currentTopology.value = 'mesh'
     connectionState.value = 'connecting'
-    isRoomOwner.value = room.ownerUid === uid // 房主＝井字棋 X；遊戲騎 mesh gossip（MeshGameBus）
+    isRoomOwner.value = room.ownerUid === uid // 房主＝座 0（first）；遊戲騎 mesh gossip（MeshGameBus）
+    roomOwnerId.value = room.ownerUid ?? ''
     const svc = new MeshChatService(roomId.value, uid)
     await svc.initialize()
     if (disposed) {
@@ -453,7 +471,7 @@ async function leaveRoom() {
 </script>
 
 <template>
-  <main class="chat" :class="{ 'chat--game': showGame && !!gameBus && memberCount === 2 }">
+  <main class="chat" :class="{ 'chat--game': showGame && !!gameBus && memberCount >= 2 }">
     <header class="chat__header">
       <button type="button" class="chat__back" aria-label="離開房間" @click="leaveRoom">‹</button>
       <div class="chat__head-center">
@@ -472,7 +490,7 @@ async function leaveRoom() {
           @click="cycleTheme"
         >◐</button>
         <button
-          v-if="gameBus && memberCount === 2"
+          v-if="gameBus && memberCount >= 2"
           type="button"
           class="chat__action"
           :class="{ 'chat__action--on': showGame }"
@@ -558,7 +576,7 @@ async function leaveRoom() {
 
     <!-- 房內小遊戲：桌面右側玻璃卡、窄幕底部抽屜；斷線由面板顯示對局暫停 -->
     <Transition name="game">
-      <aside v-if="showGame && gameBus && memberCount === 2 && user" class="chat__game">
+      <aside v-if="showGame && gameBus && memberCount >= 2 && user" class="chat__game">
         <div class="chat__game-tabs" role="tablist" aria-label="選擇遊戲">
           <button
             type="button"
@@ -577,10 +595,28 @@ async function leaveRoom() {
             @click="selectedGame = 'gomoku'"
           >五子棋</button>
         </div>
+        <!-- 3+ 人房：觀戰者可入座、對戰者可離座（2 人房自動入座、不顯示） -->
+        <div v-if="memberCount > 2 && !isRoomOwner" class="chat__seat" data-testid="seat-bar">
+          <button
+            v-if="canSit"
+            type="button"
+            class="chat__seat-btn"
+            data-testid="seat-sit"
+            @click="claimSeat()"
+          >入座對戰</button>
+          <button
+            v-else-if="seatRole === 'second'"
+            type="button"
+            class="chat__seat-btn chat__seat-btn--leave"
+            data-testid="seat-leave"
+            @click="releaseSeat()"
+          >離座（讓下一位）</button>
+          <span v-else class="chat__seat-note" data-testid="seat-spectating">觀戰中 · 座位已滿</span>
+        </div>
         <TicTacToePanel
           v-if="selectedGame === 'ttt'"
           :bus="gameBus"
-          :is-initiator="isRoomOwner"
+          :my-mark="tttMark"
           :self-id="user.uid"
           :connected="connectionState === 'connected'"
           @close="showGame = false"
@@ -588,7 +624,7 @@ async function leaveRoom() {
         <GomokuPanel
           v-else
           :bus="gameBus"
-          :is-initiator="isRoomOwner"
+          :my-mark="gomokuMark"
           :self-id="user.uid"
           :connected="connectionState === 'connected'"
           @close="showGame = false"
@@ -894,6 +930,21 @@ async function leaveRoom() {
   background: var(--bubble-other);
   border-color: var(--separator);
 }
+.chat__seat {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+.chat__seat-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: var(--primary);
+  border-radius: var(--r-btn);
+}
+.chat__seat-btn--leave { color: var(--text); background: var(--bubble-other); border: 1px solid var(--separator); }
+.chat__seat-note { font-size: 12px; color: var(--text-2); }
 @media (max-width: 760px) {
   .chat__game {
     top: auto;

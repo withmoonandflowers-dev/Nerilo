@@ -1,35 +1,41 @@
 <script setup lang="ts">
 import type { GameBus } from '~/lib/gameBus'
-import { BOARD_SIZE } from '@legacy/features/game/gomoku'
+import { BOARD_SIZE, type Mark } from '@legacy/features/game/gomoku'
 
 const props = defineProps<{
   bus: GameBus | null
-  isInitiator: boolean
+  /** 我的棋子；null = 觀戰（不能下、仍渲染雙方落子） */
+  myMark: Mark | null
   selfId: string
   /** P2P 活著才可互動；false = 對局暫停（遊戲不走伺服器備援） */
   connected: boolean
 }>()
 defineEmits<{ close: [] }>()
 
-const { state, myMark, play, restart } = useGomoku(
+const { state, play, restart } = useGomoku(
   computed(() => props.bus),
-  computed(() => props.isInitiator),
+  computed(() => props.myMark),
   computed(() => props.selfId)
 )
 
 const markName = (m: 'B' | 'W') => (m === 'B' ? '黑' : '白')
 const status = computed(() => {
   if (state.value.winner === 'draw') return '平手'
-  if (state.value.winner) return state.value.winner === myMark.value ? '你贏了 ✧' : '對方獲勝'
-  return state.value.turn === myMark.value
-    ? `輪到你（${markName(myMark.value)}）`
+  if (!props.myMark) {
+    if (state.value.winner) return `${markName(state.value.winner)}獲勝`
+    return `觀戰中 · 輪到${markName(state.value.turn)}`
+  }
+  if (state.value.winner) return state.value.winner === props.myMark ? '你贏了 ✧' : '對方獲勝'
+  return state.value.turn === props.myMark
+    ? `輪到你（${markName(props.myMark)}）`
     : `等待對方（${markName(state.value.turn)}）`
 })
 
 const cellDisabled = (i: number) =>
   !props.connected ||
+  !props.myMark ||
   state.value.board[i] !== null ||
-  state.value.turn !== myMark.value ||
+  state.value.turn !== props.myMark ||
   state.value.winner !== null
 </script>
 
