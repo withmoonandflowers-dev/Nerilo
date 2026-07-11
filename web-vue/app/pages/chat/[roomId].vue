@@ -25,6 +25,7 @@ const connectionState = ref<ConnectionState>('idle')
 const currentTopology = ref<Topology | null>(null)
 // ── 遊戲（整合頁：聊天 × 井字棋，2 人房；星型或 mesh 皆可，見 MeshGameBus）──
 const showGame = ref(false)
+const selectedGame = ref<'ttt' | 'gomoku'>('ttt') // 房內小遊戲選擇（同一條 mesh game 通道）
 const gameBus = ref<GameBus | null>(null)
 const isRoomOwner = ref(false)
 /** 房間成員數（reactive，供模板閘控：遊戲僅 2 人房、mesh 橫幅僅 3+ 人房） */
@@ -499,10 +500,37 @@ async function leaveRoom() {
       </button>
     </Transition>
 
-    <!-- 井字棋：桌面右側玻璃卡、窄幕底部抽屜；斷線由面板顯示對局暫停 -->
+    <!-- 房內小遊戲：桌面右側玻璃卡、窄幕底部抽屜；斷線由面板顯示對局暫停 -->
     <Transition name="game">
       <aside v-if="showGame && gameBus && memberCount === 2 && user" class="chat__game">
+        <div class="chat__game-tabs" role="tablist" aria-label="選擇遊戲">
+          <button
+            type="button"
+            role="tab"
+            data-testid="game-tab-ttt"
+            :aria-selected="selectedGame === 'ttt'"
+            :class="{ 'is-on': selectedGame === 'ttt' }"
+            @click="selectedGame = 'ttt'"
+          >井字棋</button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="game-tab-gomoku"
+            :aria-selected="selectedGame === 'gomoku'"
+            :class="{ 'is-on': selectedGame === 'gomoku' }"
+            @click="selectedGame = 'gomoku'"
+          >五子棋</button>
+        </div>
         <TicTacToePanel
+          v-if="selectedGame === 'ttt'"
+          :bus="gameBus"
+          :is-initiator="isRoomOwner"
+          :self-id="user.uid"
+          :connected="connectionState === 'connected'"
+          @close="showGame = false"
+        />
+        <GomokuPanel
+          v-else
           :bus="gameBus"
           :is-initiator="isRoomOwner"
           :self-id="user.uid"
@@ -733,11 +761,37 @@ async function leaveRoom() {
   position: fixed;
   top: 76px;
   right: 20px;
-  width: 288px;
+  width: 320px;
   z-index: 30;
   border-radius: var(--r-card);
   box-shadow: var(--shadow-2);
   backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat__game-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-card);
+}
+.chat__game-tabs button {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-btn);
+}
+.chat__game-tabs button.is-on {
+  color: var(--text);
+  background: var(--bubble-other);
+  border-color: var(--separator);
 }
 @media (max-width: 760px) {
   .chat__game {
