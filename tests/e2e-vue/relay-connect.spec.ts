@@ -253,4 +253,67 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await teardown(member, courier);
     }
   });
+
+  test('房籍簽章墓碑：成員真簽墓碑 → 信使盲驗通過、刪整房（P4-C tombstone）', async ({ browser }) => {
+    test.setTimeout(150_000);
+    const member = await setupUser(browser);
+    const courier = await setupUser(browser);
+    try {
+      const courierUid = await ownerUid(courier.page);
+      await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
+
+      // 取成員的 mesh 身分（nodeId=senderId），構造一筆「本人貢獻」的紀錄寄存給信使
+      // → 信使 store 有此 senderId，房籍驗證才成立。nodeId 由 IdentityManager 非同步導出 → 輪詢。
+      await expect
+        .poll(
+          () =>
+            member.page.evaluate(() => {
+              const w = window as unknown as { __nerilo_test__?: { relay?: { myNodeId?: () => string } } };
+              return w.__nerilo_test__?.relay?.myNodeId?.() ?? '';
+            }),
+          { timeout: 20_000, intervals: [500] }
+        )
+        .toHaveLength(32);
+      const nodeId = await member.page.evaluate(() => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { myNodeId?: () => string } } };
+        return w.__nerilo_test__!.relay!.myNodeId!();
+      });
+
+      const record = {
+        roomId: 'room-t', senderId: nodeId, pubKey: 'pk', seq: 1, timestamp: 9,
+        content: 'ENC:to-be-tombstoned', ttl: 3, signature: 'SIG-T', messageId: 'T',
+      };
+      await member.page.evaluate(
+        async ({ uid, rec }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<unknown[]> } };
+          };
+          await w.__nerilo_test__!.relay!.depositAndPull!(uid, rec);
+        },
+        { uid: courierUid, rec: record }
+      );
+      await expect
+        .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 20_000, intervals: [500] })
+        .toBeGreaterThanOrEqual(1);
+
+      // 成員以房籍身分真簽墓碑 → 送給信使 → 信使盲驗（簽章 + senderId∈store）通過 → 刪整房。
+      const freed = await member.page.evaluate(
+        async ({ uid }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: { relay?: { sendTombstone?: (u: string, room: string) => Promise<number> } };
+          };
+          return w.__nerilo_test__!.relay!.sendTombstone!(uid, 'room-t');
+        },
+        { uid: courierUid }
+      );
+      expect(freed).toBeGreaterThan(0);
+
+      // 信使 room-t 已清空。
+      await expect
+        .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 10_000, intervals: [500] })
+        .toBe(0);
+    } finally {
+      await teardown(member, courier);
+    }
+  });
 });

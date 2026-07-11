@@ -19,6 +19,7 @@
 import type { P2PEnvelope, GossipMessage } from '../../types';
 import { CourierStore, type DepositResult } from './CourierStore';
 import { computeDigest, normalizeDigest, peerLacks, type GossipDigest } from '../mesh/antiEntropy';
+import { verifyTombstone, type Tombstone } from './TombstoneCrypto';
 import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
 
@@ -112,7 +113,8 @@ function envelope(type: string, from: string, payload: unknown, over: Partial<P2
 
 /**
  * 信使方：把 CourierStore 掛到 bus 的 courier namespace。
- * verifyTombstone 注入房籍/簽章驗證（本層盲，不含 crypto）；預設拒絕（安全預設）。
+ * 墓碑驗證：預設用 TombstoneCrypto 對「該房 store 裡的 senderId 集合」做盲驗（簽章 + 房籍）。
+ * 可注入 verifyOverride 供測試/替代策略。
  */
 export class CourierServer {
   private unsub: (() => void) | null = null;
@@ -121,8 +123,15 @@ export class CourierServer {
     private readonly bus: CourierBus,
     private readonly store: CourierStore,
     private readonly selfId: string,
-    private readonly verifyTombstone: (roomId: string, proof: unknown) => boolean | Promise<boolean> = () => false
+    private readonly verifyOverride?: (roomId: string, proof: unknown) => boolean | Promise<boolean>
   ) {}
+
+  /** 房籍簽章墓碑驗證：注入者優先，否則預設用 store 的 senderId 集合做盲驗。 */
+  private verifyTombstone(roomId: string, proof: unknown): boolean | Promise<boolean> {
+    if (this.verifyOverride) return this.verifyOverride(roomId, proof);
+    const roomSenderIds = new Set(this.store.roomStore(roomId).keys());
+    return verifyTombstone(proof as Tombstone, roomSenderIds);
+  }
 
   start(): void {
     if (this.unsub) return;
