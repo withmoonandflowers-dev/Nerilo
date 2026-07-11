@@ -22,7 +22,7 @@
 | mesh 3–5 人可靠性 | antiEntropy（數學收斂）+ 測試工具鏈 | 🟢 邏輯完成，真實環境待驗 |
 | star→mesh 切換 bug（切換重載重複/遺失） | ADR-0023 修訂五（直接移除 star 分支） | 🟡 隨收斂消滅 |
 | 跨房：非成員找到要幫誰、怎麼連 | P4-A 名冊 ✅ / P4-B signaling+編排 | 🟢 A+B 完成；真 WebRTC relay E2E 綠（`relay-connect.spec.ts`，雙端 connected） |
-| 盲信使寄存協議（存密文、對帳回補） | P4-C · ADR-0024 · `CourierStore`+`CourierService` | 🟢 C.1 儲存經濟學 + C.2 bus 協議 + C.3 真通道寄存往返 + C.4 anti-entropy 雙向自動對帳（信使補成員缺、成員回推信使缺）全部 E2E 綠；剩 tombstone 真房籍簽章 + app 觸發整合 |
+| 盲信使寄存協議（存密文、對帳回補） | P4-C · ADR-0024 · `CourierStore`+`CourierService`+`useCourierNode` | 🟢 C.1 儲存經濟學 + C.2 bus 協議 + C.3 真通道寄存 + C.4 雙向自動對帳 + C.5 **app 觸發整合**（dashboard 掛 `useCourierNode`：信使角色 always-on + 成員背景備份，預設參與可 opt-out，多候選容忍陳舊名冊）全部 E2E 綠（含 production 觸發路徑）；剩 tombstone 真房籍簽章 |
 | 中繼計量（共簽收據→點數） | P4-D · CoSignedReceipt · ADR-0022 | 🔴 待接線 |
 | 防女巫（點數正當性） | App Check（程式就位，待 console 啟用） | 🟡 待啟用 |
 

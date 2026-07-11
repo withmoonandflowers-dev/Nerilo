@@ -8,9 +8,15 @@
  * @vitest-environment node
  */
 import { describe, it, expect, vi } from 'vitest';
-import { CourierServer, CourierClient, COURIER_NS, buildRoomStore } from '../../src/core/relay/CourierService';
+import {
+  CourierServer,
+  CourierClient,
+  COURIER_NS,
+  buildRoomStore,
+  runCourierBackup,
+} from '../../src/core/relay/CourierService';
 import { CourierStore, DEFAULT_COURIER_CONFIG } from '../../src/core/relay/CourierStore';
-import type { CourierBus } from '../../src/core/relay/CourierService';
+import type { CourierBus, CourierBackupDeps } from '../../src/core/relay/CourierService';
 import type { P2PEnvelope, GossipMessage } from '../../src/types';
 
 /** 一端：對外 send 交給 partner 的 handlers；自己 subscribe 收 partner 送來的。 */
@@ -191,6 +197,115 @@ describe('CourierService — anti-entropy 對帳（reconcile 雙向）', () => {
     const res = await client.reconcile('r1', local, new Map(), (m) => received.push(m));
     expect(received.map((m) => m.messageId)).toEqual(['a2']); // 只補洞
     expect(res.pushed).toBe(0); // 信使不缺任何
+  });
+});
+
+describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => {
+  /** 造一個「真對接 courier server」的 openClient，讓 backup 走完整 reconcile。 */
+  function realBackupSetup(courierStore: CourierStore) {
+    const [memberBus, courierBus] = linkedBuses();
+    new CourierServer(courierBus, courierStore, 'courier').start();
+    const openClient = async (courierUid: string): Promise<CourierClient> => {
+      void courierUid;
+      const c = new CourierClient(memberBus, 'member');
+      c.start();
+      return c;
+    };
+    return { openClient };
+  }
+
+  it('備份我持有的每一房：推信使缺的、收信使有我缺的並落地', async () => {
+    const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    // 信使先有 room1 的 A（別人存過）；我 room1 有 B、room2 有 C。
+    courierStore.deposit(rec({ roomId: 'room1', senderId: 'sA', seq: 1, messageId: 'A' }));
+
+    const local: Record<string, GossipMessage[]> = {
+      room1: [rec({ roomId: 'room1', senderId: 'sB', seq: 1, messageId: 'B' })],
+      room2: [rec({ roomId: 'room2', senderId: 'sC', seq: 1, messageId: 'C' })],
+    };
+    const saved: Array<{ roomId: string; id: string }> = [];
+    const deps: CourierBackupDeps = {
+      listRooms: async () => ['room1', 'room2'],
+      loadRoom: async (roomId) => ({ records: local[roomId] ?? [], floors: [] }),
+      saveRecord: async (roomId, m) => { saved.push({ roomId, id: m.messageId! }); },
+      discoverCourierUids: async () => ['courier-uid'],
+      ...realBackupSetup(courierStore),
+    };
+
+    const summary = await runCourierBackup(deps);
+
+    expect(summary.rooms).toBe(2);
+    expect(summary.received).toBe(1); // room1 的 A 補給我
+    expect(summary.pushed).toBe(2);   // room1 的 B + room2 的 C 推給信使
+    // A 落地到本地 room1
+    expect(saved).toEqual([{ roomId: 'room1', id: 'A' }]);
+    // 信使現在有 room1: A+B、room2: C
+    expect(courierStore.serveRoom('room1').map((m) => m.messageId).sort()).toEqual(['A', 'B']);
+    expect(courierStore.serveRoom('room2').map((m) => m.messageId)).toEqual(['C']);
+  });
+
+  it('沒有房要備份 → 不連任何信使（回 0）', async () => {
+    const deps: CourierBackupDeps = {
+      listRooms: async () => [],
+      loadRoom: vi.fn(),
+      saveRecord: vi.fn(),
+      discoverCourierUids: vi.fn(),
+      openClient: vi.fn(),
+    };
+    const summary = await runCourierBackup(deps);
+    expect(summary).toEqual({ rooms: 0, received: 0, pushed: 0 });
+    expect(deps.discoverCourierUids).not.toHaveBeenCalled(); // 沒資料就不發現
+  });
+
+  it('沒有可用信使 → 不動作（回 0）', async () => {
+    const deps: CourierBackupDeps = {
+      listRooms: async () => ['room1'],
+      loadRoom: async () => ({ records: [], floors: [] }),
+      saveRecord: vi.fn(),
+      discoverCourierUids: async () => [],
+      openClient: vi.fn(),
+    };
+    const summary = await runCourierBackup(deps);
+    expect(summary).toEqual({ rooms: 0, received: 0, pushed: 0 });
+    expect(deps.openClient).not.toHaveBeenCalled();
+  });
+
+  it('第一個候選不可達（openClient 回 null）→ 換下一個候選', async () => {
+    const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const { openClient: liveOpen } = realBackupSetup(courierStore);
+    const tried: string[] = [];
+    const deps: CourierBackupDeps = {
+      listRooms: async () => ['room1'],
+      loadRoom: async () => ({ records: [rec({ roomId: 'room1', senderId: 'sX', seq: 1, messageId: 'X' })], floors: [] }),
+      saveRecord: async () => {},
+      discoverCourierUids: async () => ['stale-uid', 'live-uid'],
+      openClient: async (courierUid) => {
+        tried.push(courierUid);
+        if (courierUid === 'stale-uid') return null; // 陳舊：連不上
+        return liveOpen(courierUid);
+      },
+    };
+    const summary = await runCourierBackup(deps);
+    expect(tried).toEqual(['stale-uid', 'live-uid']); // 略過陳舊、用 live
+    expect(summary.pushed).toBe(1);
+    expect(courierStore.serveRoom('room1').map((m) => m.messageId)).toEqual(['X']);
+  });
+
+  it('單一房 reconcile 拋錯 → 該房略過，其他房照常（best-effort）', async () => {
+    const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const deps: CourierBackupDeps = {
+      listRooms: async () => ['bad', 'good'],
+      loadRoom: async (roomId) => {
+        if (roomId === 'bad') throw new Error('load boom');
+        return { records: [rec({ roomId: 'good', senderId: 'sG', seq: 1, messageId: 'G' })], floors: [] };
+      },
+      saveRecord: async () => {},
+      discoverCourierUids: async () => ['courier-uid'],
+      ...realBackupSetup(courierStore),
+    };
+    const summary = await runCourierBackup(deps);
+    expect(summary.rooms).toBe(1); // 只有 good 成功
+    expect(courierStore.serveRoom('good').map((m) => m.messageId)).toEqual(['G']);
   });
 });
 
