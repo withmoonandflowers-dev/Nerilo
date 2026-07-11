@@ -5,9 +5,12 @@ import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
+import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
+
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'] as const
 
 // star 特例已退役（ADR-0023 P2-③）；保留具名型別供 currentTopology 語義清楚。
 type Topology = 'mesh'
@@ -28,6 +31,25 @@ const showGame = ref(false)
 const selectedGame = ref<'ttt' | 'gomoku'>('ttt') // 房內小遊戲選擇（同一條 mesh game 通道）
 const gameBus = ref<GameBus | null>(null)
 const isRoomOwner = ref(false)
+// ── 表情 reactions ──
+const reactions = ref<ReactionMap>({})
+const myMeshId = ref('')
+const pickerFor = ref<string | null>(null) // 開著表情選單的 messageId
+
+function toggleReaction(messageId: string, emoji: string) {
+  if (!meshChat || !myMeshId.value) return
+  const op = hasReacted(reactions.value, messageId, emoji, myMeshId.value) ? 'remove' : 'add'
+  reactions.value = applyReaction(reactions.value, { messageId, emoji, from: myMeshId.value, op }) // 樂觀
+  void meshChat.sendReaction(messageId, emoji, op)
+  pickerFor.value = null
+}
+function reactionChips(messageId: string): Array<{ emoji: string; count: number; mine: boolean }> {
+  const byEmoji = reactions.value[messageId]
+  if (!byEmoji) return []
+  return Object.entries(byEmoji).map(([emoji, froms]) => ({
+    emoji, count: froms.length, mine: froms.includes(myMeshId.value),
+  }))
+}
 /** 房間成員數（reactive，供模板閘控：遊戲僅 2 人房、mesh 橫幅僅 3+ 人房） */
 const memberCount = ref(0)
 const { theme, cycleTheme } = useTheme()
@@ -118,8 +140,11 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
       return
     }
     meshChat = svc
+    myMeshId.value = svc.getMeshUserId() ?? ''
     gameBus.value = new MeshGameBus(svc)
     svc.onMessage((msg) => addMessage(msg))
+    // 表情 reactions：遠端事件套進聚合（本機送出時已樂觀套用）
+    svc.onReaction((ev) => { reactions.value = applyReaction(reactions.value, ev) })
     // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
     typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
     svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
@@ -470,8 +495,39 @@ async function leaveRoom() {
       <TransitionGroup name="msg">
         <div v-for="row in rows" :key="row.msg.messageId" class="msg-row"
              :class="[row.mine ? 'msg-row--mine' : 'msg-row--other', { 'msg-row--group-end': row.groupEnd }]">
-          <div class="bubble" :class="[row.mine ? 'bubble--mine' : 'bubble--other', { 'bubble--tail': row.groupEnd }]">
-            {{ row.msg.content }}
+          <div class="bubble-wrap">
+            <div class="bubble" :class="[row.mine ? 'bubble--mine' : 'bubble--other', { 'bubble--tail': row.groupEnd }]">
+              {{ row.msg.content }}
+            </div>
+            <button
+              type="button"
+              class="react-trigger"
+              :data-testid="`react-btn-${row.msg.messageId}`"
+              aria-label="加表情"
+              @click="pickerFor = pickerFor === row.msg.messageId ? null : row.msg.messageId"
+            >☺</button>
+            <div v-if="pickerFor === row.msg.messageId" class="react-picker" role="menu">
+              <button
+                v-for="e in REACTION_EMOJIS"
+                :key="e"
+                type="button"
+                class="react-picker__item"
+                :data-testid="`react-pick-${row.msg.messageId}-${e}`"
+                @click="toggleReaction(row.msg.messageId, e)"
+              >{{ e }}</button>
+            </div>
+          </div>
+          <div v-if="reactionChips(row.msg.messageId).length" class="react-chips"
+               :class="row.mine ? 'react-chips--mine' : 'react-chips--other'">
+            <button
+              v-for="chip in reactionChips(row.msg.messageId)"
+              :key="chip.emoji"
+              type="button"
+              class="react-chip"
+              :class="{ 'react-chip--mine': chip.mine }"
+              :data-testid="`react-chip-${row.msg.messageId}-${chip.emoji}`"
+              @click="toggleReaction(row.msg.messageId, chip.emoji)"
+            >{{ chip.emoji }} <span class="react-chip__n">{{ chip.count }}</span></button>
           </div>
           <div v-if="row.showTime" class="msg-meta">
             <span>{{ formatTime(row.msg.timestamp) }}</span>
@@ -662,6 +718,51 @@ async function leaveRoom() {
 /* iMessage 尾巴方向感：群組最後一則收窄該側圓角 */
 .bubble--mine.bubble--tail { border-bottom-right-radius: 4px; }
 .bubble--other.bubble--tail { border-bottom-left-radius: 4px; }
+
+/* ── 表情 reactions ── */
+.bubble-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
+.msg-row--mine .bubble-wrap { flex-direction: row-reverse; }
+.react-trigger {
+  opacity: 0;
+  flex: none;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  font-size: 14px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  transition: opacity var(--t-fast) var(--ease);
+}
+.bubble-wrap:hover .react-trigger, .react-trigger:focus-visible { opacity: 1; }
+.react-picker {
+  position: absolute;
+  top: calc(100% + 6px); /* 開在下方：訊息列表 overflow 會裁掉往上的 popover（尤其頂部訊息） */
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  box-shadow: var(--shadow-2);
+}
+.msg-row--mine .react-picker { right: 0; }
+.msg-row--other .react-picker { left: 0; }
+.react-picker__item { font-size: 20px; padding: 3px 5px; border-radius: 50%; line-height: 1; }
+.react-picker__item:hover { transform: scale(1.25); background: var(--bubble-other); }
+.react-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.react-chips--mine { justify-content: flex-end; }
+.react-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--bubble-other);
+  border: 1px solid var(--separator);
+}
+.react-chip--mine { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 16%, var(--bubble-other)); }
+.react-chip__n { font-variant-numeric: tabular-nums; color: var(--text-2); }
 
 .msg-meta {
   margin-top: 3px;
