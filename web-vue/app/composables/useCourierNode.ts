@@ -15,7 +15,8 @@
  * connectToRelayNode / states / depositAndPull / reconcile / courierStats，及 backup.seedRecord/runOnce。
  */
 import { RelayConnector, type RelayConnLike } from '@legacy/core/relay/RelayConnector'
-import { CourierStore } from '@legacy/core/relay/CourierStore'
+import { CourierStore, DEFAULT_COURIER_CONFIG } from '@legacy/core/relay/CourierStore'
+import { getCourierReplicaStore } from '@legacy/services/CourierReplicaStore'
 import {
   CourierServer,
   CourierClient,
@@ -185,7 +186,9 @@ export function useCourierNode() {
     if (!courierEnabled()) return // opt-out：兩端皆不啟
     currentUid = uid
     connector = new RelayConnector(uid)
-    courierStore = new CourierStore()
+    // 代管密文以 IndexedDB 鏡像，跨 reload 存活（ADR-0024 收官）；無持久層則純記憶體。
+    courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, undefined, getCourierReplicaStore() ?? undefined)
+    void courierStore.hydrate() // 重載後把先前代管的密文載回，回線可補齊
     directory = new FirestoreRelayDirectory(uid)
 
     // 信使角色：對每個來連掛 CourierServer（等身分就緒才帶計量設定，才能簽收據賺點）。
@@ -292,6 +295,8 @@ export function useCourierNode() {
         if (!client) throw new Error('relay bus not ready')
         return client.tombstone(roomId, tomb)
       },
+      // E2E：等代管密文的耐久寫入落定（reload 前確保已持久化）。
+      flushCourier: async () => { await courierStore?.flush() },
       // E2E 計量：本節點（信使）目前餘額 + 帳本完整性（ADR-0022）。
       creditBalance: async () => (await creditEconomy.getBalance())?.balance ?? 0,
       verifyLedger: async () => (await creditEconomy.verifyLedger()).ok,

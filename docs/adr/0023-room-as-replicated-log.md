@@ -322,9 +322,14 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
   .recordRelayContribution，落 CreditLedger 可驗帳本）；成員 CourierClient 自動回簽；每 30s
   claim 一輪。餘額帳戶以 firebase uid 為鍵（與 useCredits 一致），收據身分用 mesh nodeId。
 - 真 WebRTC E2E 綠：成員寄存 → 信使起草+成員回簽 → 信使餘額增加 + 帳本 verify ok。
-- 誠實邊界：CourierStore + CreditEconomy 目前記憶體/localStorage（best-effort，ADR-0024 定位）；
-  in-flight 收據無逾時回補（成員不回簽則該輪 bytes 作廢，best-effort）。
+- 誠實邊界：CreditEconomy 餘額目前 localStorage；in-flight 收據無逾時回補（成員不回簽則
+  該輪 bytes 作廢，best-effort）。
 
-**P4（網絡）全數完成：A 名冊 · B 連線 · C 盲信使寄存/對帳/墓碑 · D 計量。**
+**P4-C.7（done）代管持久化：** `CourierStore` 記憶體為權威 + `CourierReplicaStore`（Dexie，
+獨立 DB `NeriloCourier`）鏡像增/刪；重載後 `hydrate()` 從 IndexedDB 載回代管密文（逾 TTL 者跳過
+並清除），信使關頁再開仍守著別人的密文。真 WebRTC E2E 綠：寄存 → reload 信使頁 → 記憶體全清後
+仍從 IndexedDB 補回該筆。這讓「全員斷線重生」真正跨會話成立。
+
+**P4（網絡）全數完成：A 名冊 · B 連線 · C 盲信使寄存/對帳/墓碑/持久化 · D 計量。**
 
 **尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。

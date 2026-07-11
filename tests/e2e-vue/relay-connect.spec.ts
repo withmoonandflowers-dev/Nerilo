@@ -372,4 +372,47 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await teardown(member, courier);
     }
   });
+
+  test('持久化：代管密文跨 reload 存活（IndexedDB hydrate，P4-C 收官）', async ({ browser }) => {
+    test.setTimeout(150_000);
+    const member = await setupUser(browser);
+    const courier = await setupUser(browser);
+    try {
+      const courierUid = await ownerUid(courier.page);
+      await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
+
+      // 成員寄存一筆到信使 → 信使存進 CourierStore 並鏡像 IndexedDB。
+      const record = {
+        roomId: 'room-persist', senderId: 'sPersist', pubKey: 'pk', seq: 1, timestamp: 4,
+        content: 'ENC:survives-reload', ttl: 3, signature: 'SIG-P', messageId: 'P',
+      };
+      await member.page.evaluate(
+        async ({ uid, rec }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<unknown[]> } };
+          };
+          await w.__nerilo_test__!.relay!.depositAndPull!(uid, rec);
+        },
+        { uid: courierUid, rec: record }
+      );
+      await expect
+        .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 20_000, intervals: [500] })
+        .toBeGreaterThanOrEqual(1);
+
+      // 確保耐久寫入落定，然後重載信使頁（記憶體 store 全清空，只剩 IndexedDB）。
+      await courier.page.evaluate(async () => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { flushCourier?: () => Promise<void> } } };
+        await w.__nerilo_test__!.relay!.flushCourier!();
+      });
+      await courier.page.reload();
+      await expect(courier.page).toHaveURL(/\/dashboard/, { timeout: 25_000 });
+
+      // 重載後沒有任何新寄存；信使 store 若仍有該筆，即證明從 IndexedDB hydrate 回來。
+      await expect
+        .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 30_000, intervals: [800] })
+        .toBeGreaterThanOrEqual(1);
+    } finally {
+      await teardown(member, courier);
+    }
+  });
 });
