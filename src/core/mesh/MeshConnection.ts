@@ -265,12 +265,11 @@ export class MeshConnection {
    * digest 送進黑洞。因此 bus 未 open 一律降報為 connecting。
    */
   getState(): string {
-    const connectionManager = this.p2pManager.getConnectionManager();
-    const state = connectionManager.getState();
-    if (state === 'connected' && this.channelBus?.getReadyState() !== 'open') {
-      return 'connecting';
-    }
-    return state;
+    // DataChannel（bus）開著即為連上的真相：收發都走它。離開再進時對方 pc 重協商，
+    // RTCPeerConnection.connectionState 可能不轉為 'connected'（bus 已開卻卡在 connecting）。
+    if (this.channelBus?.getReadyState() === 'open') return 'connected';
+    const state = this.p2pManager.getConnectionManager().getState();
+    return state === 'connected' ? 'connecting' : state;
   }
 
   /**
