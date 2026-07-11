@@ -22,10 +22,15 @@ import {
   buildRoomStore,
   runCourierBackup,
   type CourierBackupDeps,
+  type CourierCreditConfig,
+  type MemberCreditConfig,
 } from '@legacy/core/relay/CourierService'
 import { FirestoreRelayDirectory } from '@legacy/core/relay/FirestoreRelayDirectory'
 import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
 import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
+import { ecdsaSigner } from '@legacy/core/relay/CourierReceipts'
+import { creditEconomy } from '@legacy/core/incentive/CreditEconomy'
+import { CreditLedger } from '@legacy/core/incentive/CreditLedger'
 import { getGossipReplicaStore } from '@legacy/services/GossipReplicaStore'
 import type { GossipMessage } from '@legacy/types'
 
@@ -84,9 +89,13 @@ export function useCourierNode() {
   let courierStore: CourierStore | null = null
   let directory: FirestoreRelayDirectory | null = null
   let nodeId = ''
-  let identity: IdentityManager | null = null // 保留供簽墓碑（sign with 房籍 pubKey/privKey）
+  let identity: IdentityManager | null = null // 保留供簽墓碑/收據（房籍 pubKey/privKey）
   let currentUid = ''
   let backupTimer: ReturnType<typeof setInterval> | null = null
+  let claimTimer: ReturnType<typeof setInterval> | null = null
+  let courierCredit: CourierCreditConfig | undefined // 計量設定（身分就緒後建）
+  let memberCredit: MemberCreditConfig | undefined
+  let identityReady: Promise<void> = Promise.resolve()
   const servers: CourierServer[] = []
   const clientCache = new Map<string, CourierClient>() // courierUid → client（避免每 tick 累積訂閱）
 
@@ -109,7 +118,8 @@ export function useCourierNode() {
     const bus = await waitBus(conn)
     if (!bus) return null
     // 4s 逾時：配合 runCourierBackup / depositAndPull 的重試跨越「信使伺服器尚未掛上」視窗。
-    const client = new CourierClient(bus, uid, 4_000)
+    // memberCredit（身分就緒後才有）讓成員自動回簽信使起草的收據 → 信使可計點。
+    const client = new CourierClient(bus, uid, 4_000, memberCredit)
     client.start()
     clientCache.set(courierUid, client)
     return client
@@ -178,30 +188,52 @@ export function useCourierNode() {
     courierStore = new CourierStore()
     directory = new FirestoreRelayDirectory(uid)
 
-    // 信使角色：對每個來連掛 CourierServer。
+    // 信使角色：對每個來連掛 CourierServer（等身分就緒才帶計量設定，才能簽收據賺點）。
     stopListen = connector.startListening((conn) => {
-      void waitBus(conn).then((bus) => {
+      void waitBus(conn).then(async (bus) => {
         if (!bus || !courierStore) return
-        const server = new CourierServer(bus, courierStore, uid)
+        await identityReady // waitBus 通常已數秒，身分早就緒；保險同步
+        const server = new CourierServer(bus, courierStore, uid, undefined, courierCredit)
         server.start()
         servers.push(server)
       })
     })
 
-    // 成員角色：解出 nodeId 後啟動週期備份。
-    void (async () => {
+    // 成員角色：解出 nodeId 後建計量設定、啟動週期備份 + 計量。
+    identityReady = (async () => {
       try {
         const im = new IdentityManager()
         await im.initialize()
         nodeId = im.getUserId()
-        identity = im // 保留供簽墓碑
+        identity = im // 保留供簽墓碑/收據
       } catch {
-        return // 無身分 → 不備份（信使角色仍在）
+        return // 無身分 → 不備份/不計量（信使代管角色仍在）
+      }
+      // 計量設定（ADR-0022）：信使賺點落 CreditEconomy + 可驗帳本；成員回簽。
+      // 餘額以 firebase uid 為帳戶鍵（與 useCredits 一致，避免 singleton 被重綁不同 id）；
+      // 收據身分用 mesh nodeId（pubKey↔nodeId 綁定、可驗）。同一使用者，兩者指同一實體。
+      try {
+        const pubKey = await identity.exportPublicKey()
+        const sign = ecdsaSigner(identity.getPrivateKey())
+        creditEconomy.init(currentUid)
+        creditEconomy.attachLedger(new CreditLedger())
+        courierCredit = {
+          nodeId, pubKey, sign,
+          onCredit: (requesterNodeId, bytes) =>
+            creditEconomy.recordRelayContribution(requesterNodeId, bytes),
+        }
+        memberCredit = { nodeId, pubKey, sign }
+      } catch {
+        /* 計量設定失敗 → 純代管，不計點 */
       }
       const deps = backupDeps(uid)
       if (!deps) return // 無持久層 → 不備份
       backupTimer = setInterval(() => {
         void runCourierBackup(deps).catch(() => undefined)
+      }, BACKUP_INTERVAL_MS)
+      // 計量：週期性請每條連線的成員回簽代管收據。
+      claimTimer = setInterval(() => {
+        for (const s of servers) void s.claimCredit().catch(() => undefined)
       }, BACKUP_INTERVAL_MS)
     })()
 
@@ -260,6 +292,14 @@ export function useCourierNode() {
         if (!client) throw new Error('relay bus not ready')
         return client.tombstone(roomId, tomb)
       },
+      // E2E 計量：本節點（信使）目前餘額 + 帳本完整性（ADR-0022）。
+      creditBalance: async () => (await creditEconomy.getBalance())?.balance ?? 0,
+      verifyLedger: async () => (await creditEconomy.verifyLedger()).ok,
+      // E2E：確定性觸發計量一輪（不等 30s claim interval）。
+      claimCreditsNow: async () => {
+        await identityReady
+        for (const s of servers) await s.claimCredit()
+      },
     }
     // 讓 E2E 走真 production backup 路徑（同 runCourierBackup），但確定性觸發（不等 30s interval）。
     w.__nerilo_test__.backup = {
@@ -291,6 +331,12 @@ export function useCourierNode() {
       clearInterval(backupTimer)
       backupTimer = null
     }
+    if (claimTimer) {
+      clearInterval(claimTimer)
+      claimTimer = null
+    }
+    courierCredit = undefined
+    memberCredit = undefined
     stopListen?.()
     stopListen = null
     await connector?.closeAll()

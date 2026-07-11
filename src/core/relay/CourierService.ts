@@ -20,6 +20,15 @@ import type { P2PEnvelope, GossipMessage } from '../../types';
 import { CourierStore, type DepositResult } from './CourierStore';
 import { computeDigest, normalizeDigest, peerLacks, type GossipDigest } from '../mesh/antiEntropy';
 import { verifyTombstone, type Tombstone } from './TombstoneCrypto';
+import { ecdsaVerifier, pubKeyBindsNodeId, verifyCoSignedReceipt } from './CourierReceipts';
+import {
+  createReceiptDraft,
+  counterSign,
+  verifyDraft,
+  type ReceiptDraft,
+  type CoSignedRelayReceipt,
+  type SignFn,
+} from '../incentive/CoSignedReceipt';
 import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
 
@@ -35,7 +44,46 @@ export const CourierMsgType = {
   /** anti-entropy 對帳：成員送 digest，信使回「成員缺的紀錄 + 信使自己的 digest」。 */
   SYNC: 'sync',
   SYNC_RESP: 'sync-resp',
+  /** 計量（ADR-0022）：成員自報身分；信使起草收據；成員回簽。 */
+  IDENTIFY: 'identify',
+  IDENTIFY_ACK: 'identify-ack',
+  RECEIPT_DRAFT: 'receipt-draft',
+  RECEIPT_SIGNED: 'receipt-signed',
 } as const;
+
+/** 成員自報 mesh 身分（供信使起草可驗收據）。 */
+interface IdentifyPayload {
+  nodeId: string;
+  pubKey: string;
+}
+/** 信使→成員：起草收據 + 信使公鑰（成員據此驗 relay 半簽）。 */
+interface ReceiptDraftPayload {
+  draft: ReceiptDraft;
+  relayPubKey: string;
+}
+/** 成員→信使：共簽收據 + 成員公鑰（信使據此驗 requester 半簽 + 綁定 nodeId）。 */
+interface ReceiptSignedPayload {
+  receipt: CoSignedRelayReceipt;
+  requesterPubKey: string;
+}
+
+/** 信使方計量設定（注入身分金鑰與計點落點）。省略 = 不計量（純代管）。 */
+export interface CourierCreditConfig {
+  nodeId: string;
+  pubKey: string;
+  sign: SignFn;
+  /** 收到可驗共簽收據後的計點落點（例：CreditEconomy.recordRelayContribution）。 */
+  onCredit: (requesterNodeId: string, bytes: number) => void | Promise<void>;
+}
+
+/** 成員方計量設定（注入身分金鑰）。省略 = 不回簽（不參與計量）。 */
+export interface MemberCreditConfig {
+  nodeId: string;
+  pubKey: string;
+  sign: SignFn;
+  /** 起草收據的合理性檢查（bytes 是否 ≤ 我實際寄存過的）。省略 = 一律回簽。 */
+  approve?: (draft: ReceiptDraft) => boolean;
+}
 
 /** CourierService 需要的最小傳輸能力（P2PChannelBus 即滿足）。 */
 export interface CourierBus {
@@ -118,12 +166,17 @@ function envelope(type: string, from: string, payload: unknown, over: Partial<P2
  */
 export class CourierServer {
   private unsub: (() => void) | null = null;
+  /** 計量狀態：連上的成員身分、尚未計點的代管位元組、在途收據（nonce→bytes）。 */
+  private requester: IdentifyPayload | null = null;
+  private bytesOwed = 0;
+  private inFlight: { nonce: string; bytes: number } | null = null;
 
   constructor(
     private readonly bus: CourierBus,
     private readonly store: CourierStore,
     private readonly selfId: string,
-    private readonly verifyOverride?: (roomId: string, proof: unknown) => boolean | Promise<boolean>
+    private readonly verifyOverride?: (roomId: string, proof: unknown) => boolean | Promise<boolean>,
+    private readonly credit?: CourierCreditConfig
   ) {}
 
   /** 房籍簽章墓碑驗證：注入者優先，否則預設用 store 的 senderId 集合做盲驗。 */
@@ -143,6 +196,52 @@ export class CourierServer {
     this.unsub = null;
   }
 
+  /**
+   * 起草收據向已識別的成員請求回簽（計量一輪）。需：已設 credit config、已收成員 IDENTIFY、
+   * 有未計量位元組、無在途收據。起草由信使簽 → 送 RECEIPT_DRAFT；回簽在 onReceiptSigned 收。
+   */
+  async claimCredit(): Promise<void> {
+    if (!this.credit || !this.requester || this.bytesOwed <= 0 || this.inFlight) return;
+    const bytes = this.bytesOwed;
+    const nonce = generateUUID();
+    let draft: ReceiptDraft;
+    try {
+      draft = await createReceiptDraft(
+        this.credit.nodeId,
+        this.requester.nodeId,
+        bytes,
+        Date.now(),
+        nonce,
+        this.credit.sign
+      );
+    } catch (err) {
+      logger.warn('[CourierServer] createReceiptDraft failed', { err });
+      return;
+    }
+    this.inFlight = { nonce, bytes };
+    this.bytesOwed -= bytes; // 移出待計；成員拒簽/逾時則作廢（best-effort，不回補）
+    await this.bus.send(
+      envelope(CourierMsgType.RECEIPT_DRAFT, this.selfId, {
+        draft,
+        relayPubKey: this.credit.pubKey,
+      } as ReceiptDraftPayload)
+    );
+  }
+
+  /** 收成員回簽：驗三關（雙 pubKey 綁定 + 雙簽有效）通過才計點。 */
+  private async onReceiptSigned(payload: ReceiptSignedPayload): Promise<void> {
+    if (!this.credit || !this.inFlight) return;
+    const { receipt, requesterPubKey } = payload;
+    if (receipt.nonce !== this.inFlight.nonce || receipt.bytesRelayed !== this.inFlight.bytes) return;
+    const ok = await verifyCoSignedReceipt(receipt, this.credit.pubKey, requesterPubKey);
+    if (ok) {
+      await this.credit.onCredit(receipt.requesterNodeId, receipt.bytesRelayed);
+    } else {
+      logger.warn('[CourierServer] co-signed receipt failed verification');
+    }
+    this.inFlight = null;
+  }
+
   private async onEnvelope(env: P2PEnvelope): Promise<void> {
     if (env.from === this.selfId) return; // 不處理自己送的（bus 可能回放）
     try {
@@ -150,7 +249,20 @@ export class CourierServer {
         case CourierMsgType.DEPOSIT: {
           const rec = env.payload as GossipMessage;
           const result = this.store.deposit(rec);
+          if (result.accepted) this.bytesOwed += result.bytes; // 累計可計量代管
           await this.reply(env, CourierMsgType.DEPOSIT_ACK, result);
+          break;
+        }
+        case CourierMsgType.IDENTIFY: {
+          const { nodeId, pubKey } = env.payload as IdentifyPayload;
+          // 綁定：nodeId 必須是該 pubKey 導出的，否則冒名 → 不採信。
+          const ok = await pubKeyBindsNodeId(nodeId, pubKey);
+          if (ok) this.requester = { nodeId, pubKey };
+          await this.reply(env, CourierMsgType.IDENTIFY_ACK, { ok }); // 讓成員確知已收（可靠遞送）
+          break;
+        }
+        case CourierMsgType.RECEIPT_SIGNED: {
+          await this.onReceiptSigned(env.payload as ReceiptSignedPayload);
           break;
         }
         case CourierMsgType.PULL: {
@@ -208,16 +320,60 @@ export class CourierClient {
   constructor(
     private readonly bus: CourierBus,
     private readonly selfId: string,
-    private readonly timeoutMs: number = REQUEST_TIMEOUT_MS
+    private readonly timeoutMs: number = REQUEST_TIMEOUT_MS,
+    private readonly credit?: MemberCreditConfig
   ) {}
 
   start(): void {
     if (this.unsub) return;
     this.unsub = this.bus.subscribe(COURIER_NS, (env) => {
+      // 計量：信使起草收據 → 驗 + 回簽（不是 replyTo 關聯，是信使主動推）。
+      if (env.type === CourierMsgType.RECEIPT_DRAFT && env.from !== this.selfId) {
+        void this.onReceiptDraft(env.payload as ReceiptDraftPayload);
+        return;
+      }
       if (env.replyTo && this.pending.has(env.replyTo)) {
         this.pending.get(env.replyTo)!(env);
       }
     });
+    // 自報身分（可靠遞送：等 IDENTIFY_ACK，重試跨越「信使伺服器尚未掛上」視窗）。
+    if (this.credit) void this.identifyWithRetry();
+  }
+
+  /** 送 IDENTIFY 並等 ack，重試到成功（信使 CourierServer 晚訂閱時 inbound 不緩衝晚訂閱者）。 */
+  private async identifyWithRetry(attempts = 5): Promise<void> {
+    if (!this.credit) return;
+    const payload: IdentifyPayload = { nodeId: this.credit.nodeId, pubKey: this.credit.pubKey };
+    for (let i = 0; i < attempts; i++) {
+      try {
+        await this.request(envelope(CourierMsgType.IDENTIFY, this.selfId, payload));
+        return;
+      } catch {
+        if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  }
+
+  /** 收信使起草：驗 relay 半簽 + pubKey 綁定 + 收據是給我的 + 合理性 → 回簽。 */
+  private async onReceiptDraft(payload: ReceiptDraftPayload): Promise<void> {
+    if (!this.credit) return;
+    const { draft, relayPubKey } = payload;
+    try {
+      if (draft.requesterNodeId !== this.credit.nodeId) return; // 不是給我的
+      if (!(await pubKeyBindsNodeId(draft.relayNodeId, relayPubKey))) return; // relay 冒名
+      const relayVerify = await ecdsaVerifier(relayPubKey);
+      if (!(await verifyDraft(draft, relayVerify))) return; // relay 半簽無效
+      if (this.credit.approve && !this.credit.approve(draft)) return; // bytes 不合理 → 不簽
+      const receipt = await counterSign(draft, this.credit.sign);
+      await this.bus.send(
+        envelope(CourierMsgType.RECEIPT_SIGNED, this.selfId, {
+          receipt,
+          requesterPubKey: this.credit.pubKey,
+        } as ReceiptSignedPayload)
+      );
+    } catch (err) {
+      logger.warn('[CourierClient] onReceiptDraft failed', { err });
+    }
   }
 
   stop(): void {

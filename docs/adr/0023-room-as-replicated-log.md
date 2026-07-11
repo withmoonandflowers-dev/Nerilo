@@ -310,6 +310,21 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
   真 crypto 單元測試（簽/驗、非成員、竄改、跨房、冒用 pubKey、畸形）+ 協議整合 + 真 WebRTC
   E2E 綠。app 觸發：房間真刪（softDeleteRoom=='deleted'）時 dashboard 簽墓碑 best-effort 廣播。
 
-**P4-C 完成。** 剩 P4-D（計量）。CourierStore 目前記憶體版（best-effort cache，ADR-0024 定位）。
+**P4-C 完成。**
+
+**P4-D（done）計量：共簽收據 → 點數（ADR-0022「中繼即價值」）。**
+- `CourierReceipts`：具體 ECDSA 字串簽/驗 + pubKey↔nodeId 綁定 + verifyCoSignedReceipt（三關：
+  雙 pubKey 綁定 + CoSignedReceipt 雙簽有效 + 非自簽自）。真金鑰單元測試。
+- 協議（CourierService）：IDENTIFY（成員自報身分，可靠遞送＝等 ack 重試）→ 信使代管 bytes
+  累計 → claimCredit 起草簽 → 成員驗 relay 半簽 + 綁定 + approve → 回簽 → 信使驗三關 → 計點。
+  信使一個人偽造不了（沒成員回簽不成立）；成員冒名不了（pubKey 必須導出 nodeId）。
+- app 觸發（useCourierNode）：信使 CourierServer 帶計量設定（onCredit→CreditEconomy
+  .recordRelayContribution，落 CreditLedger 可驗帳本）；成員 CourierClient 自動回簽；每 30s
+  claim 一輪。餘額帳戶以 firebase uid 為鍵（與 useCredits 一致），收據身分用 mesh nodeId。
+- 真 WebRTC E2E 綠：成員寄存 → 信使起草+成員回簽 → 信使餘額增加 + 帳本 verify ok。
+- 誠實邊界：CourierStore + CreditEconomy 目前記憶體/localStorage（best-effort，ADR-0024 定位）；
+  in-flight 收據無逾時回補（成員不回簽則該輪 bytes 作廢，best-effort）。
+
+**P4（網絡）全數完成：A 名冊 · B 連線 · C 盲信使寄存/對帳/墓碑 · D 計量。**
 
 **尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。
