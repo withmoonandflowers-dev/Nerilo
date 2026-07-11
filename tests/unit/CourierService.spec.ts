@@ -8,7 +8,7 @@
  * @vitest-environment node
  */
 import { describe, it, expect, vi } from 'vitest';
-import { CourierServer, CourierClient, COURIER_NS } from '../../src/core/relay/CourierService';
+import { CourierServer, CourierClient, COURIER_NS, buildRoomStore } from '../../src/core/relay/CourierService';
 import { CourierStore, DEFAULT_COURIER_CONFIG } from '../../src/core/relay/CourierStore';
 import type { CourierBus } from '../../src/core/relay/CourierService';
 import type { P2PEnvelope, GossipMessage } from '../../src/types';
@@ -127,6 +127,70 @@ describe('CourierService — tombstone', () => {
     const freed = await client.tombstone('r1', { forged: true });
     expect(freed).toBe(0);
     expect(await client.pull('r1')).toHaveLength(1);
+  });
+});
+
+describe('CourierService — anti-entropy 對帳（reconcile 雙向）', () => {
+  it('信使有、成員缺 → 補給成員；成員有、信使缺 → 回推信使（一輪收斂）', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const server = new CourierServer(courierBus, store, 'courier');
+    const client = new CourierClient(memberBus, 'member');
+    server.start();
+    client.start();
+
+    // 信使先有 A（別的成員寄存過）。
+    const A = rec({ senderId: 'sA', seq: 1, content: 'ENC:A', messageId: 'A' });
+    store.deposit(A);
+
+    // 成員本地有 B（信使沒有）。成員缺 A。
+    const B = rec({ senderId: 'sB', seq: 1, content: 'ENC:B', messageId: 'B' });
+    const localStore = buildRoomStore([B]);
+    const received: GossipMessage[] = [];
+
+    const res = await client.reconcile('r1', localStore, new Map(), (m) => received.push(m));
+
+    // 方向一：成員收到 A。
+    expect(res.received).toBe(1);
+    expect(received.map((m) => m.messageId)).toEqual(['A']);
+    // 方向二：成員把 B 回推信使 → 信使現在兩筆都有。
+    expect(res.pushed).toBe(1);
+    const courierHas = store.serveRoom('r1').map((m) => m.messageId).sort();
+    expect(courierHas).toEqual(['A', 'B']);
+  });
+
+  it('雙方已一致 → 不補不推（無多餘傳輸）', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const server = new CourierServer(courierBus, store, 'courier');
+    const client = new CourierClient(memberBus, 'member');
+    server.start();
+    client.start();
+    const A = rec({ senderId: 'sA', seq: 1, messageId: 'A' });
+    store.deposit(A);
+    const res = await client.reconcile('r1', buildRoomStore([A]), new Map(), () => {});
+    expect(res).toEqual({ received: 0, pushed: 0 });
+  });
+
+  it('成員缺中間 seq（missing 洞）→ 只補該洞', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const server = new CourierServer(courierBus, store, 'courier');
+    const client = new CourierClient(memberBus, 'member');
+    server.start();
+    client.start();
+    // 信使有 sA 的 seq 1,2,3；成員只有 1,3（缺 2）。
+    store.deposit(rec({ senderId: 'sA', seq: 1, messageId: 'a1' }));
+    store.deposit(rec({ senderId: 'sA', seq: 2, messageId: 'a2' }));
+    store.deposit(rec({ senderId: 'sA', seq: 3, messageId: 'a3' }));
+    const local = buildRoomStore([
+      rec({ senderId: 'sA', seq: 1, messageId: 'a1' }),
+      rec({ senderId: 'sA', seq: 3, messageId: 'a3' }),
+    ]);
+    const received: GossipMessage[] = [];
+    const res = await client.reconcile('r1', local, new Map(), (m) => received.push(m));
+    expect(received.map((m) => m.messageId)).toEqual(['a2']); // 只補洞
+    expect(res.pushed).toBe(0); // 信使不缺任何
   });
 });
 

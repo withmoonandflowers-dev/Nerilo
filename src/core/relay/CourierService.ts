@@ -18,6 +18,7 @@
 
 import type { P2PEnvelope, GossipMessage } from '../../types';
 import { CourierStore, type DepositResult } from './CourierStore';
+import { computeDigest, normalizeDigest, peerLacks, type GossipDigest } from '../mesh/antiEntropy';
 import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
 
@@ -30,6 +31,9 @@ export const CourierMsgType = {
   RECORDS: 'records',
   TOMBSTONE: 'tombstone',
   TOMBSTONE_ACK: 'tombstone-ack',
+  /** anti-entropy 對帳：成員送 digest，信使回「成員缺的紀錄 + 信使自己的 digest」。 */
+  SYNC: 'sync',
+  SYNC_RESP: 'sync-resp',
 } as const;
 
 /** CourierService 需要的最小傳輸能力（P2PChannelBus 即滿足）。 */
@@ -49,6 +53,48 @@ interface TombstonePayload {
   roomId: string;
   /** 成員以房籍身分簽的墓碑證明（pubKey + 房籍 + 簽章）；驗證由 server 注入。 */
   proof: unknown;
+}
+interface SyncPayload {
+  roomId: string;
+  /** 成員對該房的 anti-entropy digest（每 sender 的 floor/max/missing）。 */
+  digest: GossipDigest;
+}
+interface SyncRespPayload {
+  roomId: string;
+  /** 信使有、成員缺的紀錄（補離線間隙）。 */
+  records: GossipMessage[];
+  /** 信使自己對該房的 digest，讓成員回推信使缺的紀錄（雙向對帳）。 */
+  digest: GossipDigest;
+}
+
+/** 由紀錄陣列建 anti-entropy store 視圖：Map<senderId, Map<seq, GossipMessage>>。 */
+export function buildRoomStore(records: GossipMessage[]): Map<string, Map<number, GossipMessage>> {
+  const store = new Map<string, Map<number, GossipMessage>>();
+  for (const m of records) {
+    let inner = store.get(m.senderId);
+    if (!inner) {
+      inner = new Map<number, GossipMessage>();
+      store.set(m.senderId, inner);
+    }
+    if (!inner.has(m.seq)) inner.set(m.seq, m); // first-write-wins（對齊 CourierStore）
+  }
+  return store;
+}
+
+/** digest 對照下，store 中「對方缺」的紀錄。供雙向 push 用。 */
+function recordsPeerLacks(
+  store: ReadonlyMap<string, ReadonlyMap<number, GossipMessage>>,
+  peerDigestRaw: GossipDigest
+): GossipMessage[] {
+  const norm = normalizeDigest(peerDigestRaw);
+  if (!norm) return [];
+  const out: GossipMessage[] = [];
+  for (const [senderId, seqs] of store) {
+    for (const [seq, msg] of seqs) {
+      if (peerLacks(norm, senderId, seq)) out.push(msg);
+    }
+  }
+  return out;
 }
 
 function envelope(type: string, from: string, payload: unknown, over: Partial<P2PEnvelope> = {}): P2PEnvelope {
@@ -110,6 +156,20 @@ export class CourierServer {
             this.verifyTombstone(roomId, proof)
           );
           await this.reply(env, CourierMsgType.TOMBSTONE_ACK, { roomId, freed });
+          break;
+        }
+        case CourierMsgType.SYNC: {
+          const { roomId, digest } = env.payload as SyncPayload;
+          const roomStore = this.store.roomStore(roomId); // 標記房被存取（LRU 保鮮）由 serveRoom 做；此處只讀
+          // 信使有、成員缺 → 補送（離線間隙回填）。
+          const records = recordsPeerLacks(roomStore, digest);
+          // 信使自己的 digest（floors 空 = floor 1；信使 TTL 內不遺忘）→ 讓成員回推信使缺的。
+          const courierDigest = computeDigest(roomStore, new Map());
+          await this.reply(env, CourierMsgType.SYNC_RESP, {
+            roomId,
+            records,
+            digest: courierDigest,
+          } as SyncRespPayload);
           break;
         }
         default:
@@ -176,6 +236,35 @@ export class CourierClient {
     const req = envelope(CourierMsgType.TOMBSTONE, this.selfId, { roomId, proof } as TombstonePayload);
     const resp = await this.request(req);
     return (resp.payload as { freed: number }).freed ?? 0;
+  }
+
+  /**
+   * 與信使做一輪 anti-entropy 對帳（雙向）：
+   *  1. 送本地 digest → 收信使有、我缺的紀錄 → ingest（補離線間隙）。
+   *  2. 依信使回傳的 digest，把信使缺的本地紀錄 push 回去（deposit，first-write-wins）。
+   * 一輪即收斂（對稱差嚴格縮小；見 antiEntropy 收斂論證）。
+   * @param localStore 本地該房 store（Map<senderId, Map<seq, msg>>；可用 buildRoomStore 從陣列造）。
+   * @param floors 本地各 sender 的 floor（已淘汰下限）；無則傳空 Map（floor 預設 1）。
+   * @param ingest 收到「我缺的紀錄」時的回填（呼叫端寫入自己的 store/UI）。
+   * @returns { received: 收到補的筆數, pushed: 回推信使的筆數 }
+   */
+  async reconcile(
+    roomId: string,
+    localStore: ReadonlyMap<string, ReadonlyMap<number, GossipMessage>>,
+    floors: ReadonlyMap<string, number>,
+    ingest: (msg: GossipMessage) => void
+  ): Promise<{ received: number; pushed: number }> {
+    const myDigest = computeDigest(localStore, floors);
+    const req = envelope(CourierMsgType.SYNC, this.selfId, { roomId, digest: myDigest } as SyncPayload);
+    const resp = await this.request(req);
+    const { records, digest: courierDigest } = resp.payload as SyncRespPayload;
+
+    for (const m of records ?? []) ingest(m); // 方向一：信使補我
+
+    // 方向二：我回推信使缺的（用信使 digest 過濾本地）。
+    const toPush = recordsPeerLacks(localStore, courierDigest ?? {});
+    for (const m of toPush) await this.deposit(m); // 逐筆 deposit（已測、ack 冪等）
+    return { received: (records ?? []).length, pushed: toPush.length };
   }
 
   /** 送出 req，等 replyTo==req.id 的回覆；逾時即 reject。 */

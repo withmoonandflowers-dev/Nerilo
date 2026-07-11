@@ -108,4 +108,70 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await teardown(member, courier);
     }
   });
+
+  test('anti-entropy 自動對帳：信使補成員缺的、成員回推信使缺的（雙向，P4-C）', async ({ browser }) => {
+    test.setTimeout(150_000);
+    const member = await setupUser(browser);
+    const courier = await setupUser(browser);
+    try {
+      const courierUid = await ownerUid(courier.page);
+
+      // 先讓信使持有 A（模擬別的成員先前寄存過）。
+      const A = {
+        roomId: 'room-y', senderId: 'sA', pubKey: 'pk', seq: 1, timestamp: 1,
+        content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A',
+      };
+      await member.page.evaluate(
+        async ({ uid, rec }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<unknown[]> } };
+          };
+          await w.__nerilo_test__!.relay!.depositAndPull!(uid, rec);
+        },
+        { uid: courierUid, rec: A }
+      );
+
+      // 成員本地只有 B（缺 A）。一輪 reconcile 後：成員收到 A、且把 B 回推給信使。
+      const B = {
+        roomId: 'room-y', senderId: 'sB', pubKey: 'pk', seq: 1, timestamp: 2,
+        content: 'ENC:record-B', ttl: 3, signature: 'SIG-B', messageId: 'B',
+      };
+      const result = await member.page.evaluate(
+        async ({ uid, local }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: {
+              relay?: {
+                reconcile?: (u: string, room: string, recs: unknown[]) => Promise<{ received: Array<Record<string, unknown>>; pushed: number }>;
+              };
+            };
+          };
+          return w.__nerilo_test__!.relay!.reconcile!(uid, 'room-y', [local]);
+        },
+        { uid: courierUid, local: B }
+      );
+
+      // 方向一：成員收到信使代管的 A（離線間隙自動回填）。
+      expect(result.received.map((m) => m.messageId)).toContain('A');
+      const gotA = result.received.find((m) => m.messageId === 'A')!;
+      expect(gotA.content).toBe('ENC:record-A'); // 密文原樣
+      // 方向二：成員把 B 回推信使（信使先前沒有）。
+      expect(result.pushed).toBe(1);
+
+      // 驗信使現在兩筆都有：成員再 pull 一次，應看到 A + B。
+      const pulled = await member.page.evaluate(
+        async ({ uid }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<Array<Record<string, unknown>>> } };
+          };
+          // 用一筆已存在的 A 觸發 pull（deposit 冪等 duplicate；回傳該房全部）。
+          const probe = { roomId: 'room-y', senderId: 'sA', pubKey: 'pk', seq: 1, timestamp: 1, content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A' };
+          return w.__nerilo_test__!.relay!.depositAndPull!(uid, probe);
+        },
+        { uid: courierUid }
+      );
+      expect(pulled.map((m) => m.messageId).sort()).toEqual(['A', 'B']);
+    } finally {
+      await teardown(member, courier);
+    }
+  });
 });
