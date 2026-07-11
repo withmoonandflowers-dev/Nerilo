@@ -17,6 +17,7 @@
  */
 
 import type { ConnectionState } from '../../types';
+import type { P2PChannelBus } from '../p2p/P2PChannelBus';
 import { P2PManager } from '../p2p/P2PManager';
 import { RelaySignalingTransport } from '../p2p/SignalingTransport';
 import { RelaySignalingChannel, relayChannelId } from './RelaySignaling';
@@ -34,6 +35,8 @@ const RELAY_LABEL = 'relay';
 export interface RelayConnLike {
   initialize(): Promise<void>;
   getState(): ConnectionState;
+  /** relay DataChannel 的 P2PChannelBus（DataChannel open 前為 null）；courier 協議掛在其上。 */
+  getChannelBus(): P2PChannelBus | null;
   close(): Promise<void>;
 }
 
@@ -66,6 +69,7 @@ function defaultMakeConn(
   return {
     initialize: () => mgr.initialize(),
     getState: () => mgr.getConnectionManager().getState(),
+    getChannelBus: () => mgr.getChannelBus(),
     close: () => mgr.close(),
   };
 }
