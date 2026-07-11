@@ -285,13 +285,16 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
 複用 `P2PManager`（DataChannel + HELLO + ICE restart 全套），不為 relay 重寫半套 WebRTC。
 真 WebRTC E2E 綠：兩瀏覽器陌生節點雙端 connected（`tests/e2e-vue/relay-connect.spec.ts`）。
 
-**P4-C（done，剩對帳/簽章收尾）**：盲信使寄存協議。
+**P4-C（done，剩簽章/觸發收尾）**：盲信使寄存協議。
 - C.1 `CourierStore`：ADR-0024 儲存經濟學（單筆 4KB／單房 5MB／總預算配額、14 天 TTL、
   預算 LRU 淘汰整房、簽章墓碑刪除、first-write-wins）。純邏輯，unit + property 測試。
 - C.2 `CourierService`：deposit/pull/tombstone 協議跑在 P2PChannelBus（ns='courier'），
   request/response 關聯 + 逾時。整合測試（記憶體對接 bus）綠。
 - C.3 接真 relay 通道：member 寄存密文紀錄 → courier 代管 → 回線 pull 原樣取回，
   真 WebRTC E2E 綠（密文位元對位相同，證明盲存不改 byte）。
-- 剩：anti-entropy 自動對帳回補（現為顯式 pull）、tombstone 真房籍簽章驗證、app 觸發整合。
+- C.4 anti-entropy 自動對帳（reconcile）：複用 `antiEntropy` 的 computeDigest/peerLacks，
+  一輪雙向收斂——成員送 digest → 信使補「成員缺的」+ 回自己 digest → 成員回推「信使缺的」。
+  整合測試（含 missing 洞、已一致無多餘傳輸）+ 真 WebRTC 雙向 E2E 綠。
+- 剩：tombstone 真房籍簽章驗證、app 觸發整合（何時寄存/對帳、對誰）。
 
 **尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。
