@@ -176,7 +176,8 @@ export class GossipMessageHandler {
         this.seq = await this.persistence.reserveSeq(this.roomId, this.userId);
       } catch (err) {
         logger.warn('[GossipMessageHandler] reserveSeq failed, falling back to memory seq', {
-          roomId: this.roomId, err,
+          roomId: this.roomId,
+          errName: (err as Error)?.name,
         });
         this.seq++;
       }
