@@ -45,6 +45,11 @@ function makeFakePersistence(): IGossipPersistence & {
       const m = meta.get(k) ?? {};
       meta.set(k, { ...m, floor: Math.max(m.floor ?? 0, newFloor) });
     },
+    async listRooms() {
+      const rooms = new Set<string>();
+      for (const k of records.keys()) rooms.add(k.split('|')[0]!);
+      return [...rooms];
+    },
     dump: () => records,
   };
 }
@@ -161,6 +166,7 @@ describe('ADR-0023 P1 複本持久化', () => {
       loadRoom: vi.fn().mockRejectedValue(new Error('boom')),
       saveRecord: vi.fn().mockRejectedValue(new Error('boom')),
       evictRecord: vi.fn().mockRejectedValue(new Error('boom')),
+      listRooms: vi.fn().mockRejectedValue(new Error('boom')),
     };
     const a = makeHandler(broken);
     await expect(a.handler.hydrate()).resolves.toBeUndefined(); // 不炸
