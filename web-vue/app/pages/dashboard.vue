@@ -13,7 +13,7 @@ const { balance, relayActive, ensureInit } = useCredits()
 // 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護，並看得到其他在線節點數。
 const { peerCount, announcing, start: startPresence, stop: stopPresence } = useNodePresence()
 // 盲信使節點（ADR-0023 P4-C）：信使角色 always-on + 成員背景備份；預設參與、可關。
-const { start: startCourierNode, stop: stopCourierNode } = useCourierNode()
+const { start: startCourierNode, stop: stopCourierNode, tombstoneRoom } = useCourierNode()
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
@@ -216,6 +216,8 @@ function deleteRoomAction(room: P2PRoom) {
       patchState(room.roomId, { deletedAt: Date.now() })
       try {
         const result = await RoomService.softDeleteRoom(room.roomId, user.value!.uid)
+        // 房間真正刪除（所有成員皆刪）→ 簽房籍墓碑請盲信使丟掉代管副本（best-effort，不擋 UI）。
+        if (result === 'deleted') void tombstoneRoom(room.roomId)
         success(result === 'deleted' ? '聊天室已刪除（所有成員皆已刪除）' : '已從你的列表刪除')
       } catch {
         toastError('刪除失敗，請再試一次')
