@@ -31,6 +31,8 @@ export class MeshTopologyManager {
   private reconnectAttempts: Map<string, number> = new Map();
   /** 進行中的重連 timer，cleanup 時需要清除 */
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** 每個 peer 上次觀察到的 joinedAt（session 版本戳），用來偵測「離開再進」 */
+  private lastJoinedAt: Map<string, number> = new Map();
 
   constructor(
     private roomId: string,
@@ -103,6 +105,34 @@ export class MeshTopologyManager {
 
         // 更新 identity map
         this.identityMap.set(firebaseUid, userId);
+
+        // ── 偵測「離開再進」（rejoin）──
+        // 對方離開再進時仍用同一持久化身分（userId 不變），故 neighbors.has(userId)
+        // 為真、走不到 newCandidates；但本端手上是對方舊 session 的死 pc，對方的全新
+        // offer 無處可接 → 卡在連線中。RoomService 每次 (re)join 會把 joinedAt 往上
+        // 推，這裡據此偵測：joinedAt 變新且對方已是鄰居 → 拆舊建新，讓兩端各自用全新
+        // pc 重新協商。首次觀察（prev===undefined）不算 rejoin。
+        const joinedAt = this.parseJoinedAt(typedIdentity.joinedAt);
+        const prevJoinedAt = this.lastJoinedAt.get(firebaseUid);
+        if (joinedAt !== null) this.lastJoinedAt.set(firebaseUid, joinedAt);
+        const rejoined =
+          joinedAt !== null &&
+          prevJoinedAt !== undefined &&
+          joinedAt > prevJoinedAt &&
+          this.neighbors.has(userId);
+        if (rejoined) {
+          logger.info('[MeshTopologyManager] Peer rejoined (session renewed), rebuilding connection', {
+            roomId: this.roomId,
+            remoteUserId: userId,
+          });
+          this.reconnectAttempts.delete(userId);
+          const t = this.reconnectTimers.get(userId);
+          if (t) { clearTimeout(t); this.reconnectTimers.delete(userId); }
+          this.connectToSingleNeighbor(userId).catch(error => {
+            logger.error('[MeshTopologyManager] Rejoin rebuild error', { error });
+          });
+          continue;
+        }
 
         // 如果這個節點不是現有鄰居，且不在連線中，就加入候選
         if (!this.neighbors.has(userId) && !this.reconnectAttempts.has(userId)) {
@@ -267,6 +297,20 @@ export class MeshTopologyManager {
     }, delay);
 
     this.reconnectTimers.set(userId, timer);
+  }
+
+  /**
+   * 解析 joinedAt：RoomService 寫入的是 Date.now() number，但保險起見也接受
+   * Firestore Timestamp（{ toMillis() } 或 { seconds }）。無法解析回 null。
+   */
+  private parseJoinedAt(raw: unknown): number | null {
+    if (typeof raw === 'number') return raw;
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { toMillis?: () => number; seconds?: number };
+      if (typeof obj.toMillis === 'function') return obj.toMillis();
+      if (typeof obj.seconds === 'number') return obj.seconds * 1000;
+    }
+    return null;
   }
 
   /**
