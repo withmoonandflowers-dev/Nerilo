@@ -284,7 +284,7 @@ export interface GossipMessage {
    * | 'keyx'（content 為房間內容金鑰分發紀錄，ADR-0023 P2-②c；不進聊天顯示，
    * 收端據 forMember 開出金鑰）。有簽章保護——否則可把金鑰紀錄改標成聊天造成誤分發。
    */
-  channel?: 'chat' | 'game' | 'keyx';
+  channel?: 'chat' | 'game' | 'keyx' | 'reaction';
 }
 
 // Mesh 身分資訊
