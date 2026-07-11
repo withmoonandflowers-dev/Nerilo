@@ -3,6 +3,7 @@ import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
 import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallback';
+import type { ReactionEvent, ReactionOp } from './reactions';
 import { logger } from '../../utils/logger';
 
 /**
@@ -15,6 +16,8 @@ export class MeshChatService {
   private messageListeners: Set<(message: ChatMessage) => void> = new Set();
   /** 遊戲事件監聽器（M4 channel:'game'）。content 是 P2PEnvelope JSON，不進聊天顯示。 */
   private gameListeners: Set<(env: P2PEnvelope) => void> = new Set();
+  /** 表情 reaction 監聽器（channel:'reaction'）。content 是 {messageId,emoji,op} JSON。 */
+  private reactionListeners: Set<(r: ReactionEvent) => void> = new Set();
   private messageCounter = 0;
   /** 本機的 mesh userId（hash pubKey）。gossip senderId 用此，非 firebase uid。 */
   private meshUserId: string | null = null;
@@ -58,6 +61,24 @@ export class MeshChatService {
             logger.error('[MeshChatService] Error in game listener', { error });
           }
         });
+        return;
+      }
+      // 表情 reaction（channel:'reaction'）：content 是 {messageId,emoji,op} JSON → 分流給
+      // reaction 監聽器（不進聊天顯示）。走同一條可靠 + E2EE gossip 管線，聚合冪等（見 reactions.ts）。
+      if (gossipMessage.channel === 'reaction') {
+        if (gossipMessage.senderId === this.meshUserId) return; // 自己的回音（本機已樂觀套用）
+        try {
+          const { messageId, emoji, op } = JSON.parse(gossipMessage.content) as {
+            messageId: string; emoji: string; op: ReactionOp;
+          };
+          if (typeof messageId !== 'string' || typeof emoji !== 'string') return;
+          const ev: ReactionEvent = { messageId, emoji, from: gossipMessage.senderId, op: op === 'remove' ? 'remove' : 'add' };
+          this.reactionListeners.forEach((l) => {
+            try { l(ev); } catch (error) { logger.error('[MeshChatService] Error in reaction listener', { error }); }
+          });
+        } catch {
+          logger.warn('[MeshChatService] malformed reaction ignored', { roomId: this.roomId, seq: gossipMessage.seq });
+        }
         return;
       }
       // 通道分流（M4）：非 chat 通道（如 'keyx'）不進聊天顯示。
@@ -149,6 +170,30 @@ export class MeshChatService {
     return () => {
       this.gameListeners.delete(listener);
     };
+  }
+
+  /**
+   * 送表情 reaction（channel:'reaction'，走可靠 + E2EE gossip 管線）。
+   * 對某訊息加/移除某表情；聚合冪等（見 reactions.ts），亂序到達仍收斂。
+   */
+  async sendReaction(messageId: string, emoji: string, op: ReactionOp): Promise<void> {
+    const payload = JSON.stringify({ messageId, emoji, op });
+    // reaction id 綁 (訊息,表情,人,op)：同一 toggle 動作跨傳輸路徑去重
+    const id = `rx-${messageId}-${emoji}-${this.meshUserId ?? this.localUid}-${op}`;
+    await this.meshGossipManager.sendMessage(payload, id, 'reaction');
+  }
+
+  /** 監聽表情 reaction 事件（channel:'reaction'）。 */
+  onReaction(listener: (r: ReactionEvent) => void): () => void {
+    this.reactionListeners.add(listener);
+    return () => {
+      this.reactionListeners.delete(listener);
+    };
+  }
+
+  /** 本機 mesh userId（reaction/去重的「我」；initialize 後才有值）。 */
+  getMeshUserId(): string | null {
+    return this.meshUserId;
   }
 
   /**
