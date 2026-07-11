@@ -15,6 +15,7 @@ function makeFakeConn(): RelayConnLike & { initialize: ReturnType<typeof vi.fn> 
   return {
     initialize: vi.fn().mockResolvedValue(undefined),
     getState: vi.fn().mockReturnValue('connecting'),
+    getChannelBus: vi.fn().mockReturnValue(null),
     close: vi.fn().mockResolvedValue(undefined),
   } as never;
 }

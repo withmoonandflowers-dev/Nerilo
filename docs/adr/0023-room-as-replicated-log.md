@@ -280,7 +280,18 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
   userId）+ 週期查在線節點數，離頁撤回；誠實條款（只有非匿名宣告成功才顯示，匿名/
   被拒靜默降級）。UI「還有 N 個節點一起守護」。E2E：兩瀏覽器 dashboard 互相發現。
 
-**尚未做（P4-B/C/D）**：陌生節點 ↔ 成員的 relay-only DataChannel（現行 signaling 綁房，
-非成員進不來）；盲信使寄存協議（收密文紀錄→存→anti-entropy 服務回，配額/TTL/LRU/
-簽章墓碑見 ADR-0024）；共簽收據→點數計量（ADR-0022）。名冊只是「誰在線」，還沒到
-「幫誰存、存了什麼」。
+**P4-B（done）**：不綁房的站級 signaling（`relaySignals/{channelId}`，rules 驗 participants）
++ `RelayConnector` 編排（主動 connectToRelayNode／中繼 startListening，對稱去重）。relay 連線
+複用 `P2PManager`（DataChannel + HELLO + ICE restart 全套），不為 relay 重寫半套 WebRTC。
+真 WebRTC E2E 綠：兩瀏覽器陌生節點雙端 connected（`tests/e2e-vue/relay-connect.spec.ts`）。
+
+**P4-C（done，剩對帳/簽章收尾）**：盲信使寄存協議。
+- C.1 `CourierStore`：ADR-0024 儲存經濟學（單筆 4KB／單房 5MB／總預算配額、14 天 TTL、
+  預算 LRU 淘汰整房、簽章墓碑刪除、first-write-wins）。純邏輯，unit + property 測試。
+- C.2 `CourierService`：deposit/pull/tombstone 協議跑在 P2PChannelBus（ns='courier'），
+  request/response 關聯 + 逾時。整合測試（記憶體對接 bus）綠。
+- C.3 接真 relay 通道：member 寄存密文紀錄 → courier 代管 → 回線 pull 原樣取回，
+  真 WebRTC E2E 綠（密文位元對位相同，證明盲存不改 byte）。
+- 剩：anti-entropy 自動對帳回補（現為顯式 pull）、tombstone 真房籍簽章驗證、app 觸發整合。
+
+**尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。
