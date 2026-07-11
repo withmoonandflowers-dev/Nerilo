@@ -316,4 +316,60 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await teardown(member, courier);
     }
   });
+
+  test('計量：成員寄存 → 共簽收據 → 信使賺可驗點數（P4-D，ADR-0022）', async ({ browser }) => {
+    test.setTimeout(150_000);
+    const member = await setupUser(browser);
+    const courier = await setupUser(browser);
+    try {
+      const courierUid = await ownerUid(courier.page);
+      await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
+
+      const balanceOf = (page: Page) =>
+        page.evaluate(() => {
+          const w = window as unknown as { __nerilo_test__?: { relay?: { creditBalance?: () => Promise<number> } } };
+          return w.__nerilo_test__!.relay!.creditBalance!();
+        });
+      const before = await balanceOf(courier.page);
+
+      // 成員寄存一筆（成員 client 帶 memberCredit → 自報身分 + 之後回簽）。
+      const record = {
+        roomId: 'room-c', senderId: 'sMeter', pubKey: 'pk', seq: 1, timestamp: 3,
+        content: 'ENC:metered-payload-xxxxxxxxxxxxxxxx', ttl: 3, signature: 'SIG-C', messageId: 'C',
+      };
+      await member.page.evaluate(
+        async ({ uid, rec }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<unknown[]> } };
+          };
+          await w.__nerilo_test__!.relay!.depositAndPull!(uid, rec);
+        },
+        { uid: courierUid, rec: record }
+      );
+
+      // 信使發起計量（起草收據 → 成員回簽 → 信使驗簽後計點）。輪詢時反覆觸發，
+      // 涵蓋 IDENTIFY/回簽的非同步視窗，直到餘額增加。
+      await expect
+        .poll(
+          async () => {
+            await courier.page.evaluate(async () => {
+              const w = window as unknown as { __nerilo_test__?: { relay?: { claimCreditsNow?: () => Promise<void> } } };
+              await w.__nerilo_test__!.relay!.claimCreditsNow!();
+            });
+            return balanceOf(courier.page);
+          },
+          { timeout: 30_000, intervals: [1000] }
+        )
+        .toBeGreaterThan(before);
+
+      // 帳本仍可驗（雜湊鏈完整、無竄改）。
+      const ledgerOk = await courier.page.evaluate(async () => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { verifyLedger?: () => Promise<boolean> } } };
+        return w.__nerilo_test__!.relay!.verifyLedger!();
+      });
+      expect(ledgerOk).toBe(true);
+    } finally {
+      await teardown(member, courier);
+    }
+  });
 });

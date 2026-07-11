@@ -17,8 +17,9 @@ import {
 } from '../../src/core/relay/CourierService';
 import { CourierStore, DEFAULT_COURIER_CONFIG } from '../../src/core/relay/CourierStore';
 import { signTombstone, senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
+import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
 import { arrayBufferToBase64 } from '../../src/utils/crypto';
-import type { CourierBus, CourierBackupDeps } from '../../src/core/relay/CourierService';
+import type { CourierBus, CourierBackupDeps, CourierCreditConfig, MemberCreditConfig } from '../../src/core/relay/CourierService';
 import type { P2PEnvelope, GossipMessage } from '../../src/types';
 
 /** 一端：對外 send 交給 partner 的 handlers；自己 subscribe 收 partner 送來的。 */
@@ -353,6 +354,102 @@ describe('CourierService — tombstone 真房籍簽章（預設驗證器）', ()
     const freed = await client.tombstone('room1', tomb);
     expect(freed).toBe(0);
     expect(store.serveRoom('room1')).toHaveLength(1); // 不刪
+  });
+});
+
+describe('CourierService — 計量（共簽收據 → 計點，ADR-0022）', () => {
+  async function makeNode() {
+    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const pubKey = arrayBufferToBase64(await crypto.subtle.exportKey('spki', kp.publicKey));
+    const nodeId = await senderIdFromPubKey(pubKey);
+    return { pubKey, nodeId, sign: ecdsaSigner(kp.privateKey) };
+  }
+
+  /** 輪詢等條件成立（收據交換是多步 async crypto，microtask 不夠）。 */
+  async function waitFor(cond: () => boolean, ms = 3000) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (cond()) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+  /** 固定等一小段（用於「確認什麼都沒發生」的否定斷言）。 */
+  async function settle(ms = 300) {
+    await new Promise((r) => setTimeout(r, ms));
+  }
+
+  it('成員寄存 → 信使起草收據 → 成員回簽 → 信使驗簽後計點（bytes 正確）', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const courier = await makeNode();
+    const member = await makeNode();
+    const credited: Array<{ requesterNodeId: string; bytes: number }> = [];
+    const courierCredit: CourierCreditConfig = {
+      nodeId: courier.nodeId, pubKey: courier.pubKey, sign: courier.sign,
+      onCredit: (requesterNodeId, bytes) => { credited.push({ requesterNodeId, bytes }); },
+    };
+    const memberCredit: MemberCreditConfig = { nodeId: member.nodeId, pubKey: member.pubKey, sign: member.sign };
+
+    const server = new CourierServer(courierBus, store, 'courier-uid', undefined, courierCredit);
+    server.start();
+    const client = new CourierClient(memberBus, 'member-uid', 3000, memberCredit);
+    client.start(); // 送 IDENTIFY
+    await settle(50); // 等 IDENTIFY 抵達信使
+
+    // 寄存兩筆（各有位元組）。
+    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 1, content: 'ENC:aaaa', signature: 'ss' }));
+    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 2, content: 'ENC:bbbb', signature: 'ss' }));
+
+    // 信使發起計量一輪。
+    await server.claimCredit();
+    await waitFor(() => credited.length === 1);
+
+    expect(credited).toHaveLength(1);
+    expect(credited[0]!.requesterNodeId).toBe(member.nodeId);
+    // bytes == 兩筆 content+signature 的 UTF-8 位元組總和（>0）。
+    expect(credited[0]!.bytes).toBeGreaterThan(0);
+  });
+
+  it('無成員回簽（成員不參與計量）→ 信使不計點', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const courier = await makeNode();
+    const credited: number[] = [];
+    const server = new CourierServer(courierBus, store, 'courier-uid', undefined, {
+      nodeId: courier.nodeId, pubKey: courier.pubKey, sign: courier.sign,
+      onCredit: (_r, bytes) => { credited.push(bytes); },
+    });
+    server.start();
+    // 成員不帶 credit config → 不 IDENTIFY、不回簽。
+    const client = new CourierClient(memberBus, 'member-uid', 3000);
+    client.start();
+    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 1 }));
+    await server.claimCredit(); // 沒 requester 身分 → 不起草
+    await settle();
+    expect(credited).toHaveLength(0);
+  });
+
+  it('成員 approve 拒絕（bytes 不合理）→ 不回簽 → 信使不計點', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const courier = await makeNode();
+    const member = await makeNode();
+    const credited: number[] = [];
+    const server = new CourierServer(courierBus, store, 'courier-uid', undefined, {
+      nodeId: courier.nodeId, pubKey: courier.pubKey, sign: courier.sign,
+      onCredit: (_r, bytes) => { credited.push(bytes); },
+    });
+    server.start();
+    const client = new CourierClient(memberBus, 'member-uid', 3000, {
+      nodeId: member.nodeId, pubKey: member.pubKey, sign: member.sign,
+      approve: () => false, // 一律拒簽
+    });
+    client.start();
+    await settle(50);
+    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 1 }));
+    await server.claimCredit();
+    await settle();
+    expect(credited).toHaveLength(0);
   });
 });
 
