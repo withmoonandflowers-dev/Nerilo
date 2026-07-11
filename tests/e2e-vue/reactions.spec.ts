@@ -33,7 +33,7 @@ test.describe('Vue 版訊息表情', () => {
       // B 對該訊息加 👍（hover 顯示按鈕 → 開選單 → 點 👍）
       const bobRow = bob.page.locator('.msg-row', { hasText: text });
       await bobRow.hover();
-      await bobRow.locator('.react-trigger').click();
+      await bobRow.locator('[data-testid^="react-btn-"]').click();
       await bob.page.locator('.react-picker__item', { hasText: '👍' }).click();
 
       // A 端該訊息底下出現 👍 1
