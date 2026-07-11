@@ -21,9 +21,8 @@ import {
 
 const GAME_NS = 'gomoku'
 
-export function useGomoku(bus: Ref<GameBus | null>, isInitiator: Ref<boolean>, selfId: Ref<string>) {
+export function useGomoku(bus: Ref<GameBus | null>, myMark: Ref<Mark | null>, selfId: Ref<string>) {
   const state = ref<GomokuState>(initialState())
-  const myMark = computed<Mark>(() => (isInitiator.value ? 'B' : 'W'))
 
   function send(type: 'MOVE' | 'RESTART' | 'SYNC_REQ' | 'SYNC_STATE', payload?: unknown) {
     const b = bus.value
@@ -71,16 +70,19 @@ export function useGomoku(bus: Ref<GameBus | null>, isInitiator: Ref<boolean>, s
   onUnmounted(() => unsubscribe?.())
 
   function play(cell: number) {
+    const mark = myMark.value
+    if (!mark) return // 觀戰者不能下
     const s = state.value
-    if (s.turn !== myMark.value || s.winner !== null || s.board[cell] !== null) return
-    const next = applyMove(s, cell, myMark.value)
+    if (s.turn !== mark || s.winner !== null || s.board[cell] !== null) return
+    const next = applyMove(s, cell, mark)
     if (next !== s) {
       state.value = next
-      send('MOVE', { cell, mark: myMark.value })
+      send('MOVE', { cell, mark })
     }
   }
 
   function restart() {
+    if (!myMark.value) return // 觀戰者不能重開
     state.value = initialState()
     send('RESTART')
   }
