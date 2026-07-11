@@ -9,7 +9,7 @@
 | 項目 | 判定 | 負責 | 狀態 |
 |---|---|---|---|
 | **兩套傳訊棧**：star（P2PChannelBus + HLC/因果排序） ‧‧ mesh（gossip + antiEntropy seq） | 概念冗餘 | 平行 · ADR-0023 修訂五 | 🟡 **收斂中**：移除 star 分支、`Topology` 收斂為 `'mesh'` |
-| **RelayOverlay / RelayCoordinator** | 死島（0 app 引用） | 平行 · P4 | 🟡 待清理（P4 走 FirestoreRelayDirectory 新路徑取代） |
+| **RelayOverlay / RelayCoordinator** | 死島（0 app 引用），被 FirestoreRelayDirectory 新路徑取代 | — | ✅ **已刪除**（2026-07-05；含 3 個 spec，git 歷史保留） |
 | **三套 append-only log 概念**：ledger/SharedLedgerEngine（凍結）· incentive/CreditLedger · 房間複製日誌 | 概念重疊 | 平行 · ADR-0023 | 🟡 統一方向＝複製日誌 |
 | `RelayDirectory`（IRelayDirectory 介面 + 記憶體實作） | **非冗餘** | — | 🟢 被 `FirestoreRelayDirectory` 採用（hexagonal） |
 | ledger/SharedLedgerEngine · ForkResolver | 凍結（ADR-0007 第 2 類） | — | ⚪ 凍結，不動 |
@@ -37,7 +37,7 @@
 | extractable 修復 + 真 crypto 契約測試 | 🟢 已合入，回歸鎖住 |
 | 聊天去重修復 + E2E 回歸 | 🟢 已合入 |
 | 測試工具鏈（mutation/simulation/property/真crypto） | 🟢 已合入（antiEntropy 88% · RecordCrypto 81%） |
-| `RelayOverlay` / `RelayCoordinator` | 🔴 **被 P4 取代**（待清） |
+| `RelayOverlay` / `RelayCoordinator` | ✅ **已刪除**（被 P4 的 FirestoreRelayDirectory 取代） |
 | GossipMessageHandler 的 anti-entropy hack | 🔴 **已被** antiEntropy.ts **取代**（乾淨版） |
 | game 二進位 codec（ADR-0018）· 房主心跳 · 社群 TURN · 架構/C4 文件 | 🟢 已合入 |
 
