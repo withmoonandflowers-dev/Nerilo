@@ -21,7 +21,7 @@
 |---|---|---|
 | mesh 3–5 人可靠性 | antiEntropy（數學收斂）+ 測試工具鏈 | 🟢 邏輯完成，真實環境待驗 |
 | star→mesh 切換 bug（切換重載重複/遺失） | ADR-0023 修訂五（直接移除 star 分支） | 🟡 隨收斂消滅 |
-| 跨房：非成員找到要幫誰、怎麼連 | P4-A 名冊 ✅ / P4-B signaling | 🟡 A 完成、B 進行 |
+| 跨房：非成員找到要幫誰、怎麼連 | P4-A 名冊 ✅ / P4-B signaling+編排 | 🟡 A 完成；B 零件+編排(`RelayConnector`)完成，真 WebRTC E2E 待驗 |
 | 盲信使寄存協議（存密文、對帳回補） | P4-C · ADR-0024 · RecordCrypto | 🟡 加密就位、協議待建 |
 | 中繼計量（共簽收據→點數） | P4-D · CoSignedReceipt · ADR-0022 | 🔴 待接線 |
 | 防女巫（點數正當性） | App Check（程式就位，待 console 啟用） | 🟡 待啟用 |
