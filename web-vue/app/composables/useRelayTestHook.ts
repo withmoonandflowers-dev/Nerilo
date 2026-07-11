@@ -12,7 +12,7 @@
  */
 import { RelayConnector, type RelayConnLike } from '@legacy/core/relay/RelayConnector'
 import { CourierStore } from '@legacy/core/relay/CourierStore'
-import { CourierServer, CourierClient } from '@legacy/core/relay/CourierService'
+import { CourierServer, CourierClient, buildRoomStore } from '@legacy/core/relay/CourierService'
 import type { GossipMessage } from '@legacy/types'
 
 interface TestHook {
@@ -21,6 +21,11 @@ interface TestHook {
     states: () => string[]
     activeCount: () => number
     depositAndPull: (courierUid: string, record: GossipMessage) => Promise<GossipMessage[]>
+    reconcile: (
+      courierUid: string,
+      roomId: string,
+      localRecords: GossipMessage[]
+    ) => Promise<{ received: GossipMessage[]; pushed: number }>
   }
 }
 
@@ -84,6 +89,27 @@ export function useRelayTestHook() {
           }
         }
         return client.pull(record.roomId)
+      },
+      // 成員方：與信使做一輪 anti-entropy 對帳（雙向自動回補）。
+      reconcile: async (courierUid: string, roomId: string, localRecords: GossipMessage[]) => {
+        const conn = await connector!.connectToRelayNode(courierUid)
+        const bus = await waitBus(conn)
+        if (!bus) throw new Error('relay bus not ready')
+        const client = new CourierClient(bus, uid, 3_000)
+        client.start()
+        const localStore = buildRoomStore(localRecords)
+        // 對帳可能在信使掛上 CourierServer 前發起 → 重試到成功。
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const received: GossipMessage[] = []
+          try {
+            const res = await client.reconcile(roomId, localStore, new Map(), (m) => received.push(m))
+            return { received, pushed: res.pushed }
+          } catch (err) {
+            if (attempt === 4) throw err
+            await new Promise((r) => setTimeout(r, 500))
+          }
+        }
+        return { received: [], pushed: 0 }
       },
     }
   }
