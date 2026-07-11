@@ -33,11 +33,13 @@ export function useGameSeats(
     } as P2PEnvelope).catch(() => undefined)
   }
 
-  function claimSeat() {
+  function claimSeat(broadcast = true) {
     if (isOwner.value) return // 房主恆座 0
     const ts = Date.now()
     wanting.value = { ...wanting.value, [selfId.value]: ts } // 樂觀
-    send('CLAIM', { player: selfId.value, ts })
+    // 只有 3+ 人房需要上線協商座位；2 人房角色是確定的（房主=first、對方=second），純本地即可，
+    // 不送任何 seat gossip——避免與聊天共用同一 sender seq、放大 reserveSeq 降級造成掉訊。
+    if (broadcast) send('CLAIM', { player: selfId.value, ts })
   }
   function releaseSeat() {
     const { [selfId.value]: _drop, ...rest } = wanting.value
@@ -68,21 +70,32 @@ export function useGameSeats(
           void _d
           wanting.value = rest
         } else if (env.type === 'SYNC_REQ') {
-          // 想玩者重播自己的 claim，讓新進者補齊集合
+          // 想玩者重播自己的 claim，讓新進者補齊集合（僅 3+ 房才有 gossip）
           const myTs = wanting.value[selfId.value]
           if (myTs !== undefined) send('CLAIM', { player: selfId.value, ts: myTs })
         }
       })
-      send('SYNC_REQ', {}) // 進場問一次現有座位
     },
     { immediate: true }
   )
 
-  // 2 人房：非房主自動入座（保留既有體驗）。3+ 人房需手動 claimSeat。
+  // 座位協商只在 3+ 人房上線：2 人房角色確定（房主=first、對方=second）→ 純本地，零 seat gossip
+  // （避免與聊天共用 seq、放大 reserveSeq 降級而掉訊）。跨過 2→3 時把本地入座升級成廣播 + 問座位。
+  let announced3p = false
   watch(
-    [bus, memberCount, isOwner, seat1Taken],
+    [bus, memberCount],
     () => {
-      if (bus.value && !isOwner.value && memberCount.value === 2 && !seat1Taken.value) claimSeat()
+      const b = bus.value
+      if (!b || isOwner.value) return
+      const count = memberCount.value
+      if (count === 2 && !seat1Taken.value) {
+        claimSeat(false) // 2 人房自動入座、純本地
+      } else if (count > 2 && !announced3p) {
+        announced3p = true
+        const myTs = wanting.value[selfId.value]
+        if (myTs !== undefined) send('CLAIM', { player: selfId.value, ts: myTs }) // 升級本地入座為廣播
+        send('SYNC_REQ', {}) // 問現有座位
+      }
     },
     { immediate: true }
   )
