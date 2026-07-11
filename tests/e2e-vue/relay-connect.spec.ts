@@ -65,4 +65,47 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await teardown(alice, bob);
     }
   });
+
+  test('盲信使寄存：member 把密文紀錄寄存給 courier，回線原樣取回（P4-C）', async ({ browser }) => {
+    test.setTimeout(150_000);
+    const member = await setupUser(browser); // 成員
+    const courier = await setupUser(browser); // 盲信使（非成員）
+    try {
+      const courierUid = await ownerUid(courier.page);
+
+      // member 連上 courier → 寄存一筆密文紀錄 → 立刻回線取回（同一真實 relay 通道往返）。
+      const record = {
+        roomId: 'room-x',
+        senderId: 'sender-1',
+        pubKey: 'pk',
+        seq: 7,
+        timestamp: 1000,
+        content: 'ENC:blind-courier-ciphertext-payload',
+        ttl: 3,
+        signature: 'SIG-abc',
+        messageId: 'msg-777',
+      };
+      const pulled = await member.page.evaluate(
+        async ({ uid, rec }) => {
+          const w = window as unknown as {
+            __nerilo_test__?: {
+              relay?: { depositAndPull?: (u: string, r: unknown) => Promise<unknown[]> };
+            };
+          };
+          return w.__nerilo_test__!.relay!.depositAndPull!(uid, rec);
+        },
+        { uid: courierUid, rec: record }
+      );
+
+      // 取回的紀錄應與寄存的密文位元對位相同（盲存：信使沒改任何 byte）。
+      expect(Array.isArray(pulled)).toBe(true);
+      const got = (pulled as Array<Record<string, unknown>>).find((m) => m.messageId === 'msg-777');
+      expect(got).toBeTruthy();
+      expect(got!.content).toBe('ENC:blind-courier-ciphertext-payload');
+      expect(got!.signature).toBe('SIG-abc');
+      expect(got!.seq).toBe(7);
+    } finally {
+      await teardown(member, courier);
+    }
+  });
 });
