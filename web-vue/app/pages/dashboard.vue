@@ -2,6 +2,7 @@
 import { RoomService } from '@legacy/services/RoomService'
 import { FriendService, type Friendship } from '@legacy/services/FriendService'
 import { indexedDBService } from '@legacy/services/IndexedDBService'
+import { decodeContent } from '@legacy/features/chat/messageContent'
 import { localTimezone, timezoneToLatLng } from '@legacy/utils/geo'
 import type { P2PRoom, RoomMemberState } from '@legacy/types'
 import { featureLog } from '@legacy/utils/featureLog'
@@ -233,7 +234,7 @@ async function loadPreviews(rooms: P2PRoom[]) {
     try {
       const msgs = await indexedDBService.getChatMessages(room.roomId, 1)
       const last = msgs[msgs.length - 1]
-      if (last && !last.deleted) previews.value[room.roomId] = last.content
+      if (last && !last.deleted) previews.value[room.roomId] = decodeContent(last.content).text
     } catch {
       /* 無本機歷史 → 顯示 fallback 文案 */
     }

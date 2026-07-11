@@ -6,6 +6,7 @@ import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
+import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
@@ -50,6 +51,30 @@ function reactionChips(messageId: string): Array<{ emoji: string; count: number;
   return Object.entries(byEmoji).map(([emoji, froms]) => ({
     emoji, count: froms.length, mine: froms.includes(myMeshId.value),
   }))
+}
+// ── 訊息回覆 ──
+const replyingTo = ref<{ messageId: string; text: string; mine: boolean } | null>(null)
+const messageById = computed(() => {
+  const m = new Map<string, ChatMessage>()
+  for (const msg of messages.value) m.set(msg.messageId, msg)
+  return m
+})
+/** 訊息顯示文字（回覆訊息去掉編碼標記）。 */
+function bodyText(msg: ChatMessage): string {
+  return decodeContent(msg.content).text
+}
+/** 若此訊息是回覆，回傳被引用訊息的預覽（作者側 + 文字）；否則 null。 */
+function quotedFor(msg: ChatMessage): { text: string; mine: boolean } | null {
+  const { replyTo } = decodeContent(msg.content)
+  if (!replyTo) return null
+  const orig = messageById.value.get(replyTo)
+  if (!orig) return { text: '訊息', mine: false }
+  return { text: bodyText(orig), mine: orig.from === user.value?.uid }
+}
+function startReply(msg: ChatMessage) {
+  replyingTo.value = { messageId: msg.messageId, text: bodyText(msg), mine: msg.from === user.value?.uid }
+  pickerFor.value = null
+  textareaEl.value?.focus()
 }
 /** 房間成員數（reactive，供模板閘控：遊戲 2+ 人房、mesh 橫幅僅 3+ 人房） */
 const memberCount = ref(0)
@@ -330,10 +355,12 @@ async function sendMessage(content: string, existingMessageId?: string) {
 async function handleSend() {
   const content = inputValue.value.trim()
   if (!content) return
+  const raw = encodeContent(content, replyingTo.value?.messageId) // 回覆時嵌入被回覆 id（隨內容加密）
+  replyingTo.value = null
   inputValue.value = ''
   if (textareaEl.value) textareaEl.value.style.height = 'auto'
   emitTyping(false)
-  await sendMessage(content)
+  await sendMessage(raw)
 }
 
 function handleResend(msg: ChatMessage) {
@@ -515,15 +542,28 @@ async function leaveRoom() {
              :class="[row.mine ? 'msg-row--mine' : 'msg-row--other', { 'msg-row--group-end': row.groupEnd }]">
           <div class="bubble-wrap">
             <div class="bubble" :class="[row.mine ? 'bubble--mine' : 'bubble--other', { 'bubble--tail': row.groupEnd }]">
-              {{ row.msg.content }}
+              <div v-if="quotedFor(row.msg)" class="bubble-quote" :data-testid="`quote-${row.msg.messageId}`">
+                <span class="bubble-quote__who">{{ quotedFor(row.msg)?.mine ? '你' : '對方' }}</span>
+                <span class="bubble-quote__text">{{ quotedFor(row.msg)?.text }}</span>
+              </div>
+              {{ bodyText(row.msg) }}
             </div>
-            <button
-              type="button"
-              class="react-trigger"
-              :data-testid="`react-btn-${row.msg.messageId}`"
-              aria-label="加表情"
-              @click="pickerFor = pickerFor === row.msg.messageId ? null : row.msg.messageId"
-            >☺</button>
+            <div class="bubble-actions">
+              <button
+                type="button"
+                class="react-trigger"
+                :data-testid="`reply-btn-${row.msg.messageId}`"
+                aria-label="回覆"
+                @click="startReply(row.msg)"
+              >↩</button>
+              <button
+                type="button"
+                class="react-trigger"
+                :data-testid="`react-btn-${row.msg.messageId}`"
+                aria-label="加表情"
+                @click="pickerFor = pickerFor === row.msg.messageId ? null : row.msg.messageId"
+              >☺</button>
+            </div>
             <div v-if="pickerFor === row.msg.messageId" class="react-picker" role="menu">
               <button
                 v-for="e in REACTION_EMOJIS"
@@ -631,6 +671,14 @@ async function leaveRoom() {
         />
       </aside>
     </Transition>
+
+    <div v-if="replyingTo" class="chat__reply-bar" data-testid="reply-bar">
+      <div class="chat__reply-info">
+        <span class="chat__reply-to">回覆 {{ replyingTo.mine ? '你自己' : '對方' }}</span>
+        <span class="chat__reply-text">{{ replyingTo.text }}</span>
+      </div>
+      <button type="button" class="chat__reply-cancel" data-testid="reply-cancel" aria-label="取消回覆" @click="replyingTo = null">✕</button>
+    </div>
 
     <footer class="chat__input-bar">
       <textarea
@@ -755,11 +803,31 @@ async function leaveRoom() {
 .bubble--mine.bubble--tail { border-bottom-right-radius: 4px; }
 .bubble--other.bubble--tail { border-bottom-left-radius: 4px; }
 
-/* ── 表情 reactions ── */
+/* ── 引用回覆區塊（bubble 內） ── */
+.bubble-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 5px;
+  padding: 4px 8px;
+  border-left: 3px solid currentColor;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 13px;
+  opacity: 0.85;
+}
+.bubble-quote__who { font-weight: 700; font-size: 11px; }
+.bubble-quote__text {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+
+/* ── 表情 / 回覆操作 ── */
 .bubble-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
 .msg-row--mine .bubble-wrap { flex-direction: row-reverse; }
+.bubble-actions { display: flex; gap: 4px; opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+.bubble-wrap:hover .bubble-actions, .bubble-actions:focus-within { opacity: 1; }
 .react-trigger {
-  opacity: 0;
   flex: none;
   width: 26px; height: 26px;
   border-radius: 50%;
@@ -767,9 +835,22 @@ async function leaveRoom() {
   color: var(--text-2);
   background: var(--surface);
   border: 1px solid var(--separator);
-  transition: opacity var(--t-fast) var(--ease);
 }
-.bubble-wrap:hover .react-trigger, .react-trigger:focus-visible { opacity: 1; }
+.react-trigger:hover { color: var(--text); border-color: var(--text-3); }
+
+/* ── 回覆輸入預覽列 ── */
+.chat__reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--separator);
+  background: var(--surface);
+}
+.chat__reply-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; border-left: 3px solid var(--primary); padding-left: 8px; }
+.chat__reply-to { font-size: 11px; font-weight: 700; color: var(--primary); }
+.chat__reply-text { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat__reply-cancel { color: var(--text-3); font-size: 14px; padding: 4px; }
 .react-picker {
   position: absolute;
   top: calc(100% + 6px); /* 開在下方：訊息列表 overflow 會裁掉往上的 popover（尤其頂部訊息） */
