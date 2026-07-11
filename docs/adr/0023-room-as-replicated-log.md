@@ -303,6 +303,13 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
   - 預設參與、可關（localStorage `nerilo.courier.enabled`，ADR-0024 Decision 3.4）；關頁即停。
   - 真 production E2E 綠：成員 seed 一筆持久紀錄 → runCourierBackup（真 deps）→ 線上信使收下
     （100% production 路徑，只不等 30s interval）。listRooms 加進 IGossipPersistence。
-- 剩：tombstone 真房籍簽章驗證。
+- C.6 房籍簽章墓碑（`TombstoneCrypto`，ADR-0024 Decision 3.3）：盲信使不知名冊，如何驗房籍？
+  觀察每筆代管密文都帶寄件人簽章、senderId=hash(pubKey)。故墓碑由「senderId 出現在該房
+  store 的 pubKey」簽 `TOMBSTONE|${roomId}`；信使驗①簽章對得上②senderId∈roomStore → 刪。
+  非成員沒對該房送過東西 → senderId 不在 store → 偽造驗不過。綁 roomId 防跨房重放。
+  真 crypto 單元測試（簽/驗、非成員、竄改、跨房、冒用 pubKey、畸形）+ 協議整合 + 真 WebRTC
+  E2E 綠。app 觸發：房間真刪（softDeleteRoom=='deleted'）時 dashboard 簽墓碑 best-effort 廣播。
+
+**P4-C 完成。** 剩 P4-D（計量）。CourierStore 目前記憶體版（best-effort cache，ADR-0024 定位）。
 
 **尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。

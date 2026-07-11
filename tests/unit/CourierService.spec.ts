@@ -16,6 +16,8 @@ import {
   runCourierBackup,
 } from '../../src/core/relay/CourierService';
 import { CourierStore, DEFAULT_COURIER_CONFIG } from '../../src/core/relay/CourierStore';
+import { signTombstone, senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
+import { arrayBufferToBase64 } from '../../src/utils/crypto';
 import type { CourierBus, CourierBackupDeps } from '../../src/core/relay/CourierService';
 import type { P2PEnvelope, GossipMessage } from '../../src/types';
 
@@ -306,6 +308,51 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
     const summary = await runCourierBackup(deps);
     expect(summary.rooms).toBe(1); // 只有 good 成功
     expect(courierStore.serveRoom('good').map((m) => m.messageId)).toEqual(['G']);
+  });
+});
+
+describe('CourierService — tombstone 真房籍簽章（預設驗證器）', () => {
+  async function makeMember() {
+    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const pubKey = arrayBufferToBase64(await crypto.subtle.exportKey('spki', kp.publicKey));
+    const senderId = await senderIdFromPubKey(pubKey);
+    return { privateKey: kp.privateKey, pubKey, senderId };
+  }
+
+  it('貢獻過紀錄的成員真簽墓碑 → 信使盲驗通過、刪整房', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    new CourierServer(courierBus, store, 'courier').start(); // 無 override → 用預設真驗證
+    const client = new CourierClient(memberBus, 'member');
+    client.start();
+
+    const m = await makeMember();
+    // 成員對 room1 貢獻過一筆紀錄（senderId = 其 pubKey 導出）→ 房籍成立。
+    store.deposit(rec({ roomId: 'room1', senderId: m.senderId, seq: 1, messageId: 'r1' }));
+    expect(store.serveRoom('room1')).toHaveLength(1);
+
+    const tomb = await signTombstone('room1', m.privateKey, m.pubKey);
+    const freed = await client.tombstone('room1', tomb);
+    expect(freed).toBeGreaterThan(0);
+    expect(store.serveRoom('room1')).toHaveLength(0); // 刪光
+  });
+
+  it('非成員（沒對該房貢獻過）真簽墓碑 → 拒（房籍不成立）', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    new CourierServer(courierBus, store, 'courier').start();
+    const client = new CourierClient(memberBus, 'member');
+    client.start();
+
+    const insider = await makeMember();
+    const outsider = await makeMember();
+    store.deposit(rec({ roomId: 'room1', senderId: insider.senderId, seq: 1, messageId: 'r1' }));
+
+    // outsider 用自己的真金鑰簽（簽章有效），但沒對 room1 貢獻過 → senderId 不在 store。
+    const tomb = await signTombstone('room1', outsider.privateKey, outsider.pubKey);
+    const freed = await client.tombstone('room1', tomb);
+    expect(freed).toBe(0);
+    expect(store.serveRoom('room1')).toHaveLength(1); // 不刪
   });
 });
 

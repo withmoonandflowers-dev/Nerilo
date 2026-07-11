@@ -25,6 +25,7 @@ import {
 } from '@legacy/core/relay/CourierService'
 import { FirestoreRelayDirectory } from '@legacy/core/relay/FirestoreRelayDirectory'
 import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
+import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
 import { getGossipReplicaStore } from '@legacy/services/GossipReplicaStore'
 import type { GossipMessage } from '@legacy/types'
 
@@ -83,6 +84,8 @@ export function useCourierNode() {
   let courierStore: CourierStore | null = null
   let directory: FirestoreRelayDirectory | null = null
   let nodeId = ''
+  let identity: IdentityManager | null = null // 保留供簽墓碑（sign with 房籍 pubKey/privKey）
+  let currentUid = ''
   let backupTimer: ReturnType<typeof setInterval> | null = null
   const servers: CourierServer[] = []
   const clientCache = new Map<string, CourierClient>() // courierUid → client（避免每 tick 累積訂閱）
@@ -124,6 +127,36 @@ export function useCourierNode() {
     return uids
   }
 
+  /**
+   * 房間刪除/退出時呼叫：以房籍身分簽一張墓碑，best-effort 廣播給發現的候選信使，
+   * 請它們丟掉代管副本（ADR-0024 Decision 3.3）。同時清掉本地持久複本。
+   * 全程 best-effort：簽不出/連不上/驗不過都不拋，不擋刪除主流程。
+   */
+  async function tombstoneRoom(roomId: string): Promise<void> {
+    if (!identity || !connector) return
+    let tomb
+    try {
+      const pubKey = await identity.exportPublicKey()
+      tomb = await signTombstone(roomId, identity.getPrivateKey(), pubKey)
+    } catch {
+      return // 簽不出（身分未就緒）→ 放棄廣播
+    }
+    let candidates: string[] = []
+    try {
+      candidates = await discoverCourierUids(currentUid)
+    } catch {
+      /* 無候選 */
+    }
+    for (const courierUid of candidates) {
+      try {
+        const client = await openClient(currentUid, courierUid, true)
+        if (client) await client.tombstone(roomId, tomb)
+      } catch {
+        /* 該信使失敗，續下一個 */
+      }
+    }
+  }
+
   /** 組 backup deps（真實作）。persistence 不可用（無 IndexedDB）→ null。 */
   function backupDeps(uid: string): CourierBackupDeps | null {
     const persistence = getGossipReplicaStore()
@@ -140,6 +173,7 @@ export function useCourierNode() {
   function start(uid: string) {
     if (connector) return
     if (!courierEnabled()) return // opt-out：兩端皆不啟
+    currentUid = uid
     connector = new RelayConnector(uid)
     courierStore = new CourierStore()
     directory = new FirestoreRelayDirectory(uid)
@@ -160,6 +194,7 @@ export function useCourierNode() {
         const im = new IdentityManager()
         await im.initialize()
         nodeId = im.getUserId()
+        identity = im // 保留供簽墓碑
       } catch {
         return // 無身分 → 不備份（信使角色仍在）
       }
@@ -214,6 +249,17 @@ export function useCourierNode() {
         }
         return { received: [], pushed: 0 }
       },
+      // E2E：本節點 mesh 身分（senderId），供構造「本人貢獻的紀錄」以驗房籍墓碑。
+      myNodeId: () => nodeId,
+      // E2E：以本人房籍簽 + 送墓碑給指定信使，回傳 freed（走 CourierClient.tombstone）。
+      sendTombstone: async (courierUid: string, roomId: string) => {
+        if (!identity) throw new Error('identity not ready')
+        const pubKey = await identity.exportPublicKey()
+        const tomb = await signTombstone(roomId, identity.getPrivateKey(), pubKey)
+        const client = await openClient(uid, courierUid)
+        if (!client) throw new Error('relay bus not ready')
+        return client.tombstone(roomId, tomb)
+      },
     }
     // 讓 E2E 走真 production backup 路徑（同 runCourierBackup），但確定性觸發（不等 30s interval）。
     w.__nerilo_test__.backup = {
@@ -251,6 +297,7 @@ export function useCourierNode() {
     connector = null
     courierStore = null
     directory = null
+    identity = null
     const w = globalThis as unknown as { __nerilo_test__?: TestHook }
     if (w.__nerilo_test__) {
       delete w.__nerilo_test__.relay
@@ -258,5 +305,5 @@ export function useCourierNode() {
     }
   }
 
-  return { start, stop }
+  return { start, stop, tombstoneRoom }
 }
