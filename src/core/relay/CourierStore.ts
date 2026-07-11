@@ -62,6 +62,27 @@ export interface CourierStats {
   recordCount: number;
 }
 
+/** 一筆持久化紀錄的形狀（hydrate 用）。 */
+export interface PersistedCourierRecord {
+  roomId: string;
+  msg: GossipMessage;
+  depositedAt: number;
+  bytes: number;
+}
+
+/**
+ * 持久化 port（可選）。CourierStore 以記憶體為權威（快取語義，ADR-0024），此 port 只把
+ * 增/刪鏡像到耐久層（IndexedDB），讓代管的密文跨 reload 存活。實作在 services 層（Dexie）；
+ * 省略＝純記憶體，行為與加此層前完全一致。全部 best-effort：寫入失敗不影響記憶體權威。
+ */
+export interface CourierPersistence {
+  putRecord(rec: PersistedCourierRecord): Promise<void>;
+  deleteRecord(roomId: string, senderId: string, seq: number): Promise<void>;
+  deleteRoom(roomId: string): Promise<void>;
+  loadAll(): Promise<PersistedCourierRecord[]>;
+  clear(): Promise<void>;
+}
+
 /** 紀錄的儲存體積估算：content + signature 的 UTF-8 位元組（信封其餘欄位為小常數，忽略）。 */
 export function recordBytes(msg: GossipMessage): number {
   // TextEncoder 在瀏覽器與 Node 皆有；避免 Buffer（Node-only）。
@@ -73,10 +94,61 @@ export class CourierStore {
   private readonly rooms = new Map<string, RoomHoldings>();
   private totalBytes = 0;
 
+  /** 持久化寫入串鏈（best-effort，序列化避免競態）；flush() 可等寫入落定。 */
+  private writeTail: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly config: CourierStoreConfig = DEFAULT_COURIER_CONFIG,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly persistence?: CourierPersistence
   ) {}
+
+  /** 把一個持久化寫入排進串鏈（吞錯，不影響記憶體權威）。 */
+  private persist(op: () => Promise<void>): void {
+    if (!this.persistence) return;
+    this.writeTail = this.writeTail.then(op).catch(() => undefined);
+  }
+
+  /** 等所有排入的持久化寫入落定（測試/關頁前確保耐久）。 */
+  async flush(): Promise<void> {
+    await this.writeTail;
+  }
+
+  /**
+   * 從耐久層載回代管紀錄（重載後呼叫一次）。逾 TTL 者略過並刪除；其餘重建記憶體 + 會計。
+   * 冪等安全：只補記憶體沒有的 (roomId, senderId, seq)（first-write-wins）。
+   */
+  async hydrate(): Promise<void> {
+    if (!this.persistence) return;
+    let all: PersistedCourierRecord[];
+    try {
+      all = await this.persistence.loadAll();
+    } catch {
+      return;
+    }
+    const cutoff = this.now() - this.config.ttlMs;
+    for (const p of all) {
+      if (p.depositedAt <= cutoff) {
+        this.persist(() => this.persistence!.deleteRecord(p.roomId, p.msg.senderId, p.msg.seq));
+        continue;
+      }
+      const room = this.rooms.get(p.roomId) ?? {
+        senders: new Map<string, Map<number, StoredRecord>>(),
+        bytes: 0,
+        lastAccessedAt: this.now(),
+      };
+      let seqs = room.senders.get(p.msg.senderId);
+      if (seqs?.has(p.msg.seq)) continue; // 記憶體已有 → 不覆寫
+      if (!seqs) {
+        seqs = new Map<number, StoredRecord>();
+        room.senders.set(p.msg.senderId, seqs);
+      }
+      seqs.set(p.msg.seq, { msg: p.msg, bytes: p.bytes, depositedAt: p.depositedAt });
+      room.bytes += p.bytes;
+      this.rooms.set(p.roomId, room);
+      this.totalBytes += p.bytes;
+    }
+  }
 
   /**
    * 寄存一筆密文紀錄。first-write-wins：同 (senderId, seq) 已存在則不覆寫
@@ -99,11 +171,13 @@ export class CourierStore {
       seqs = new Map<number, StoredRecord>();
       room.senders.set(msg.senderId, seqs);
     }
-    seqs.set(msg.seq, { msg, bytes, depositedAt: this.now() });
+    const depositedAt = this.now();
+    seqs.set(msg.seq, { msg, bytes, depositedAt });
     room.bytes += bytes;
     room.lastAccessedAt = this.now();
     this.rooms.set(msg.roomId, room);
     this.totalBytes += bytes;
+    this.persist(() => this.persistence!.putRecord({ roomId: msg.roomId, msg, depositedAt, bytes }));
 
     this.enforceRoomCap(msg.roomId);
     this.enforceTotalBudget();
@@ -162,6 +236,7 @@ export class CourierStore {
     const freed = room.bytes;
     this.rooms.delete(roomId);
     this.totalBytes -= freed;
+    this.persist(() => this.persistence!.deleteRoom(roomId));
     return freed;
   }
 
@@ -169,6 +244,7 @@ export class CourierStore {
   clearAll(): void {
     this.rooms.clear();
     this.totalBytes = 0;
+    this.persist(() => this.persistence!.clear());
   }
 
   /** TTL 過期清除（ADR-0024 Decision 3.1）。回傳清掉的紀錄數。 */
@@ -182,6 +258,7 @@ export class CourierStore {
             seqs.delete(seq);
             room.bytes -= rec.bytes;
             this.totalBytes -= rec.bytes;
+            this.persist(() => this.persistence!.deleteRecord(roomId, senderId, seq));
             removed++;
           }
         }
@@ -217,6 +294,7 @@ export class CourierStore {
       if (seqs && seqs.size === 0) room.senders.delete(senderId);
       room.bytes -= rec.bytes;
       this.totalBytes -= rec.bytes;
+      this.persist(() => this.persistence!.deleteRecord(roomId, senderId, seq));
     }
   }
 
@@ -230,6 +308,7 @@ export class CourierStore {
       if (this.totalBytes <= this.config.totalBudgetBytes) break;
       this.rooms.delete(roomId);
       this.totalBytes -= room.bytes;
+      this.persist(() => this.persistence!.deleteRoom(roomId));
     }
   }
 }

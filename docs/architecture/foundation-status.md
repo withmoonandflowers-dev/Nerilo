@@ -22,7 +22,7 @@
 | mesh 3–5 人可靠性 | antiEntropy（數學收斂）+ 測試工具鏈 | 🟢 邏輯完成，真實環境待驗 |
 | star→mesh 切換 bug（切換重載重複/遺失） | ADR-0023 修訂五（直接移除 star 分支） | 🟡 隨收斂消滅 |
 | 跨房：非成員找到要幫誰、怎麼連 | P4-A 名冊 ✅ / P4-B signaling+編排 | 🟢 A+B 完成；真 WebRTC relay E2E 綠（`relay-connect.spec.ts`，雙端 connected） |
-| 盲信使寄存協議（存密文、對帳回補） | P4-C · ADR-0024 · `CourierStore`+`CourierService`+`TombstoneCrypto`+`useCourierNode` | 🟢 **完成**：C.1 儲存經濟學 + C.2 bus 協議 + C.3 真通道寄存 + C.4 雙向自動對帳 + C.5 app 觸發整合（信使 always-on + 成員背景備份，預設參與可 opt-out，多候選容忍陳舊名冊）+ C.6 **房籍簽章墓碑**（盲信使驗簽章+senderId∈store 即刪；房真刪時 dashboard 廣播）。全 5 條 relay E2E 綠 |
+| 盲信使寄存協議（存密文、對帳回補） | P4-C · ADR-0024 · `CourierStore`(+`CourierReplicaStore`)+`CourierService`+`TombstoneCrypto`+`useCourierNode` | 🟢 **完成**：C.1 儲存經濟學 + C.2 bus 協議 + C.3 真通道寄存 + C.4 雙向自動對帳 + C.5 app 觸發整合 + C.6 房籍簽章墓碑 + C.7 **IndexedDB 持久化**（記憶體為權威 + Dexie 鏡像，hydrate 跨 reload 存活）。全 7 條 relay E2E 綠（含 reload 存活） |
 | 中繼計量（共簽收據→點數） | P4-D · `CourierReceipts`+`CoSignedReceipt`+`CreditEconomy` | 🟢 **完成**：信使代管 bytes → 起草收據 → 成員回簽 → 信使驗簽（雙 pubKey 綁定+雙簽+非自簽）後 recordRelayContribution 賺點，落可驗帳本。IDENTIFY 可靠遞送。真 WebRTC E2E 綠（餘額增加+帳本可驗） |
 | 防女巫（點數正當性） | App Check（程式就位，待 console 啟用） | 🟡 待啟用 |
 
