@@ -102,6 +102,12 @@ export class GossipReplicaStore implements IGossipPersistence {
       }
     });
   }
+
+  async listRooms(): Promise<string[]> {
+    // roomId 有索引；distinct 房 id（uniqueKeys 走索引，不載整表）。
+    const keys = await this.db.records.orderBy('roomId').uniqueKeys();
+    return keys.map((k) => String(k));
+  }
 }
 
 let singleton: GossipReplicaStore | null = null;

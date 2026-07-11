@@ -287,3 +287,97 @@ export class CourierClient {
     });
   }
 }
+
+/** 成員背景備份一輪需要的注入依賴（純邏輯，可測；composable 提供真實作）。 */
+export interface CourierBackupDeps {
+  /** 我持有紀錄的房 id（getGossipReplicaStore().listRooms）。 */
+  listRooms: () => Promise<string[]>;
+  /** 載入一房的持久紀錄 + floors。 */
+  loadRoom: (
+    roomId: string
+  ) => Promise<{ records: GossipMessage[]; floors: Array<{ senderId: string; floor: number }> }>;
+  /** 把信使補回來的紀錄寫進本地持久層（離線間隙落地）。 */
+  saveRecord: (roomId: string, msg: GossipMessage) => Promise<void>;
+  /**
+   * 發現候選信使（非自己）的 firebase uid，新鮮者優先。回多個以容忍陳舊名冊條目：
+   * 節點崩潰未撤回時仍留在名冊，連上去 DataChannel 永不開、對帳逾時 → 換下一個候選。
+   */
+  discoverCourierUids: () => Promise<string[]>;
+  /** 對該信使開一條 courier client（連上 + 取 bus + start）；失敗回 null。 */
+  openClient: (courierUid: string) => Promise<CourierClient | null>;
+}
+
+/**
+ * 成員背景備份一輪（app 觸發整合，ADR-0023 P4-C）：
+ * 發現候選信使 → 逐一嘗試直到「可達」的一個 → 對「我持有紀錄的每一房」做一輪 reconcile
+ * （推我有信使缺的、收信使有我缺的並落地）。全程 best-effort，任一步失敗只影響本次備份，不拋。
+ * reconcile 為 digest-based，穩態下重跑幾乎零傳輸（只送 digest）。
+ */
+export async function runCourierBackup(
+  deps: CourierBackupDeps
+): Promise<{ rooms: number; received: number; pushed: number }> {
+  const summary = { rooms: 0, received: 0, pushed: 0 };
+
+  let roomIds: string[] = [];
+  try {
+    roomIds = await deps.listRooms();
+  } catch (err) {
+    logger.warn('[runCourierBackup] listRooms failed', { err });
+    return summary;
+  }
+  if (roomIds.length === 0) return summary; // 沒資料要備份 → 不連任何信使
+
+  let candidates: string[] = [];
+  try {
+    candidates = await deps.discoverCourierUids();
+  } catch (err) {
+    logger.warn('[runCourierBackup] discover failed', { err });
+  }
+
+  for (const courierUid of candidates) {
+    // openClient 只在連線真的到 'connected'（DataChannel 開）才回 client；陳舊/不可達
+    // 候選永遠到不了 connected → 回 null → 換下一個。故到這裡即代表信使可達。
+    let client: CourierClient | null = null;
+    try {
+      client = await deps.openClient(courierUid);
+    } catch (err) {
+      logger.warn('[runCourierBackup] openClient failed', { courierUid, err });
+    }
+    if (!client) continue;
+
+    for (const roomId of roomIds) {
+      try {
+        const { records, floors } = await deps.loadRoom(roomId);
+        const localStore = buildRoomStore(records);
+        const floorMap = new Map(floors.map((f) => [f.senderId, f.floor] as const));
+        // 已連上，但信使 CourierServer 可能剛掛上（inbound 不緩衝晚訂閱者）→ 重試跨越該視窗。
+        const res = await retry(() =>
+          client!.reconcile(roomId, localStore, floorMap, (m) => {
+            void deps.saveRecord(roomId, m).catch(() => undefined); // 落地失敗不拖垮對帳
+          })
+        );
+        summary.rooms += 1;
+        summary.received += res.received;
+        summary.pushed += res.pushed;
+      } catch (err) {
+        logger.warn('[runCourierBackup] room reconcile failed', { roomId, err });
+      }
+    }
+    return summary; // 用了這個可達信使，完成本輪
+  }
+  return summary;
+}
+
+/** 有限次重試（預設 4 次、間隔 500ms）；供對帳跨越「信使伺服器尚未掛上」的短暫視窗。 */
+async function retry<T>(fn: () => Promise<T>, attempts = 4, delayMs = 500): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}

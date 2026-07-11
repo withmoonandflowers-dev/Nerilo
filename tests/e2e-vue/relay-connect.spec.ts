@@ -32,6 +32,16 @@ async function relayStates(page: Page): Promise<string[]> {
   });
 }
 
+/** 本瀏覽器信使 store 統計（test hook 暴露的 CourierStore.stats）。 */
+async function courierStats(page: Page): Promise<{ recordCount: number; roomCount: number }> {
+  return page.evaluate(() => {
+    const w = window as unknown as {
+      __nerilo_test__?: { relay?: { courierStats?: () => { recordCount: number; roomCount: number } } };
+    };
+    return w.__nerilo_test__?.relay?.courierStats?.() ?? { recordCount: 0, roomCount: 0 };
+  });
+}
+
 test.describe('陌生節點站級連線（P4-B）', () => {
   test('alice 主動連上陌生節點 bob，relay DataChannel 到 connected', async ({ browser }) => {
     // WebRTC/ICE 在模擬器下合法地慢（可達 30-60s），放寬整體 timeout。
@@ -170,6 +180,75 @@ test.describe('陌生節點站級連線（P4-B）', () => {
         { uid: courierUid }
       );
       expect(pulled.map((m) => m.messageId).sort()).toEqual(['A', 'B']);
+    } finally {
+      await teardown(member, courier);
+    }
+  });
+
+  test('production 觸發：成員背景備份把持久房間紀錄自動寄存給線上信使（P4-C app 整合）', async ({ browser }) => {
+    test.setTimeout(150_000);
+    const member = await setupUser(browser);
+    const courier = await setupUser(browser);
+    try {
+      const courierUid = await ownerUid(courier.page);
+      // 兩節點都在 dashboard 宣告 presence → 成員的 discover 才查得到信使。
+      await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
+
+      // 成員的持久層（IndexedDB）先有一筆密文紀錄（模擬曾在 room-z 收發過訊息）。
+      const record = {
+        roomId: 'room-z', senderId: 'sMember', pubKey: 'pk', seq: 3, timestamp: 5,
+        content: 'ENC:persisted-record', ttl: 3, signature: 'SIG-Z', messageId: 'Z',
+      };
+      await member.page.evaluate(async (rec) => {
+        const w = window as unknown as {
+          __nerilo_test__?: { backup?: { seedRecord?: (room: string, r: unknown) => Promise<void> } };
+        };
+        await w.__nerilo_test__!.backup!.seedRecord!('room-z', rec);
+      }, record);
+
+      // 等到「本次的線上信使」成為成員發現清單的最新候選（presence 每 5s 續期，前面測試
+      // 已拆除的殭屍節點宣告會凍結、逐漸落後）。避免共用 emulator 名冊殘留造成跨測干擾。
+      await expect
+        .poll(
+          () =>
+            member.page.evaluate(async () => {
+              const w = window as unknown as {
+                __nerilo_test__?: { backup?: { debug?: () => Promise<{ courierUids: string[] }> } };
+              };
+              return (await w.__nerilo_test__!.backup!.debug!()).courierUids;
+            }),
+          { timeout: 40_000, intervals: [1000] }
+        )
+        .toContain(courierUid);
+      // 進一步等到 live 信使排在最前（最新），確保備份第一個候選就打中它、不空耗殭屍節點。
+      await expect
+        .poll(
+          () =>
+            member.page.evaluate(async () => {
+              const w = window as unknown as {
+                __nerilo_test__?: { backup?: { debug?: () => Promise<{ courierUids: string[] }> } };
+              };
+              return (await w.__nerilo_test__!.backup!.debug!()).courierUids[0];
+            }),
+          { timeout: 40_000, intervals: [1000] }
+        )
+        .toBe(courierUid);
+
+      // 跑一輪「真 production 備份」（runCourierBackup + 真 deps；只是不等 30s interval）。
+      const summary = await member.page.evaluate(async () => {
+        const w = window as unknown as {
+          __nerilo_test__?: { backup?: { runOnce?: () => Promise<{ rooms: number; received: number; pushed: number }> } };
+        };
+        return w.__nerilo_test__!.backup!.runOnce!();
+      });
+
+      // 成員把 room-z 的紀錄推給了信使。
+      expect(summary.pushed).toBeGreaterThanOrEqual(1);
+
+      // 信使端確實收下了（透過 100% production 路徑：runCourierBackup→reconcile→CourierServer→store）。
+      await expect
+        .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 20_000, intervals: [500] })
+        .toBeGreaterThanOrEqual(1);
     } finally {
       await teardown(member, courier);
     }

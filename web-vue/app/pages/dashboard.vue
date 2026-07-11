@@ -12,8 +12,8 @@ const { error: toastError, success } = useToast()
 const { balance, relayActive, ensureInit } = useCredits()
 // 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護，並看得到其他在線節點數。
 const { peerCount, announcing, start: startPresence, stop: stopPresence } = useNodePresence()
-// P4-B relay 連線 E2E 掛鉤（僅 test mode 生效；production 零影響）
-const { start: startRelayHook, stop: stopRelayHook } = useRelayTestHook()
+// 盲信使節點（ADR-0023 P4-C）：信使角色 always-on + 成員背景備份；預設參與、可關。
+const { start: startCourierNode, stop: stopCourierNode } = useCourierNode()
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
@@ -87,7 +87,7 @@ watchEffect(() => {
   featureLog('dashboard', 'init', { uid })
   ensureInit() // 點數餘額載入（中繼狀態指示）
   void startPresence(uid) // 宣告本節點在線可守護 + 週期查在線節點數
-  startRelayHook(uid) // test mode：暴露 relay 連線驅動供 E2E（production no-op）
+  startCourierNode(uid) // 盲信使：接受寄存 + 背景備份自己房間（預設參與，可關）
   unsubFriends = FriendService.subscribeFriendships(uid, (list) => {
     friendships.value = list
   })
@@ -106,7 +106,7 @@ watchEffect(() => {
 onUnmounted(() => {
   unsubMine?.()
   unsubFriends?.()
-  void stopRelayHook() // test mode 掛鉤清理（production no-op）
+  void stopCourierNode() // 盲信使節點清理（關頁即停幫忙）
 })
 
 /** DM 房顯示對方名字（roomName 是共享欄位，雙方視角不同 → 由 friendship 解析） */

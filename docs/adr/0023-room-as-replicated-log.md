@@ -295,6 +295,14 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
 - C.4 anti-entropy 自動對帳（reconcile）：複用 `antiEntropy` 的 computeDigest/peerLacks，
   一輪雙向收斂——成員送 digest → 信使補「成員缺的」+ 回自己 digest → 成員回推「信使缺的」。
   整合測試（含 missing 洞、已一致無多餘傳輸）+ 真 WebRTC 雙向 E2E 綠。
-- 剩：tombstone 真房籍簽章驗證、app 觸發整合（何時寄存/對帳、對誰）。
+- C.5 app 觸發整合（`useCourierNode`，dashboard 掛載即啟）：
+  - 信使角色 always-on：RelayConnector.startListening → 對每條來連掛 CourierServer（共用 CourierStore）。
+  - 成員背景備份：每 30s runCourierBackup — 發現候選信使（新鮮者優先、上限 4，多候選容忍
+    崩潰未撤回的陳舊名冊條目：連線到不了 'connected' 即換下一個）→ 對「持久層持有紀錄的每一房」
+    reconcile（推信使缺的、收信使有我缺的並落地 IndexedDB）。
+  - 預設參與、可關（localStorage `nerilo.courier.enabled`，ADR-0024 Decision 3.4）；關頁即停。
+  - 真 production E2E 綠：成員 seed 一筆持久紀錄 → runCourierBackup（真 deps）→ 線上信使收下
+    （100% production 路徑，只不等 30s interval）。listRooms 加進 IGossipPersistence。
+- 剩：tombstone 真房籍簽章驗證。
 
 **尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。
