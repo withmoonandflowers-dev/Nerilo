@@ -138,11 +138,24 @@ export class RelaySignalingTransport implements SignalingTransport {
   constructor(private readonly channel: RelaySignalingChannel) {}
 
   subscribe(_cutoffMs: number, onAdded: (raw: RawSignalDoc) => void): () => void {
-    // 通道文件需先存在，子集合讀寫才被 rules 授權。
-    void this.channel.ensureChannel();
-    return this.channel.subscribe((s) =>
-      onAdded({ signalId: s.signalId, from: s.from, type: s.type, payload: s.payload })
-    );
+    // 通道文件需先存在、子集合讀取 rules 靠 get(parent).participants 授權——若在 ensureChannel
+    // 寫入落地前就掛 listener，rules 的 get() 拿到 null → permission-denied → listener 直接死掉。
+    // 故必須「先 await ensureChannel、再訂閱」。subscribe 介面同步，用 cancelled 旗標接住早退。
+    let inner: (() => void) | null = null;
+    let cancelled = false;
+    void this.channel
+      .ensureChannel()
+      .then(() => {
+        if (cancelled) return;
+        inner = this.channel.subscribe((s) =>
+          onAdded({ signalId: s.signalId, from: s.from, type: s.type, payload: s.payload })
+        );
+      })
+      .catch((err) => logger.warn('[RelaySignalingTransport] ensureChannel before subscribe failed', { err }));
+    return () => {
+      cancelled = true;
+      inner?.();
+    };
   }
 
   async send(data: Record<string, unknown>): Promise<void> {

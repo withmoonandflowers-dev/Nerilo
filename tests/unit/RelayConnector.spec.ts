@@ -1,8 +1,9 @@
 /**
  * RelayConnector 測試（P4-B 陌生節點連線編排）
  *
- * 注入假 makeConn / watchMyChannels，測「編排邏輯」——initiator 送 offer、responder
- * 對來連建連、對稱去重（不回應自己發起的）、dedup。真實 WebRTC 連線屬部署驗證。
+ * 注入假 makeConn / watchMyChannels，測「編排邏輯」——initiator initialize（內含建 DataChannel
+ * + 送 offer）、responder 對來連建連、對稱去重（不回應自己發起的）、dedup、角色旗標。
+ * 真實 WebRTC 連線屬部署驗證（tests/e2e-vue/relay-connect.spec.ts）。
  *
  * @vitest-environment node
  */
@@ -10,27 +11,32 @@ import { describe, it, expect, vi } from 'vitest';
 import { RelayConnector, type RelayConnLike } from '../../src/core/relay/RelayConnector';
 import { relayChannelId } from '../../src/core/relay/RelaySignaling';
 
-function makeFakeConn(): RelayConnLike & { initialize: ReturnType<typeof vi.fn>; createOffer: ReturnType<typeof vi.fn> } {
+function makeFakeConn(): RelayConnLike & { initialize: ReturnType<typeof vi.fn> } {
   return {
     initialize: vi.fn().mockResolvedValue(undefined),
-    createOffer: vi.fn().mockResolvedValue(undefined),
     getState: vi.fn().mockReturnValue('connecting'),
     close: vi.fn().mockResolvedValue(undefined),
   } as never;
 }
 
 describe('RelayConnector — initiator', () => {
-  it('connectToRelayNode：建連線 + initialize + 送 offer', async () => {
+  it('connectToRelayNode：以 initiator 角色建連線 + initialize（內含送 offer）', async () => {
     const conns: Array<ReturnType<typeof makeFakeConn>> = [];
+    const roles: boolean[] = [];
     const rc = new RelayConnector('me', {
-      makeConn: () => { const c = makeFakeConn(); conns.push(c); return c; },
+      makeConn: (_cid, _l, _r, isInitiator) => {
+        roles.push(isInitiator);
+        const c = makeFakeConn();
+        conns.push(c);
+        return c;
+      },
       watchMyChannels: () => () => undefined,
     });
 
     const conn = await rc.connectToRelayNode('stranger');
     expect(conns).toHaveLength(1);
+    expect(roles).toEqual([true]); // 主動方
     expect(conns[0]!.initialize).toHaveBeenCalledTimes(1);
-    expect(conns[0]!.createOffer).toHaveBeenCalledTimes(1);
     expect(conn).toBe(conns[0]);
     expect(rc.activeCount()).toBe(1);
   });
