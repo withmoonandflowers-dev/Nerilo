@@ -101,6 +101,7 @@ export class FirestoreRelayDirectory implements IRelayDirectory {
       if (options.excludeNodeId && data.nodeId === options.excludeNodeId) return;
       fresh.push({
         nodeId: data.nodeId,
+        ownerUid: data.ownerUid, // 站級 signaling 需 firebase uid（否則發現方連不起來）
         announcedAt: data.announcedAt,
         capacity: data.capacity,
         regionHint: data.regionHint,
