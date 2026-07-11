@@ -57,6 +57,8 @@ describe('FirestoreRelayDirectory', () => {
     const dir = new FirestoreRelayDirectory('uid-me', 5_000, () => 100_000);
     const res = await dir.query({ excludeNodeId: 'me' });
     expect(res.map((r) => r.nodeId)).toEqual(['high', 'low']); // capacity 高者前
+    // ownerUid（firebase uid）必須一起回傳——否則發現方開不了站級 signaling channel（P4-B blocker）
+    expect(res.map((r) => r.ownerUid)).toEqual(['u2', 'u1']);
   });
 
   it('query limit 截斷', async () => {

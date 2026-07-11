@@ -82,6 +82,8 @@ export class RelayConnector {
    * 主動連上一個（RelayDirectory 發現的）陌生中繼節點。initiator：initialize + 送 offer。
    * @returns 連線管理器（可查 getState / close）
    */
+  // 注意：strangerUid = 對方的 **firebase uid**（RelayAnnouncement.ownerUid，非 nodeId/mesh
+  // userId）——relaySignals channel 的 rules 驗 `auth.uid in participants`，故需 firebase uid。
   async connectToRelayNode(strangerUid: string): Promise<RelayConnLike> {
     if (strangerUid === this.localUid) throw new RangeError('不能連自己');
     const channelId = relayChannelId(this.localUid, strangerUid);
