@@ -19,6 +19,12 @@ import type { RelayNodeMetrics } from './types';
 /** 一則中繼可用性宣告 */
 export interface RelayAnnouncement {
   nodeId: string;
+  /**
+   * 節點的 Firebase auth uid（站級 signaling 用）。nodeId 是 mesh userId（識別/隱私），
+   * 但開 relaySignals channel 需 firebase uid（rules 驗 `auth.uid in participants`）。
+   * 兩者都要穿過發現層，RelayConnector 才連得起來（Firestore 版必填；記憶體模擬可省）。
+   */
+  ownerUid?: string;
   /** 宣告時間戳（TTL 判斷用） */
   announcedAt: number;
   /** 相對願意程度/容量（選路參考，選填） */
