@@ -1,9 +1,7 @@
 import { MeshConnection, REJOIN_READY_TIMEOUT_MS } from './MeshConnection';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
-import { RoomService } from '../../services/RoomService';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../config/firebase';
 import { logger } from '../../utils/logger';
+import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { AdaptiveTopologyManager, type TopologyStrategy, type GossipConfig } from './AdaptiveTopologyManager';
 
 /**
@@ -39,6 +37,7 @@ export class MeshTopologyManager {
     private roomId: string,
     private localUserId: string,
     private localFirebaseUid: string,
+    private directory: IRoomDirectory, // 名冊/發現後端（預設 Firestore；SDK 可注入）
     private signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端
   ) {}
 
@@ -91,16 +90,10 @@ export class MeshTopologyManager {
    * 這解決了「所有人同時加入，互相看不到」的競態問題。
    */
   private startReactiveDiscovery(): void {
-    const roomRef = doc(db, 'p2pRooms', this.roomId);
-
-    this.discoveryUnsubscribe = onSnapshot(roomRef, (snapshot) => {
-      if (!snapshot.exists()) return;
-      const data = snapshot.data();
-      if (!data.meshIdentities) return;
-
+    this.discoveryUnsubscribe = this.directory.watchIdentities((snapshot) => {
       const newCandidates: string[] = [];
 
-      for (const [firebaseUid, identity] of Object.entries(data.meshIdentities)) {
+      for (const [firebaseUid, identity] of Object.entries(snapshot.meshIdentities)) {
         if (firebaseUid === this.localFirebaseUid) continue;
         const typedIdentity = identity as { userId: string; pubKey: string; joinedAt: unknown };
         const userId = typedIdentity.userId;
@@ -153,8 +146,6 @@ export class MeshTopologyManager {
           logger.error('[MeshTopologyManager] Reactive connect error', { error });
         });
       }
-    }, (error) => {
-      logger.warn('[MeshTopologyManager] Reactive discovery error', { error });
     });
   }
 
@@ -403,29 +394,26 @@ export class MeshTopologyManager {
   private async discoverNodes(): Promise<string[]> {
     const discoveredUserIds = new Set<string>();
     
-    // 方法 1：從 Firestore 獲取房間參與者和 mesh 身分資訊
+    // 方法 1：從 directory 取名冊（預設 Firestore，SDK 可注入自架後端）
     try {
-      const room = await RoomService.getRoom(this.roomId, true);
-      if (room && room.participants) {
-        // 獲取 meshIdentities
-        if (room.meshIdentities) {
-          for (const [firebaseUid, identity] of Object.entries(room.meshIdentities)) {
-            if (firebaseUid !== this.localFirebaseUid) {
-              discoveredUserIds.add(identity.userId);
-              this.identityMap.set(firebaseUid, identity.userId);
-            }
+      const snap = await this.directory.getSnapshot();
+      const entries = Object.entries(snap.meshIdentities);
+      if (entries.length > 0) {
+        for (const [firebaseUid, identity] of entries) {
+          if (firebaseUid !== this.localFirebaseUid) {
+            discoveredUserIds.add(identity.userId);
+            this.identityMap.set(firebaseUid, identity.userId);
           }
-        } else if (room.participants.length >= 2) {
-          // 如果還沒有 meshIdentities，但已經有參與者，等待一下
-          // 其他參與者可能還在註冊身分
-          logger.info('[MeshTopologyManager] No meshIdentities yet, participants may still be registering', {
-            roomId: this.roomId,
-            participants: room.participants.length,
-          });
         }
+      } else if (snap.participants.length >= 2) {
+        // 還沒有 meshIdentities 但已有參與者：其他人可能還在註冊身分
+        logger.info('[MeshTopologyManager] No meshIdentities yet, participants may still be registering', {
+          roomId: this.roomId,
+          participants: snap.participants.length,
+        });
       }
     } catch (error) {
-      logger.warn('[MeshTopologyManager] Failed to get room from Firestore', { error });
+      logger.warn('[MeshTopologyManager] Failed to get room snapshot', { error });
     }
     
     // 方法 2：從現有鄰居獲取他們的鄰居列表（簡化版，暫時不實作）
