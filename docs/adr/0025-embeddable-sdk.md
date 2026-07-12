@@ -55,9 +55,12 @@ React）、wire codec、恰好一次語義、port 雛形（`IChatStorage`/`IRoom
     整條靜態 value-import 圖 firebase 檔數 5 → 0**（trace 驗證）。參數維持選填 → 零呼叫端/測試/
     composition-root 更動。新增 `createChatClient({signaling,directory,storage})` turnkey 工廠 +
     `InMemoryChatStorage`,sdkSurface 測試證明「全注入記憶體後端可建出完整引擎、不需 Firebase」。
-  - **剩最後一哩（純打包）dist build**：`exports` 目前指向源碼 `.ts`（TS 消費者可用）。要能
-    `npm publish` 給 JS 消費者,需 tsc/tsup 產 `dist/*.js`+`.d.ts` 並把 `exports` 指向 dist。
-    純 toolchain 設定,不再動核心程式。
+  - **dist build（已落地）**：`npm run build:sdk` = esbuild `--bundle --splitting --format=esm
+    --packages=external`（把 Firestore/預設 adapter 切進動態 chunk → `dist/index.js` eager 進入點
+    零 firebase 靜態 import）＋ `tsc -p tsconfig.sdk.json` 產 `.d.ts`。`package.json` 的
+    `main`/`module`/`types`/`exports`/`files` 指向 dist，`prepublishOnly` 自動 build。實測純
+    Node（無 Vite/Firebase）`import('./dist/index.js')` 成功、16 個 export 全可用、`InMemoryChatStorage`
+    可跑。dist gitignore（publish 時才產）。**L2 可嵌入 SDK 完整達成**。
 - **P3 契約 + 範例 + 打包**：`package.json` 的 `exports`/build（`@nerilo/sdk`）、版本化
   public types、第三方視角 quickstart 範例、integration 測試。
 
