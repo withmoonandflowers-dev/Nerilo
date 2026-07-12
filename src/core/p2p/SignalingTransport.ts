@@ -52,6 +52,12 @@ export interface SignalingTransport {
 }
 
 /**
+ * 依 (roomId, channelLabel) 造一個 SignalingTransport。mesh 每條鄰居連線各造一個
+ * （channelLabel 不同）。這是 SDK 的後端注入縫（P2）：預設走 Firestore，第三方可換自架。
+ */
+export type SignalingFactory = (roomId: string, channelLabel: string) => SignalingTransport;
+
+/**
  * 房內 signaling：p2pRooms/{roomId}/signals。行為與重構前的 P2PConnectionManager
  * 內嵌邏輯逐字一致（同 collection、同 lookback 查詢、同 channelLabel 清理過濾）。
  */
