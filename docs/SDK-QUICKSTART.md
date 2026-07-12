@@ -8,18 +8,20 @@ mesh / gossip / crypto 不列入契約、會持續重構。
 > 初始化的 Firebase 環境）。P2 會把 signaling / auth 改成可注入，屆時同一份 `NeriloClient`
 > 程式碼可換上自架 WebSocket 等後端而 **API 不變**。詳見 [ADR-0025](adr/0025-embeddable-sdk.md)。
 
-## 安裝（現況：源碼層套件）
+## 安裝 / 建置
 
-`package.json` 已設 `exports`，可從套件根或 `/sdk` 進入（源碼層，TS 消費者）：
+`npm run build:sdk` 產出 `dist/`（esbuild bundle + tsc `.d.ts`），`package.json` 的
+`main`/`module`/`types`/`exports` 都指向它，即可 `npm publish` 給 JS/TS 消費者：
 
 ```ts
-import { NeriloClient, createFirestoreChatClient, type ChatMessage } from 'nerilo'
+import { NeriloClient, createChatClient, type ChatMessage } from 'nerilo'
 // 或 'nerilo/sdk'
 ```
 
-這顆 barrel 的**靜態圖無 Firebase**：`NeriloClient`、純 reducer、`InMemory*` 參考 adapter、
-型別都可在**無 Firebase** 環境 import 使用；只有 `createFirestoreChatClient` 會（動態）拉
-Firestore。（可 `npm publish` 的 dist build 為 P3-final，見 [ADR-0025](adr/0025-embeddable-sdk.md)。）
+**firebase-free 進入點**：build 用 `--splitting`，把 Firestore/預設 adapter 切進**動態 chunk**，
+`dist/index.js`（eager 進入點）**零 Firebase 靜態 import**。實測在**純 Node（無 Vite、無 Firebase）**
+`import('nerilo')` 可載入,`NeriloClient`/`createChatClient`/純 reducer/`InMemory*`/型別全可用；
+只有真的呼叫 `createChatClient`（省略後端時）才動態載入 Firestore chunk。
 
 ## 30 秒上手
 

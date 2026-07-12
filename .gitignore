@@ -68,3 +68,6 @@ coverage/
 # Stryker mutation testing
 reports/
 .stryker-tmp/
+
+# SDK build 產物（publish 時由 build:sdk 產）
+/dist
