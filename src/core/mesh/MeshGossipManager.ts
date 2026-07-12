@@ -12,6 +12,7 @@ import { RelayManager } from '../relay/RelayManager';
 import { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
+import type { SignalingFactory } from '../p2p/SignalingTransport';
 
 /**
  * Mesh Gossip 管理器
@@ -39,7 +40,10 @@ export class MeshGossipManager {
    */
   private typingListeners: Set<(data: { userId: string; isTyping: boolean }) => void> = new Set();
 
-  constructor(private roomId: string) {
+  constructor(
+    private roomId: string,
+    private signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端
+  ) {
     this.identityManager = new IdentityManager();
     this.securityManager = new SecurityManager();
   }
@@ -87,7 +91,8 @@ export class MeshGossipManager {
       this.topologyManager = new MeshTopologyManager(
         this.roomId,
         userId,
-        firebaseUid
+        firebaseUid,
+        this.signalingFactory
       );
 
       // 4. 初始化 PeerScoring & RelayManager
