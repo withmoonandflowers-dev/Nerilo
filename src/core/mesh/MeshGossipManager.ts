@@ -292,12 +292,13 @@ export class MeshGossipManager {
   async sendMessage(
     content: string,
     messageId?: string,
-    channel?: GossipMessage['channel']
+    channel?: GossipMessage['channel'],
+    timestamp?: number
   ): Promise<void> {
     if (!this.initialized || !this.messageHandler) {
       throw new Error('MeshGossipManager not initialized. Call initialize() first.');
     }
-    return await this.messageHandler.sendMessage(content, messageId, channel);
+    return await this.messageHandler.sendMessage(content, messageId, channel, timestamp);
   }
 
   /**

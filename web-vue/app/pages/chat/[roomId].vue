@@ -6,6 +6,7 @@ import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
+import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
 import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
@@ -51,6 +52,29 @@ function reactionChips(messageId: string): Array<{ emoji: string; count: number;
   return Object.entries(byEmoji).map(([emoji, froms]) => ({
     emoji, count: froms.length, mine: froms.includes(myMeshId.value),
   }))
+}
+// ── 已讀人數（per-member 水位；聚合見 readReceipts.ts）──
+const readState = ref<ReadState>({})
+let myWatermark = '' // 上次送出的自身水位（僅前進才再送，天然限流）
+/** 我目前看到的最高訊息水位；若前進了就樂觀套用並廣播（只在我正在看時呼叫）。 */
+function advanceMyRead() {
+  if (!meshChat || !myMeshId.value) return
+  let top = ''
+  for (const m of messages.value) {
+    const k = orderKeyOf(m)
+    if (k > top) top = k
+  }
+  if (!top || top <= myWatermark) return // 未前進 → 不送
+  myWatermark = top
+  readState.value = applyRead(readState.value, { from: myMeshId.value, watermark: top }) // 樂觀（自身不計入顯示）
+  void meshChat.sendRead(top)
+}
+/** 只在自己訊息下顯示：已讀人數（3+ 人房「已讀 N」；2 人房對方讀過即「已讀」）。 */
+function readReceiptText(msg: ChatMessage): string {
+  if (!myMeshId.value) return ''
+  const n = readCount(readState.value, orderKeyOf(msg), myMeshId.value) // author=我 → 自動排除自己
+  if (n <= 0) return ''
+  return Math.max(0, memberCount.value - 1) > 1 ? `已讀 ${n}` : '已讀'
 }
 // ── 訊息回覆 ──
 const replyingTo = ref<{ messageId: string; text: string; mine: boolean } | null>(null)
@@ -188,9 +212,13 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     svc.onMessage((msg) => addMessage(msg))
     // 表情 reactions：遠端事件套進聚合（本機送出時已樂觀套用）
     svc.onReaction((ev) => { reactions.value = applyReaction(reactions.value, ev) })
+    // 已讀水位：遠端成員的水位套進聚合（單調取 max）
+    svc.onRead((ev) => { readState.value = applyRead(readState.value, ev) })
     // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
     typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
-    svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
+    svc.loadHistory()
+      .then((history) => { history.forEach((m) => addMessage(m)); advanceMyRead() })
+      .catch(() => {})
     // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
     meshStateInterval = setInterval(() => {
       if (!meshChat) return
@@ -452,7 +480,7 @@ function onScroll() {
   const el = listEl.value
   if (!el) return
   isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-  if (isNearBottom.value) unseenCount.value = 0
+  if (isNearBottom.value) { unseenCount.value = 0; advanceMyRead() } // 捲到底＝看到最新 → 推進已讀水位
 }
 
 function scrollToBottom(smooth = true) {
@@ -467,7 +495,7 @@ watch(
   (len, prevLen) => {
     if (len <= prevLen) return
     const last = messages.value[len - 1]
-    if (isNearBottom.value || (last && isMine(last))) scrollToBottom()
+    if (isNearBottom.value || (last && isMine(last))) { scrollToBottom(); advanceMyRead() } // 在底部看到新訊息 → 推進水位
     else unseenCount.value += len - prevLen
   }
 )
@@ -590,13 +618,16 @@ async function leaveRoom() {
           <div v-if="row.showTime" class="msg-meta">
             <span>{{ formatTime(row.msg.timestamp) }}</span>
           </div>
-          <div v-if="row.mine && row.msg.deliveryStatus && (row.msg.messageId === lastMineId || row.msg.deliveryStatus === 'failed')"
+          <div v-if="row.mine && ((row.msg.messageId === lastMineId && (readReceiptText(row.msg) || row.msg.deliveryStatus)) || row.msg.deliveryStatus === 'failed')"
                class="msg-status" :class="{ 'msg-status--failed': row.msg.deliveryStatus === 'failed' }">
             <template v-if="row.msg.deliveryStatus === 'failed'">
               傳送失敗 ·
               <button type="button" class="msg-status__retry" @click="handleResend(row.msg)">重新傳送</button>
             </template>
-            <template v-else>{{ statusLabel[row.msg.deliveryStatus] }}</template>
+            <template v-else-if="readReceiptText(row.msg)">
+              <span :data-testid="`read-receipt-${row.msg.messageId}`">{{ readReceiptText(row.msg) }}</span>
+            </template>
+            <template v-else-if="row.msg.deliveryStatus">{{ statusLabel[row.msg.deliveryStatus] }}</template>
           </div>
         </div>
       </TransitionGroup>

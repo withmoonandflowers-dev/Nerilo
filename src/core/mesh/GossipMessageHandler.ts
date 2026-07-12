@@ -161,7 +161,8 @@ export class GossipMessageHandler {
   async sendMessage(
     content: string,
     messageId?: string,
-    channel?: GossipMessage['channel']
+    channel?: GossipMessage['channel'],
+    timestamp?: number
   ): Promise<void> {
     // Rate limiting
     if (!this.checkSendRate(this.userId)) {
@@ -212,7 +213,9 @@ export class GossipMessageHandler {
       senderId: this.userId,
       pubKey: await this.identityManager.exportPublicKey(),
       seq: this.seq,
-      timestamp: Date.now(),
+      // 呼叫端可帶入 timestamp，讓寄件端本機回音與線上複本共用同一時戳（已讀水位跨端比對需
+      // 同一 orderKey；否則本機另取 Date.now() 會與線上值分歧）。未帶則自取。
+      timestamp: timestamp ?? Date.now(),
       content: wireContent,
       ttl: gossipConfig.ttl,
       ...(messageId !== undefined ? { messageId } : {}),

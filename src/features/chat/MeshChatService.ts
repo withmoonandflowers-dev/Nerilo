@@ -4,6 +4,7 @@ import { indexedDBService } from '../../services/IndexedDBService';
 import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
 import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallback';
 import type { ReactionEvent, ReactionOp } from './reactions';
+import type { ReadEvent } from './readReceipts';
 import { logger } from '../../utils/logger';
 
 /**
@@ -18,6 +19,8 @@ export class MeshChatService {
   private gameListeners: Set<(env: P2PEnvelope) => void> = new Set();
   /** 表情 reaction 監聽器（channel:'reaction'）。content 是 {messageId,emoji,op} JSON。 */
   private reactionListeners: Set<(r: ReactionEvent) => void> = new Set();
+  /** 已讀水位監聽器（channel:'read'）。content 是 {watermark} JSON。 */
+  private readListeners: Set<(r: ReadEvent) => void> = new Set();
   private messageCounter = 0;
   /** 本機的 mesh userId（hash pubKey）。gossip senderId 用此，非 firebase uid。 */
   private meshUserId: string | null = null;
@@ -81,6 +84,22 @@ export class MeshChatService {
         }
         return;
       }
+      // 已讀水位（channel:'read'）：content 是 {watermark} JSON → 分流給 read 監聽器。
+      // 走同一條可靠 + E2EE gossip 管線；聚合單調冪等（見 readReceipts.ts），亂序仍收斂。
+      if (gossipMessage.channel === 'read') {
+        if (gossipMessage.senderId === this.meshUserId) return; // 自己的回音（本機已樂觀套用）
+        try {
+          const { watermark } = JSON.parse(gossipMessage.content) as { watermark: string };
+          if (typeof watermark !== 'string') return;
+          const ev: ReadEvent = { from: gossipMessage.senderId, watermark };
+          this.readListeners.forEach((l) => {
+            try { l(ev); } catch (error) { logger.error('[MeshChatService] Error in read listener', { error }); }
+          });
+        } catch {
+          logger.warn('[MeshChatService] malformed read receipt ignored', { roomId: this.roomId, seq: gossipMessage.seq });
+        }
+        return;
+      }
       // 通道分流（M4）：非 chat 通道（如 'keyx'）不進聊天顯示。
       if (gossipMessage.channel !== undefined && gossipMessage.channel !== 'chat') return;
 
@@ -120,15 +139,17 @@ export class MeshChatService {
     // 未傳入時自生：自增 counter 避免同一毫秒內多則訊息 ID 碰撞。
     const messageId = providedMessageId ?? `${this.localUid}-${Date.now()}-${++this.messageCounter}`;
 
+    // 時戳只取一次：同時給線上複本與本機回音，兩端 orderKey 一致（已讀水位跨端比對需此）。
+    const timestamp = Date.now();
     // id 一併進 gossip payload：收端跨傳輸路徑（mesh / Firestore 備援）以同 id 去重
-    await this.meshGossipManager.sendMessage(content, messageId);
-    
+    await this.meshGossipManager.sendMessage(content, messageId, undefined, timestamp);
+
     // 建立 ChatMessage（用於本地顯示）
     const chatMessage: ChatMessage = {
       messageId,
       from: this.localUid,
       content,
-      timestamp: Date.now(),
+      timestamp,
     };
 
     await this.chatStorage.saveChatMessage(chatMessage, this.roomId);
@@ -188,6 +209,26 @@ export class MeshChatService {
     this.reactionListeners.add(listener);
     return () => {
       this.reactionListeners.delete(listener);
+    };
+  }
+
+  /**
+   * 送已讀水位（channel:'read'，走可靠 + E2EE gossip 管線）。
+   * watermark 是單調遞增的 orderKey；固定 messageId（rd-<我>）讓跨傳輸路徑對同一人去重，
+   * gossip 協議層仍以 (senderId, seq) 區分每次更新，故新水位照樣傳播。聚合取 max（見
+   * readReceipts.ts），亂序/重送安全。呼叫端請只在水位「前進」時送並節流。
+   */
+  async sendRead(watermark: string): Promise<void> {
+    const payload = JSON.stringify({ watermark });
+    const id = `rd-${this.meshUserId ?? this.localUid}`;
+    await this.meshGossipManager.sendMessage(payload, id, 'read');
+  }
+
+  /** 監聽已讀水位事件（channel:'read'）。 */
+  onRead(listener: (r: ReadEvent) => void): () => void {
+    this.readListeners.add(listener);
+    return () => {
+      this.readListeners.delete(listener);
     };
   }
 
