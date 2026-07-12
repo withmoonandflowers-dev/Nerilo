@@ -5,9 +5,9 @@ import { GossipMessageHandler } from './GossipMessageHandler';
 import { RoomKeyCoordinator, rosterFromRoom } from './RoomKeyCoordinator';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
-import { RoomService } from '../../services/RoomService';
 import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
-import { auth } from '../../config/firebase';
+import { FirestoreRoomDirectory } from '../../services/FirestoreRoomDirectory';
+import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { RelayManager } from '../relay/RelayManager';
 import { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
@@ -42,7 +42,9 @@ export class MeshGossipManager {
 
   constructor(
     private roomId: string,
-    private signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端
+    private localUid: string, // signaling/名冊身分 id（上層注入，取代 auth.currentUser）
+    private signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端
+    private directory: IRoomDirectory = new FirestoreRoomDirectory(roomId, localUid) // 省略＝Firestore
   ) {
     this.identityManager = new IdentityManager();
     this.securityManager = new SecurityManager();
@@ -74,13 +76,13 @@ export class MeshGossipManager {
         });
       }
 
-      // 2. 註冊身分到 Firestore
-      const firebaseUid = auth.currentUser?.uid;
+      // 2. 註冊身分到名冊（directory；預設 Firestore，SDK 可注入）
+      const firebaseUid = this.localUid; // 由上層注入（取代 auth.currentUser，去 Firebase 耦合）
       if (!firebaseUid) {
         throw new Error('User not authenticated');
       }
 
-      await RoomService.updateMeshIdentity(this.roomId, firebaseUid, userId, pubKey, ecdhPubKey);
+      await this.directory.registerIdentity({ userId, pubKey, ecdhPubKey });
       logger.info('[MeshGossipManager] Identity registered', {
         roomId: this.roomId,
         firebaseUid,
@@ -92,6 +94,7 @@ export class MeshGossipManager {
         this.roomId,
         userId,
         firebaseUid,
+        this.directory,
         this.signalingFactory
       );
 
@@ -130,8 +133,8 @@ export class MeshGossipManager {
             // 名冊＝meshIdentities ∩ participants（離開者 meshIdentity 未即時清 →
             // 必須交集 participants，否則離開者續留名冊、續被封鑰 → 無前向保密，見 rosterFromRoom）。
             loadRoster: async () => {
-              const room = await RoomService.getRoom(this.roomId, false);
-              return rosterFromRoom(room?.meshIdentities, room?.participants);
+              const snap = await this.directory.getSnapshot(true); // preferCached：週期輪詢用快取即可
+              return rosterFromRoom(snap.meshIdentities, snap.participants);
             },
             sendKeyx: (content) => this.messageHandler!.sendMessage(content, undefined, 'keyx'),
             applyLocalKey: (key, epoch) => this.messageHandler!.setContentKey(key, epoch),

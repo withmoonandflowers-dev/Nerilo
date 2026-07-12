@@ -6,6 +6,7 @@ import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallb
 import type { ReactionEvent, ReactionOp } from './reactions';
 import type { ReadEvent } from './readReceipts';
 import type { SignalingFactory } from '../../core/p2p/SignalingTransport';
+import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { logger } from '../../utils/logger';
 
 /**
@@ -30,9 +31,10 @@ export class MeshChatService {
     private roomId: string,
     private localUid: string,
     chatStorage: IChatStorage = indexedDBService,
-    signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端（P2）
+    signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端（P2a）
+    directory?: IRoomDirectory // 省略＝Firestore 名冊/發現；SDK 注入自架後端（P2b）
   ) {
-    this.meshGossipManager = new MeshGossipManager(roomId, signalingFactory);
+    this.meshGossipManager = new MeshGossipManager(roomId, localUid, signalingFactory, directory);
     this.chatStorage = chatStorage;
   }
 

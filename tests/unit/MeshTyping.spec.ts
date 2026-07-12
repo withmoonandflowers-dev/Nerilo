@@ -91,7 +91,7 @@ describe('MeshGossipManager typing（P2-③ Phase 1）', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     neighbors = [];
-    manager = new MeshGossipManager('room-typing');
+    manager = new MeshGossipManager('room-typing', 'uid-typing');
   });
 
   afterEach(async () => {
