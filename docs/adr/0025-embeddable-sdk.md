@@ -34,10 +34,17 @@ React）、wire codec、恰好一次語義、port 雛形（`IChatStorage`/`IRoom
     省略即維持 Firestore（`P2PManager`/`P2PConnectionManager` 早已接受注入,故零行為變更,
     預設路徑由既有 mesh e2e 全綠背書）。附 `InMemorySignalingHub`/`InMemorySignalingTransport`
     參考實作（無 Firebase）+ 契約測試,證明這道縫真的可替換,也是自架 WebSocket 後端的形狀。
-  - **P2b（未做）discovery 可注入**：`MeshTopologyManager` 目前仍直接用 Firestore 讀
-    `meshIdentities`/`RoomService` 做節點發現,`MeshGossipManager` 用 `auth.currentUser`。
-    要「完全不吞 Firebase」需把 discovery/rooms/auth 抽成 `IRoomDirectory`/`IAuthProvider`
-    port 並注入。這是比 P2a 大的一塊。
+  - **P2b（已落地）discovery + auth 可注入**：把節點發現抽成 `IRoomDirectory` port
+    （`registerIdentity`/`watchIdentities`/`getSnapshot`），`MeshTopologyManager` 與
+    `MeshGossipManager` 改依賴它而非直接 `onSnapshot`/`RoomService`。auth 則直接把 uid
+    從 `MeshChatService` 串下去（取代 `auth.currentUser`）。兩個 mesh 檔已無任何 firebase
+    import。預設 `FirestoreRoomDirectory`（行為與重構前逐字一致,rejoin×4 + mesh e2e 全綠
+    背書）；附 `InMemoryRoomDirectory` 零 Firebase 參考實作 + 契約測試。
+  - **P3（未做）import 隔離 + 打包**：`config/firebase` 讀 `import.meta.env`（Vite 限定）,
+    且預設 adapter（`RoomSignalingTransport`/`FirestoreRoomDirectory`）仍被核心圖靜態 import
+    → 在非 Vite 環境 import 核心仍會拉到 firebase。要讓第三方「連 import 都不碰 Firebase」,
+    需把預設 adapter 移到獨立檔、以動態 import 隔離,並補 `package.json` 的 `exports`/build。
+    這是打包層的事,不影響已設定 Firebase 者注入自架後端。
 - **P3 契約 + 範例 + 打包**：`package.json` 的 `exports`/build（`@nerilo/sdk`）、版本化
   public types、第三方視角 quickstart 範例、integration 測試。
 

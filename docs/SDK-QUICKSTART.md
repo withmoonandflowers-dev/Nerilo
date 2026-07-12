@@ -75,22 +75,30 @@ await client.dispose()
 import { applyRead, readCount, orderKeyOf, applyReaction } from 'nerilo/src/sdk'
 ```
 
-## 進階：替換 signaling 後端（P2a 已可用）
+## 進階：替換後端（P2 已可用）
 
-signaling 這道縫已可注入。`createFirestoreChatClient` 收選填 `signaling: SignalingFactory`
-（`(roomId, channelLabel) => SignalingTransport`）；省略即走 Firestore。附一顆無 Firebase 的
-記憶體參考實作，也是自架 WebSocket 後端的形狀：
+**signaling**（P2a）與**節點發現 directory**（P2b）兩道縫都可注入，省略即走 Firestore。
+附零 Firebase 的記憶體參考實作，也是自架後端的形狀：
 
 ```ts
-import { createFirestoreChatClient, InMemorySignalingHub, InMemorySignalingTransport } from 'nerilo/src/sdk'
+import {
+  createFirestoreChatClient,
+  InMemorySignalingHub, InMemorySignalingTransport,
+  InMemoryRoomDirectoryHub, InMemoryRoomDirectory,
+} from 'nerilo/src/sdk'
 
-const hub = new InMemorySignalingHub()   // 換成你的 WebSocket 匯流排即可
+const sig = new InMemorySignalingHub()    // 換成你的 WebSocket 匯流排
+const dir = new InMemoryRoomDirectoryHub() // 換成你的名冊/發現後端
+
 const client = await createFirestoreChatClient({
   roomId, userId,
-  signaling: (roomId, channelLabel) => new InMemorySignalingTransport(hub, roomId, channelLabel),
+  signaling: (r, ch) => new InMemorySignalingTransport(sig, r, ch),
+  directory: new InMemoryRoomDirectory(dir, roomId, userId),
 })
 ```
 
-> **P2a 界線（誠實）**：目前只有 **signaling** 可注入；**節點發現（discovery）** 與
-> **storage** 仍走 Firestore。要「完全不吞 Firebase」需等 P2b 把 discovery/auth 抽成
-> `IRoomDirectory`/`IAuthProvider` port。見 [ADR-0025](adr/0025-embeddable-sdk.md)。
+> **界線（誠實）**：signaling + discovery + auth（uid 直接注入）都已脫離 Firebase；
+> **storage** 仍走 IndexedDB 預設。另外 `config/firebase` 讀 `import.meta.env`，且預設
+> adapter 仍被核心圖靜態 import → 在**非 Vite 環境** import 核心仍會拉到 firebase。要讓
+> 「連 import 都不碰 Firebase」需 **P3** 的 import 隔離 + 打包。見
+> [ADR-0025](adr/0025-embeddable-sdk.md)。
