@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "Firebase + WebRTC P2P 即時互動平台",
   "type": "module",
+  "//sdk": "可嵌入 SDK 公開出口（源碼層；dist build 為 P3-final）。內部以 @/ @legacy 別名解析，不經此。",
+  "exports": {
+    ".": "./src/sdk/index.ts",
+    "./sdk": "./src/sdk/index.ts"
+  },
   "scripts": {
     "dev": "vite",
     "dev:test": "vite --port 4173 --strictPort --mode test",

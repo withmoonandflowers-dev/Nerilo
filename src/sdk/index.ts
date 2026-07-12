@@ -20,6 +20,7 @@ export type { IChatStorage, IRoomService, IRoomDirectory, RoomSnapshot, Director
 // 純記憶體參考實作(無 Firebase);自架後端可照此形狀
 export { InMemorySignalingHub, InMemorySignalingTransport } from '../core/p2p/InMemorySignalingTransport';
 export { InMemoryRoomDirectory, InMemoryRoomDirectoryHub } from '../core/mesh/InMemoryRoomDirectory';
+export { InMemoryChatStorage } from '../core/storage/InMemoryChatStorage';
 
 // 公開資料型別
 export type { ChatMessage, HLCTimestamp } from '../types';
