@@ -37,17 +37,31 @@ export { encodeContent, decodeContent } from '../features/chat/messageContent';
  * 需在已初始化 Firebase 的環境呼叫(P1 限制;P2 提供可注入後端的工廠)。
  * 用動態 import 讓「只取型別/純函式」的引用不會把 Firebase 靜態拉進相依圖。
  */
-export async function createFirestoreChatClient(config: {
+/**
+ * 通用工廠：建一個 NeriloClient。三個後端全可注入（signaling / directory / storage）。
+ * 省略者延到 initialize() 才動態載入預設 Firestore/IndexedDB —— 故**全部注入時，這條建構路徑
+ * 的靜態相依圖無 Firebase**（見 sdkSurface 測試；MeshChatService 圖已 0 firebase）。
+ */
+export async function createChatClient(config: {
   roomId: string;
   userId: string;
-  /** 選填:注入自訂 signaling 後端(P2a)。省略＝Firestore。 */
-  signaling?: import('../core/p2p/SignalingTransport').SignalingFactory;
-  /** 選填:注入自訂名冊/發現後端(P2b)。省略＝Firestore。 */
-  directory?: import('../ports').IRoomDirectory;
+  signaling?: import('../core/p2p/SignalingTransport').SignalingFactory; // 省略＝Firestore（延遲）
+  directory?: import('../ports').IRoomDirectory;                          // 省略＝Firestore（延遲）
+  storage?: import('../ports').IChatStorage;                              // 省略＝IndexedDB（瀏覽器）
 }): Promise<NeriloClient> {
   const { MeshChatService } = await import('../features/chat/MeshChatService');
   const engine: IChatEngine = new MeshChatService(
-    config.roomId, config.userId, undefined, config.signaling, config.directory
+    config.roomId, config.userId, config.storage, config.signaling, config.directory
   );
   return new NeriloClient(engine);
+}
+
+/** Firestore 便利工廠（＝createChatClient 省略後端 → 延遲載入 Firestore/IndexedDB 預設）。 */
+export async function createFirestoreChatClient(config: {
+  roomId: string;
+  userId: string;
+  signaling?: import('../core/p2p/SignalingTransport').SignalingFactory;
+  directory?: import('../ports').IRoomDirectory;
+}): Promise<NeriloClient> {
+  return createChatClient(config);
 }

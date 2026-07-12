@@ -46,11 +46,18 @@ React）、wire codec、恰好一次語義、port 雛形（`IChatStorage`/`IRoom
       opt-in 的 `createFirestoreChatClient` 動態 import）。加了 `InMemoryChatStorage` 補齊可注入
       四件套（signaling / directory / auth-uid / storage）。`package.json` 補 `exports`（源碼層
       進入點）。加 sdkSurface 測試鎖住「只從 barrel import、全程無 firebase」的表面。
-    - **未做（P3-final）turnkey firebase-free 引擎 + dist build**：`MeshChatService` 的**傳遞
-      相依圖**仍有多處 firebase 觸點（P2PConnectionManager 的 `RoomSignalingTransport` 預設、
-      HeartbeatService/GossipReplicaStore/RelayManager 等），非兩個預設可解，需整圖稽核 + 把
-      預設 adapter 上移到 composition root（Vue 頁 + factory 注入）。另需 tsc/tsup 產 dist +
-      `exports` 指向 dist 才是可 `npm publish` 的形。此步較大且動到 WebRTC 檔,獨立進行。
+  - **P3-final（import 隔離已落地）turnkey firebase-free 引擎**：實測 `MeshChatService` 的
+    傳遞相依圖其實只有 5 個 firebase 檔（非想像的整圖），且都是「預設 adapter」。改法：把
+    `P2PConnectionManager` 的 `RoomSignalingTransport` 預設與 `MeshGossipManager` 的
+    `FirestoreRoomDirectory` 預設，從**建構期靜態 import** 改為**在 async `initialize()` 內動態
+    `import()`**（未注入才載入）；另把 `P2PConnectionManager` 直用的 firestore `Timestamp` 換成
+    毫秒 number（時間型別轉換下放到 `RoomSignalingTransport.send`）。**結果:`MeshChatService`
+    整條靜態 value-import 圖 firebase 檔數 5 → 0**（trace 驗證）。參數維持選填 → 零呼叫端/測試/
+    composition-root 更動。新增 `createChatClient({signaling,directory,storage})` turnkey 工廠 +
+    `InMemoryChatStorage`,sdkSurface 測試證明「全注入記憶體後端可建出完整引擎、不需 Firebase」。
+  - **剩最後一哩（純打包）dist build**：`exports` 目前指向源碼 `.ts`（TS 消費者可用）。要能
+    `npm publish` 給 JS 消費者,需 tsc/tsup 產 `dist/*.js`+`.d.ts` 並把 `exports` 指向 dist。
+    純 toolchain 設定,不再動核心程式。
 - **P3 契約 + 範例 + 打包**：`package.json` 的 `exports`/build（`@nerilo/sdk`）、版本化
   public types、第三方視角 quickstart 範例、integration 測試。
 

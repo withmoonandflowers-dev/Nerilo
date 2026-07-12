@@ -87,18 +87,22 @@ import {
   InMemoryRoomDirectoryHub, InMemoryRoomDirectory,
 } from 'nerilo/src/sdk'
 
+import { createChatClient } from 'nerilo'
+
 const sig = new InMemorySignalingHub()    // 換成你的 WebSocket 匯流排
 const dir = new InMemoryRoomDirectoryHub() // 換成你的名冊/發現後端
 
-const client = await createFirestoreChatClient({
+const client = await createChatClient({
   roomId, userId,
   signaling: (r, ch) => new InMemorySignalingTransport(sig, r, ch),
   directory: new InMemoryRoomDirectory(dir, roomId, userId),
+  storage: new InMemoryChatStorage(),
 })
 ```
 
-> **界線（誠實）**：signaling + discovery + auth（uid 直接注入）都已脫離 Firebase；
-> **storage** 仍走 IndexedDB 預設。另外 `config/firebase` 讀 `import.meta.env`，且預設
-> adapter 仍被核心圖靜態 import → 在**非 Vite 環境** import 核心仍會拉到 firebase。要讓
-> 「連 import 都不碰 Firebase」需 **P3** 的 import 隔離 + 打包。見
-> [ADR-0025](adr/0025-embeddable-sdk.md)。
+> **firebase-free（已達成）**：四個後端（signaling / directory / auth-uid / storage）全注入時，
+> `MeshChatService` 的**整條靜態 import 圖已無 Firebase**（未注入的預設延到 `initialize()` 才
+> 動態載入）。第三方帶自己的後端即可 import + 建構完整引擎、全程不碰 Firebase。
+>
+> **剩最後一哩**：`exports` 目前指向源碼 `.ts`（TS 消費者可用）；要 `npm publish` 給 JS 消費者
+> 需補 dist build（純 toolchain）。見 [ADR-0025](adr/0025-embeddable-sdk.md)。

@@ -1,11 +1,9 @@
-import { Timestamp } from 'firebase/firestore';
 import { logger } from '../../utils/logger';
 import type { ConnectionState, Signal } from '../../types';
 import { getIceServerProvider } from './IceServerProvider';
 import { connectionStats } from '../metrics/ConnectionStats';
 import { connectionDiagnostics } from '../metrics/ConnectionDiagnostics';
 import type { SignalingTransport } from './SignalingTransport';
-import { RoomSignalingTransport } from './SignalingTransport';
 
 export interface IceServers {
   urls: string | string[];
@@ -35,8 +33,10 @@ export class P2PConnectionManager {
   private processedSignalIds: Set<string> = new Set();
   /** Signal 處理互斥鎖：確保 handleSignal 不會並行執行（避免 signalingState 競態） */
   private signalMutex: Promise<void> = Promise.resolve();
-  /** 此連線的建立時間戳，用來過濾掉舊 session 殘留的 signals */
-  private readonly sessionStartedAt: Timestamp = Timestamp.now();
+  /** 此連線的建立時間戳（毫秒），用來過濾掉舊 session 殘留的 signals。
+   *  用 number 而非 Firestore Timestamp：讓本檔不靜態依賴 firebase（SDK 可脫離 Firebase
+   *  import），儲存層的時間型別轉換交給 SignalingTransport adapter（見 RoomSignalingTransport.send）。 */
+  private readonly sessionStartedAt: number = Date.now();
   /** 是否已清理舊 signals（只在首次連線成功時執行一次） */
   private hasCleanedOldSignals = false;
   /** 本次 session 是否已嘗試過 ICE restart（一次重試，ADR-0019） */
@@ -58,7 +58,7 @@ export class P2PConnectionManager {
    * signaling 傳輸位置（ADR-0023 P4-B.2）。預設房內（p2pRooms/{roomId}/signals，
    * 行為與重構前一致）；注入 RelaySignalingTransport 即可為陌生節點建 relay-only 連線。
    */
-  private readonly signaling: SignalingTransport;
+  private signaling: SignalingTransport | null;
 
   constructor(
     roomId: string,
@@ -69,7 +69,17 @@ export class P2PConnectionManager {
     this.roomId = roomId;
     this.localUid = localUid;
     this.channelLabel = channelLabel;
-    this.signaling = signaling ?? new RoomSignalingTransport(roomId, channelLabel);
+    // 未注入時延到 initialize() 才動態 import 預設 Firestore adapter → 本檔靜態圖無 firebase。
+    this.signaling = signaling ?? null;
+  }
+
+  /** 取得 signaling（未注入則此刻動態載入預設 Firestore adapter，只發生一次）。 */
+  private async ensureSignaling(): Promise<SignalingTransport> {
+    if (!this.signaling) {
+      const { RoomSignalingTransport } = await import('./SignalingTransport');
+      this.signaling = new RoomSignalingTransport(this.roomId, this.channelLabel);
+    }
+    return this.signaling;
   }
 
   async initialize(): Promise<void> {
@@ -108,8 +118,8 @@ export class P2PConnectionManager {
       });
 
       this.setupPeerConnectionHandlers();
-      this.setupSignalingListeners();
-      
+      await this.setupSignalingListeners();
+
       this.setState('connecting');
       logger.info('[P2PConnectionManager] initialize completed', {
         roomId: this.roomId,
@@ -253,7 +263,8 @@ export class P2PConnectionManager {
     }, 15_000);
   }
 
-  private setupSignalingListeners(): void {
+  private async setupSignalingListeners(): Promise<void> {
+    const signaling = await this.ensureSignaling();
     // 清除既有 listeners，避免 reconnect 時累積 (#9)
     this.signalUnsubscribers.forEach(unsub => unsub());
     this.signalUnsubscribers = [];
@@ -269,9 +280,9 @@ export class P2PConnectionManager {
     // 永遠卡 connecting。這正是好友 DM／分享連結晚進場的失敗模式。
     // 回看窗涵蓋「一方先到、另一方數分鐘內才進」；processedSignalIds 去重、
     // cleanupOldSignals 在連上後清除，故放寬下限不會重複處理或污染。
-    const cutoffMs = this.sessionStartedAt.toMillis() - SIGNAL_LOOKBACK_MS;
+    const cutoffMs = this.sessionStartedAt - SIGNAL_LOOKBACK_MS;
 
-    const unsubscribe = this.signaling.subscribe(cutoffMs, (raw) => {
+    const unsubscribe = signaling.subscribe(cutoffMs, (raw) => {
       const signal = raw as unknown as Signal;
 
       // 去重：Firestore onSnapshot 在重連時可能重播已處理的 signals
@@ -502,12 +513,12 @@ export class P2PConnectionManager {
       type,
     });
 
-    await this.signaling.send({
+    await (await this.ensureSignaling()).send({
       from: this.localUid,
       to: this.remoteUid || null,
       type,
       payload: serializedPayload,
-      createdAt: Timestamp.now(),
+      createdAt: Date.now(), // 毫秒；Firestore adapter 於寫入時轉 Timestamp（見 RoomSignalingTransport.send）
       channelLabel: this.channelLabel,
     });
   }
@@ -555,7 +566,7 @@ export class P2PConnectionManager {
     this.hasCleanedOldSignals = true;
     // 實際的 query + channelLabel 過濾 + 刪除由 transport 負責（房內版行為與重構前一致；
     // 只刪自己 channel、無 label 舊格式不動——見 RoomSignalingTransport.cleanupOlderThan）。
-    await this.signaling.cleanupOlderThan(this.sessionStartedAt.toMillis());
+    await (await this.ensureSignaling()).cleanupOlderThan(this.sessionStartedAt);
   }
 
   /**
@@ -570,7 +581,7 @@ export class P2PConnectionManager {
   private async cleanupSessionSignals(): Promise<void> {
     // 實際 query(from==自己) + channelLabel 過濾 + 刪除由 transport 負責
     // （房內版行為與重構前一致：只清自己 channel、無 label 舊格式不動）。
-    await this.signaling.cleanupOwn(this.localUid);
+    await (await this.ensureSignaling()).cleanupOwn(this.localUid);
   }
 
   async close(): Promise<void> {
