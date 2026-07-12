@@ -5,6 +5,7 @@ import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
 import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallback';
 import type { ReactionEvent, ReactionOp } from './reactions';
 import type { ReadEvent } from './readReceipts';
+import type { SignalingFactory } from '../../core/p2p/SignalingTransport';
 import { logger } from '../../utils/logger';
 
 /**
@@ -28,9 +29,10 @@ export class MeshChatService {
   constructor(
     private roomId: string,
     private localUid: string,
-    chatStorage: IChatStorage = indexedDBService
+    chatStorage: IChatStorage = indexedDBService,
+    signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端（P2）
   ) {
-    this.meshGossipManager = new MeshGossipManager(roomId);
+    this.meshGossipManager = new MeshGossipManager(roomId, signalingFactory);
     this.chatStorage = chatStorage;
   }
 

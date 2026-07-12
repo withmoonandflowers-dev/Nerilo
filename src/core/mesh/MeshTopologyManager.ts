@@ -1,4 +1,5 @@
 import { MeshConnection, REJOIN_READY_TIMEOUT_MS } from './MeshConnection';
+import type { SignalingFactory } from '../p2p/SignalingTransport';
 import { RoomService } from '../../services/RoomService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -37,7 +38,8 @@ export class MeshTopologyManager {
   constructor(
     private roomId: string,
     private localUserId: string,
-    private localFirebaseUid: string
+    private localFirebaseUid: string,
+    private signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端
   ) {}
 
   /**
@@ -206,7 +208,8 @@ export class MeshTopologyManager {
         remoteFirebaseUid,
         userId,
         isInitiator,
-        readyTimeoutMs
+        readyTimeoutMs,
+        this.signalingFactory
       );
 
       this.neighbors.set(userId, connection);

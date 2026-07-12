@@ -28,9 +28,16 @@ React）、wire codec、恰好一次語義、port 雛形（`IChatStorage`/`IRoom
   表情、已讀人數、輸入中、生命週期）依賴 `IChatEngine` 契約而非具體後端；`src/sdk/index.ts`
   匯出穩定 API + 純 reducer + 注入用型別；預設工廠 `createFirestoreChatClient` 仍以既有
   Firestore 後端為底。純加法、不動運作中的 App。
-- **P2 去 Firebase 化**：把 `P2PConnectionManager`/`SignalingTransport`/`MeshGossipManager`
-  對 Firestore 的直接建構改為注入 `SignalingTransport` + 認證抽象；附記憶體/WebSocket
-  adapter 證明可替換，`NeriloClient` API 不變。
+- **P2 去 Firebase 化**（分兩半）：
+  - **P2a（已落地）signaling 可注入**：把 `SignalingFactory`（`(roomId, channelLabel) =>
+    SignalingTransport`）從 `MeshChatService` 一路串到 `MeshConnection` 建 `P2PManager`，
+    省略即維持 Firestore（`P2PManager`/`P2PConnectionManager` 早已接受注入,故零行為變更,
+    預設路徑由既有 mesh e2e 全綠背書）。附 `InMemorySignalingHub`/`InMemorySignalingTransport`
+    參考實作（無 Firebase）+ 契約測試,證明這道縫真的可替換,也是自架 WebSocket 後端的形狀。
+  - **P2b（未做）discovery 可注入**：`MeshTopologyManager` 目前仍直接用 Firestore 讀
+    `meshIdentities`/`RoomService` 做節點發現,`MeshGossipManager` 用 `auth.currentUser`。
+    要「完全不吞 Firebase」需把 discovery/rooms/auth 抽成 `IRoomDirectory`/`IAuthProvider`
+    port 並注入。這是比 P2a 大的一塊。
 - **P3 契約 + 範例 + 打包**：`package.json` 的 `exports`/build（`@nerilo/sdk`）、版本化
   public types、第三方視角 quickstart 範例、integration 測試。
 

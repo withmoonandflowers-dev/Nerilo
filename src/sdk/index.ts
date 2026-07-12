@@ -14,9 +14,11 @@ export { NeriloClient } from './NeriloClient';
 export type { Positioned } from './NeriloClient';
 export type { IChatEngine } from './IChatEngine';
 
-// 後端可替換的注入縫(P2 使用;Firestore 與 Relay 皆已實作此介面)
-export type { SignalingTransport, RawSignalDoc } from '../core/p2p/SignalingTransport';
+// 後端可替換的注入縫(Firestore 與 Relay 皆已實作 SignalingTransport)
+export type { SignalingTransport, RawSignalDoc, SignalingFactory } from '../core/p2p/SignalingTransport';
 export type { IChatStorage, IRoomService } from '../ports';
+// 純記憶體 signaling 參考實作(無 Firebase);自架 WebSocket 後端可照此形狀
+export { InMemorySignalingHub, InMemorySignalingTransport } from '../core/p2p/InMemorySignalingTransport';
 
 // 公開資料型別
 export type { ChatMessage, HLCTimestamp } from '../types';
@@ -36,8 +38,11 @@ export { encodeContent, decodeContent } from '../features/chat/messageContent';
 export async function createFirestoreChatClient(config: {
   roomId: string;
   userId: string;
+  /** 選填:注入自訂 signaling 後端(P2a)。省略＝Firestore。注意 discovery/storage 仍走
+   *  Firestore,要完全脫離 Firebase 需等 P2b 的 discovery 注入。 */
+  signaling?: import('../core/p2p/SignalingTransport').SignalingFactory;
 }): Promise<NeriloClient> {
   const { MeshChatService } = await import('../features/chat/MeshChatService');
-  const engine: IChatEngine = new MeshChatService(config.roomId, config.userId);
+  const engine: IChatEngine = new MeshChatService(config.roomId, config.userId, undefined, config.signaling);
   return new NeriloClient(engine);
 }

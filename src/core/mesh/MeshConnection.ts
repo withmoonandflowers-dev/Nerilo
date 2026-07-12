@@ -1,5 +1,6 @@
 import { P2PManager } from '../p2p/P2PManager';
 import { P2PChannelBus } from '../p2p/P2PChannelBus';
+import type { SignalingFactory } from '../p2p/SignalingTransport';
 import type { GossipMessage } from '../../types';
 import type { GossipDigest } from './antiEntropy';
 import { logger } from '../../utils/logger';
@@ -43,7 +44,8 @@ export class MeshConnection {
     private remoteFirebaseUid: string, // 用於 signaling 的 Firebase UID
     meshUserId: string, // 用於 Gossip 的 userId
     isInitiator: boolean,
-    private readyTimeoutMs: number = CHANNEL_READY_TIMEOUT_MS
+    private readyTimeoutMs: number = CHANNEL_READY_TIMEOUT_MS,
+    signalingFactory?: SignalingFactory // 省略＝P2PManager 預設走 Firestore；SDK 可注入自架後端
   ) {
     this.meshUserId = meshUserId;
 
@@ -57,7 +59,8 @@ export class MeshConnection {
       roomId,
       localFirebaseUid,
       symmetricLabel,
-      isInitiator
+      isInitiator,
+      signalingFactory?.(roomId, symmetricLabel)
     );
     
     this.readyPromise = this.initialize();
