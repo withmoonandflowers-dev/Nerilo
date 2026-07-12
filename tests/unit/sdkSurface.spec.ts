@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 // 參考 adapter + 型別，全數不需 Firebase（barrel 靜態圖無 firebase，見 ADR-0025 P3）。
 import {
   NeriloClient,
+  createChatClient,
   InMemorySignalingHub,
   InMemorySignalingTransport,
   InMemoryRoomDirectoryHub,
@@ -73,5 +74,20 @@ describe('SDK 公開表面（P3 publishable surface）', () => {
     expect(client.userId).toBe('me');
     expect(await client.sendMessage('hi')).toBe('id-1');
     await client.dispose();
+  });
+
+  it('createChatClient 注入全記憶體後端 → 建出完整引擎（不需 Firebase）', async () => {
+    const sigHub = new InMemorySignalingHub();
+    const dirHub = new InMemoryRoomDirectoryHub();
+    const client = await createChatClient({
+      roomId: 'room-x',
+      userId: 'uid-x',
+      signaling: (r, ch) => new InMemorySignalingTransport(sigHub, r, ch),
+      directory: new InMemoryRoomDirectory(dirHub, 'room-x', 'uid-x'),
+      storage: new InMemoryChatStorage(),
+    });
+    // 建構成功即證明 MeshChatService 整條靜態圖可在無 Firebase 下載入/建構
+    // （connect() 需要瀏覽器 WebRTC，node 環境不驅動）。
+    expect(client).toBeInstanceOf(NeriloClient);
   });
 });

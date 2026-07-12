@@ -6,7 +6,6 @@ import { RoomKeyCoordinator, rosterFromRoom } from './RoomKeyCoordinator';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
-import { FirestoreRoomDirectory } from '../../services/FirestoreRoomDirectory';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { RelayManager } from '../relay/RelayManager';
 import { PeerScoring } from '../relay/PeerScoring';
@@ -44,7 +43,7 @@ export class MeshGossipManager {
     private roomId: string,
     private localUid: string, // signaling/名冊身分 id（上層注入，取代 auth.currentUser）
     private signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端
-    private directory: IRoomDirectory = new FirestoreRoomDirectory(roomId, localUid) // 省略＝Firestore
+    private directory?: IRoomDirectory // 省略＝initialize() 時動態載入 Firestore（本檔靜態圖無 firebase）
   ) {
     this.identityManager = new IdentityManager();
     this.securityManager = new SecurityManager();
@@ -76,10 +75,15 @@ export class MeshGossipManager {
         });
       }
 
-      // 2. 註冊身分到名冊（directory；預設 Firestore，SDK 可注入）
+      // 2. 註冊身分到名冊（directory；未注入則此刻動態載入預設 Firestore adapter →
+      //    本檔靜態圖無 firebase，SDK 可脫離 Firebase import）。
       const firebaseUid = this.localUid; // 由上層注入（取代 auth.currentUser，去 Firebase 耦合）
       if (!firebaseUid) {
         throw new Error('User not authenticated');
+      }
+      if (!this.directory) {
+        const { FirestoreRoomDirectory } = await import('../../services/FirestoreRoomDirectory');
+        this.directory = new FirestoreRoomDirectory(this.roomId, firebaseUid);
       }
 
       await this.directory.registerIdentity({ userId, pubKey, ecdhPubKey });
@@ -94,7 +98,7 @@ export class MeshGossipManager {
         this.roomId,
         userId,
         firebaseUid,
-        this.directory,
+        this.directory!, // 已於上方解析為非 undefined
         this.signalingFactory
       );
 
@@ -133,7 +137,7 @@ export class MeshGossipManager {
             // 名冊＝meshIdentities ∩ participants（離開者 meshIdentity 未即時清 →
             // 必須交集 participants，否則離開者續留名冊、續被封鑰 → 無前向保密，見 rosterFromRoom）。
             loadRoster: async () => {
-              const snap = await this.directory.getSnapshot(true); // preferCached：週期輪詢用快取即可
+              const snap = await this.directory!.getSnapshot(true); // preferCached：週期輪詢用快取即可
               return rosterFromRoom(snap.meshIdentities, snap.participants);
             },
             sendKeyx: (content) => this.messageHandler!.sendMessage(content, undefined, 'keyx'),

@@ -88,7 +88,12 @@ export class RoomSignalingTransport implements SignalingTransport {
   }
 
   async send(data: Record<string, unknown>): Promise<void> {
-    await addDoc(this.signalsRef(), data);
+    // manager 現以毫秒 number 帶 createdAt（讓其不依賴 firebase）；此處轉 Firestore Timestamp
+    // 以維持既有 `where('createdAt','>=',Timestamp)` 查詢語義。
+    const payload = typeof data.createdAt === 'number'
+      ? { ...data, createdAt: Timestamp.fromMillis(data.createdAt) }
+      : data;
+    await addDoc(this.signalsRef(), payload);
   }
 
   async cleanupOlderThan(beforeMs: number): Promise<void> {
