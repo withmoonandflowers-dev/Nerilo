@@ -1,4 +1,4 @@
-import { MeshConnection } from './MeshConnection';
+import { MeshConnection, REJOIN_READY_TIMEOUT_MS } from './MeshConnection';
 import { RoomService } from '../../services/RoomService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -128,7 +128,7 @@ export class MeshTopologyManager {
           this.reconnectAttempts.delete(userId);
           const t = this.reconnectTimers.get(userId);
           if (t) { clearTimeout(t); this.reconnectTimers.delete(userId); }
-          this.connectToSingleNeighbor(userId).catch(error => {
+          this.connectToSingleNeighbor(userId, REJOIN_READY_TIMEOUT_MS).catch(error => {
             logger.error('[MeshTopologyManager] Rejoin rebuild error', { error });
           });
           continue;
@@ -170,9 +170,11 @@ export class MeshTopologyManager {
   }
 
   /**
-   * 連線到單一鄰居，失敗時排程指數退避重試
+   * 連線到單一鄰居，失敗時排程指數退避重試。
+   * readyTimeoutMs 供 rejoin 首次重建傳較短逾時（快速讓乾淨重試接手）；退避重試不帶，
+   * 回到 MeshConnection 預設的耐心 30s。
    */
-  private async connectToSingleNeighbor(userId: string): Promise<void> {
+  private async connectToSingleNeighbor(userId: string, readyTimeoutMs?: number): Promise<void> {
     try {
       // ── 防止資源洩漏：若已有連線物件，先關閉它 ──
       const existing = this.neighbors.get(userId);
@@ -203,7 +205,8 @@ export class MeshTopologyManager {
         localFirebaseUid,
         remoteFirebaseUid,
         userId,
-        isInitiator
+        isInitiator,
+        readyTimeoutMs
       );
 
       this.neighbors.set(userId, connection);

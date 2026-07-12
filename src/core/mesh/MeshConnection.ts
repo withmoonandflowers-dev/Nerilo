@@ -8,6 +8,22 @@ import { logger } from '../../utils/logger';
  * Mesh 連線包裝類別
  * 封裝與單個鄰居的 P2P 連線
  */
+/**
+ * ChannelBus 就緒逾時（首次連線用）。逾時後 MeshTopologyManager 會 close + 指數退避
+ * 重試。首次（含 3 人同時進場）保持耐心 30s：直連/STUN 通常數秒內完成，但多人同時
+ * 協商 + TURN relay 配置偶爾會拖到十幾秒，太短會誤殺「慢但會成功」的協商 → 反而 churn
+ * 到連不上（實測全域改 10s 會讓 3 人 mesh 初連 churn 逾時）。
+ */
+const CHANNEL_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * 離開再進（rejoin）重建時的較短逾時。拆舊建新的第一次握手偶爾卡在與舊 pc 的交疊窗，
+ * 早點逾時讓乾淨重試接手（最壞 rejoin 從 ~40s 壓到 ~20s）。只用在 rejoin 首次重建；
+ * 之後的退避重試回到耐心的 30s，避免把「本來就要成功、只是慢」的重連也砍掉。
+ * 取 15s（非 10s）：實測 rejoin 首連常落在 13-15s，10s 會把它們一併砍掉造成 churn。
+ */
+export const REJOIN_READY_TIMEOUT_MS = 15_000;
+
 export class MeshConnection {
   private p2pManager: P2PManager;
   private channelBus: P2PChannelBus | null = null;
@@ -26,7 +42,8 @@ export class MeshConnection {
     private localFirebaseUid: string, // 用於 signaling 的 Firebase UID
     private remoteFirebaseUid: string, // 用於 signaling 的 Firebase UID
     meshUserId: string, // 用於 Gossip 的 userId
-    isInitiator: boolean
+    isInitiator: boolean,
+    private readyTimeoutMs: number = CHANNEL_READY_TIMEOUT_MS
   ) {
     this.meshUserId = meshUserId;
 
@@ -74,8 +91,8 @@ export class MeshConnection {
           remoteFirebaseUid: this.remoteFirebaseUid,
           meshUserId: this.meshUserId,
         });
-        reject(new Error('MeshConnection timeout: ChannelBus not ready after 30s'));
-      }, 30_000);
+        reject(new Error(`MeshConnection timeout: ChannelBus not ready after ${this.readyTimeoutMs}ms`));
+      }, this.readyTimeoutMs);
     });
 
     this.startBusRebindWatch();
