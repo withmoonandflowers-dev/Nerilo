@@ -40,11 +40,17 @@ React）、wire codec、恰好一次語義、port 雛形（`IChatStorage`/`IRoom
     從 `MeshChatService` 串下去（取代 `auth.currentUser`）。兩個 mesh 檔已無任何 firebase
     import。預設 `FirestoreRoomDirectory`（行為與重構前逐字一致,rejoin×4 + mesh e2e 全綠
     背書）；附 `InMemoryRoomDirectory` 零 Firebase 參考實作 + 契約測試。
-  - **P3（未做）import 隔離 + 打包**：`config/firebase` 讀 `import.meta.env`（Vite 限定）,
-    且預設 adapter（`RoomSignalingTransport`/`FirestoreRoomDirectory`）仍被核心圖靜態 import
-    → 在非 Vite 環境 import 核心仍會拉到 firebase。要讓第三方「連 import 都不碰 Firebase」,
-    需把預設 adapter 移到獨立檔、以動態 import 隔離,並補 `package.json` 的 `exports`/build。
-    這是打包層的事,不影響已設定 Firebase 者注入自架後端。
+  - **P3（部分落地）publishable 表面 + import 隔離**：
+    - **已落地**：`src/sdk/index.ts` 這顆 barrel 的**靜態圖已無 firebase**（value import 只有
+      NeriloClient〔純 reducer〕與 InMemory* 參考 adapter〔type-only import〕；Firestore 只在
+      opt-in 的 `createFirestoreChatClient` 動態 import）。加了 `InMemoryChatStorage` 補齊可注入
+      四件套（signaling / directory / auth-uid / storage）。`package.json` 補 `exports`（源碼層
+      進入點）。加 sdkSurface 測試鎖住「只從 barrel import、全程無 firebase」的表面。
+    - **未做（P3-final）turnkey firebase-free 引擎 + dist build**：`MeshChatService` 的**傳遞
+      相依圖**仍有多處 firebase 觸點（P2PConnectionManager 的 `RoomSignalingTransport` 預設、
+      HeartbeatService/GossipReplicaStore/RelayManager 等），非兩個預設可解，需整圖稽核 + 把
+      預設 adapter 上移到 composition root（Vue 頁 + factory 注入）。另需 tsc/tsup 產 dist +
+      `exports` 指向 dist 才是可 `npm publish` 的形。此步較大且動到 WebRTC 檔,獨立進行。
 - **P3 契約 + 範例 + 打包**：`package.json` 的 `exports`/build（`@nerilo/sdk`）、版本化
   public types、第三方視角 quickstart 範例、integration 測試。
 

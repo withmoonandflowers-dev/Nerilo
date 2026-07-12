@@ -8,18 +8,18 @@ mesh / gossip / crypto 不列入契約、會持續重構。
 > 初始化的 Firebase 環境）。P2 會把 signaling / auth 改成可注入，屆時同一份 `NeriloClient`
 > 程式碼可換上自架 WebSocket 等後端而 **API 不變**。詳見 [ADR-0025](adr/0025-embeddable-sdk.md)。
 
-## 安裝（P1 現況）
+## 安裝（現況：源碼層套件）
 
-SDK 尚未獨立發包；先以原始碼形式引用出口 barrel：
+`package.json` 已設 `exports`，可從套件根或 `/sdk` 進入（源碼層，TS 消費者）：
 
 ```ts
-import {
-  createFirestoreChatClient,
-  type ChatMessage,
-} from 'nerilo/src/sdk'
+import { NeriloClient, createFirestoreChatClient, type ChatMessage } from 'nerilo'
+// 或 'nerilo/sdk'
 ```
 
-（P2 會補上 `package.json` 的 `exports` 與 build，變成 `import { NeriloClient } from '@nerilo/sdk'`。）
+這顆 barrel 的**靜態圖無 Firebase**：`NeriloClient`、純 reducer、`InMemory*` 參考 adapter、
+型別都可在**無 Firebase** 環境 import 使用；只有 `createFirestoreChatClient` 會（動態）拉
+Firestore。（可 `npm publish` 的 dist build 為 P3-final，見 [ADR-0025](adr/0025-embeddable-sdk.md)。）
 
 ## 30 秒上手
 
