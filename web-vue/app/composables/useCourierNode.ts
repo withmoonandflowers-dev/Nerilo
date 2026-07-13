@@ -30,6 +30,13 @@ import { FirestoreRelayDirectory } from '@legacy/core/relay/FirestoreRelayDirect
 import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
 import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
 import { ecdsaSigner } from '@legacy/core/relay/CourierReceipts'
+import {
+  RoomAdvertCache,
+  attachRoomDirectory,
+  buildRoomAdvert,
+  type RoomAdvert,
+  type RoomDirBus,
+} from '@legacy/core/relay/RoomDirectoryGossip'
 import { creditEconomy } from '@legacy/core/incentive/CreditEconomy'
 import { CreditLedger } from '@legacy/core/incentive/CreditLedger'
 import { getGossipReplicaStore } from '@legacy/services/GossipReplicaStore'
@@ -100,6 +107,51 @@ export function useCourierNode() {
   const servers: CourierServer[] = []
   const clientCache = new Map<string, CourierClient>() // courierUid → client（避免每 tick 累積訂閱）
 
+  // ── 房間目錄 P2P 廣播（去中心化大廳第一片）──────────────────────────────
+  // 騎在既有 relay bus 上（ns='roomdir'，同 courier 的掛法，零新傳輸）。
+  // 來源由 dashboard 注入（我的公開房）；快取給 dashboard 顯示「P2P 發現的房間」。
+  const roomAdvertCache = new RoomAdvertCache()
+  let advertSource: (() => Array<{ roomId: string; roomName: string; participantCount: number }>) | null = null
+  const roomDirDetachers: Array<() => void> = []
+
+  /** 本地廣告：身分未就緒或無來源 → 空（純 best-effort，不擋 courier 主流程）。 */
+  async function getLocalAdverts(): Promise<RoomAdvert[]> {
+    if (!identity || !advertSource || !nodeId) return []
+    try {
+      const pubKey = await identity.exportPublicKey()
+      const sign = ecdsaSigner(identity.getPrivateKey())
+      const issuedAt = Date.now()
+      return await Promise.all(
+        advertSource().map((r) =>
+          buildRoomAdvert(
+            {
+              roomId: r.roomId,
+              roomName: r.roomName,
+              ownerUid: currentUid,
+              participantCount: r.participantCount,
+              issuedAt,
+              nodeId,
+              pubKey,
+            },
+            sign
+          )
+        )
+      )
+    } catch {
+      return []
+    }
+  }
+
+  /** 把房間目錄協議掛上一條 relay bus（listening 與 outbound 皆掛；同 bus 只掛一次）。 */
+  const roomDirAttached = new WeakSet<object>()
+  function attachRoomDir(bus: RoomDirBus, uid: string) {
+    if (roomDirAttached.has(bus as object)) return
+    roomDirAttached.add(bus as object)
+    roomDirDetachers.push(
+      attachRoomDirectory({ bus, cache: roomAdvertCache, localUid: uid, getLocalAdverts })
+    )
+  }
+
   /**
    * 對某信使開一條 courier client。requireConnected=true 時（背景備份用）等連線真的到
    * 'connected' 才回，藉此濾掉陳舊/不可達的名冊條目；false 時（test-hook 對已知在線信使）
@@ -123,6 +175,7 @@ export function useCourierNode() {
     const client = new CourierClient(bus, uid, 4_000, memberCredit)
     client.start()
     clientCache.set(courierUid, client)
+    attachRoomDir(bus, uid) // outbound 連線也交換房間目錄（clientCache 保證每信使只掛一次）
     return client
   }
 
@@ -199,6 +252,7 @@ export function useCourierNode() {
         const server = new CourierServer(bus, courierStore, uid, undefined, courierCredit)
         server.start()
         servers.push(server)
+        attachRoomDir(bus, uid) // 同一條 bus 疊房間目錄（ns='roomdir'）
       })
     })
 
@@ -249,7 +303,9 @@ export function useCourierNode() {
     if (!w.__nerilo_test__) return
     w.__nerilo_test__.relay = {
       connectToRelayNode: async (courierUid: string) => {
-        await connector!.connectToRelayNode(courierUid)
+        const conn = await connector!.connectToRelayNode(courierUid)
+        // outbound 也交換房間目錄（production 路徑在 openClient 掛；此為 e2e 直連路徑）
+        void waitBus(conn).then((bus) => { if (bus) attachRoomDir(bus, uid) })
       },
       states: () => connector!.states(),
       activeCount: () => connector!.activeCount(),
@@ -328,6 +384,10 @@ export function useCourierNode() {
   }
 
   async function stop() {
+    for (const d of roomDirDetachers) {
+      try { d() } catch { /* detach 失敗不擋 stop */ }
+    }
+    roomDirDetachers.length = 0
     for (const s of servers) s.stop()
     servers.length = 0
     for (const c of clientCache.values()) c.stop()
@@ -356,5 +416,18 @@ export function useCourierNode() {
     }
   }
 
-  return { start, stop, tombstoneRoom }
+  return {
+    start,
+    stop,
+    tombstoneRoom,
+    /** dashboard 注入「我要廣播的公開房」來源（只給公開、非 closed 的房）。 */
+    setRoomAdvertSource(fn: () => Array<{ roomId: string; roomName: string; participantCount: number }>) {
+      advertSource = fn
+    },
+    /** P2P 發現的公開房（驗簽後快取）；onChange 供 UI 接反應式。 */
+    roomDirectory: {
+      list: () => roomAdvertCache.list(),
+      onChange: (l: () => void) => roomAdvertCache.onChange(l),
+    },
+  }
 }
