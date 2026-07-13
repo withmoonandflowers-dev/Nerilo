@@ -34,6 +34,7 @@ import {
   RoomAdvertCache,
   attachRoomDirectory,
   buildRoomAdvert,
+  mergeAnnounceSet,
   type RoomAdvert,
   type RoomDirBus,
 } from '@legacy/core/relay/RoomDirectoryGossip'
@@ -114,32 +115,38 @@ export function useCourierNode() {
   let advertSource: (() => Array<{ roomId: string; roomName: string; participantCount: number }>) | null = null
   const roomDirDetachers: Array<() => void> = []
 
-  /** 本地廣告：身分未就緒或無來源 → 空（純 best-effort，不擋 courier 主流程）。 */
-  async function getLocalAdverts(): Promise<RoomAdvert[]> {
-    if (!identity || !advertSource || !nodeId) return []
-    try {
-      const pubKey = await identity.exportPublicKey()
-      const sign = ecdsaSigner(identity.getPrivateKey())
-      const issuedAt = Date.now()
-      return await Promise.all(
-        advertSource().map((r) =>
-          buildRoomAdvert(
-            {
-              roomId: r.roomId,
-              roomName: r.roomName,
-              ownerUid: currentUid,
-              participantCount: r.participantCount,
-              issuedAt,
-              nodeId,
-              pubKey,
-            },
-            sign
+  /**
+   * announce 集合 = 我的公開房（現簽）+ 快取裡別人的廣告（原簽轉發 → 多跳傳播，
+   * 兩跳外的節點也看得到）。身分未就緒/無來源時仍轉發快取（純 best-effort）。
+   */
+  async function getAnnounceAdverts(): Promise<RoomAdvert[]> {
+    let own: RoomAdvert[] = []
+    if (identity && advertSource && nodeId) {
+      try {
+        const pubKey = await identity.exportPublicKey()
+        const sign = ecdsaSigner(identity.getPrivateKey())
+        const issuedAt = Date.now()
+        own = await Promise.all(
+          advertSource().map((r) =>
+            buildRoomAdvert(
+              {
+                roomId: r.roomId,
+                roomName: r.roomName,
+                ownerUid: currentUid,
+                participantCount: r.participantCount,
+                issuedAt,
+                nodeId,
+                pubKey,
+              },
+              sign
+            )
           )
         )
-      )
-    } catch {
-      return []
+      } catch {
+        own = []
+      }
     }
+    return mergeAnnounceSet(own, roomAdvertCache.list())
   }
 
   /** 把房間目錄協議掛上一條 relay bus（listening 與 outbound 皆掛；同 bus 只掛一次）。 */
@@ -148,7 +155,7 @@ export function useCourierNode() {
     if (roomDirAttached.has(bus as object)) return
     roomDirAttached.add(bus as object)
     roomDirDetachers.push(
-      attachRoomDirectory({ bus, cache: roomAdvertCache, localUid: uid, getLocalAdverts })
+      attachRoomDirectory({ bus, cache: roomAdvertCache, localUid: uid, getLocalAdverts: getAnnounceAdverts })
     )
   }
 
