@@ -14,6 +14,7 @@
   },
   "scripts": {
     "build:sdk": "esbuild src/sdk/index.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json",
+    "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
     "prepublishOnly": "npm run build:sdk",
     "dev": "vite",
     "dev:test": "vite --port 4173 --strictPort --mode test",
