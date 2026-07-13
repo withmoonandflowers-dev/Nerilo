@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFeatures } from '../contexts/FeatureContext';
@@ -100,14 +100,17 @@ const DashboardPage: React.FC = () => {
     return unsubscribe;
   }, [user, roomService]);
 
-  // 監聽所有公開房間（供訪客與一般使用者瀏覽）
-  useEffect(() => {
-    const unsubscribe = roomService.subscribePublicRooms((roomList) => {
-      logger.info('[Dashboard] subscribePublicRooms', roomList);
-      setPublicRooms(roomList);
-    });
-    return unsubscribe;
+  // 公開房間：進頁一次性讀取 + 手動刷新（讀取衛生：不掛常駐 onSnapshot，
+  // 見 RoomService.getPublicRooms 的配額事件說明）
+  const loadPublicRooms = useCallback(async () => {
+    const roomList = await roomService.getPublicRooms();
+    logger.info('[Dashboard] getPublicRooms', { count: roomList.length });
+    setPublicRooms(roomList);
   }, [roomService]);
+
+  useEffect(() => {
+    void loadPublicRooms();
+  }, [loadPublicRooms]);
 
   const handleAuthButtonClick = async () => {
     if (isGuest) {
@@ -407,6 +410,14 @@ const DashboardPage: React.FC = () => {
         <section className="rooms-section" aria-label="公開房間">
           <div className="section-header">
             <h2>公開房間</h2>
+            <button
+              type="button"
+              className="btn-create-room"
+              onClick={() => void loadPublicRooms()}
+              aria-label="重新整理公開房間"
+            >
+              重新整理
+            </button>
           </div>
 
           <div className="rooms-list">

@@ -20,7 +20,7 @@ export const roomServiceAdapter: IRoomService = {
 
   subscribeRoom: (roomId, callback) => RoomService.subscribeRoom(roomId, callback),
   subscribeUserRooms: (uid, callback) => RoomService.subscribeUserRooms(uid, callback),
-  subscribePublicRooms: (callback) => RoomService.subscribePublicRooms(callback),
+  getPublicRooms: () => RoomService.getPublicRooms(),
 
   updateMeshIdentity: (roomId, firebaseUid, userId, pubKey) =>
     RoomService.updateMeshIdentity(roomId, firebaseUid, userId, pubKey),
