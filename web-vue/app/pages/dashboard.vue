@@ -14,7 +14,13 @@ const { balance, relayActive, ensureInit } = useCredits()
 // 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護，並看得到其他在線節點數。
 const { peerCount, announcing, start: startPresence, stop: stopPresence } = useNodePresence()
 // 盲信使節點（ADR-0023 P4-C）：信使角色 always-on + 成員背景備份；預設參與、可關。
-const { start: startCourierNode, stop: stopCourierNode, tombstoneRoom } = useCourierNode()
+const {
+  start: startCourierNode,
+  stop: stopCourierNode,
+  tombstoneRoom,
+  setRoomAdvertSource,
+  roomDirectory,
+} = useCourierNode()
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
@@ -74,6 +80,9 @@ const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
 
 let unsubMine: (() => void) | null = null
 let unsubFriends: (() => void) | null = null
+// P2P 房間目錄：其他節點經 relay bus 廣播來的簽章公開房（不經 Firestore 大廳查詢）
+const p2pRooms = shallowRef<import('@legacy/core/relay/RoomDirectoryGossip').RoomAdvert[]>([])
+let unsubRoomDir: (() => void) | null = null
 const friendships = ref<Friendship[]>([])
 /** 待我接受的邀請數（header 徽章） */
 const pendingCount = computed(
@@ -89,6 +98,19 @@ watchEffect(() => {
   ensureInit() // 點數餘額載入（中繼狀態指示）
   void startPresence(uid) // 宣告本節點在線可守護 + 週期查在線節點數
   startCourierNode(uid) // 盲信使：接受寄存 + 背景備份自己房間（預設參與，可關）
+  // P2P 房間目錄：廣播「我的公開房」給連上的節點；收到別人的入 p2pRooms
+  setRoomAdvertSource(() =>
+    myRooms.value
+      .filter((r) => !r.isPrivate && r.status !== 'closed' && r.kind !== 'dm')
+      .map((r) => ({
+        roomId: r.roomId,
+        roomName: r.roomName ?? '未命名聊天室',
+        participantCount: r.participants.length,
+      }))
+  )
+  unsubRoomDir = roomDirectory.onChange(() => {
+    p2pRooms.value = roomDirectory.list().filter((ad) => ad.ownerUid !== uid) // 自己的房不用看廣告
+  })
   unsubFriends = FriendService.subscribeFriendships(uid, (list) => {
     friendships.value = list
   })
@@ -107,6 +129,7 @@ watchEffect(() => {
 onUnmounted(() => {
   unsubMine?.()
   unsubFriends?.()
+  unsubRoomDir?.()
   void stopCourierNode() // 盲信使節點清理（關頁即停幫忙）
 })
 
@@ -411,6 +434,22 @@ function relativeTime(ts?: number): string {
         <button type="button" class="btn-primary dash__empty-cta" @click="showSheet = true; sheetTab = 'create'">
           建立第一個聊天室
         </button>
+      </section>
+
+      <!-- P2P 房間目錄：其他節點經 relay 廣播來的簽章公開房（不經伺服器大廳查詢） -->
+      <section v-if="p2pRooms.length" class="dash__list card" aria-label="P2P 發現的公開房間" data-testid="p2p-room-directory">
+        <p class="dash__p2p-title">附近節點的公開房間<span class="dash__p2p-badge">P2P</span></p>
+        <div v-for="ad in p2pRooms" :key="ad.roomId" class="room-row"
+             :data-testid="`p2p-room-ad-${ad.roomId}`"
+             @click="navigateTo(`/chat/${ad.roomId}`)">
+          <span class="room-row__avatar" :style="{ background: gradientFor(ad.roomId) }">
+            {{ initialFor(ad.roomName) }}
+          </span>
+          <span class="room-row__body">
+            <span class="room-row__name">{{ ad.roomName }}</span>
+            <span class="room-row__meta">{{ ad.participantCount }} 人 · 經節點廣播發現</span>
+          </span>
+        </div>
       </section>
     </template>
 
@@ -799,4 +838,24 @@ function relativeTime(ts?: number): string {
 .confirm-enter-from,
 .confirm-leave-to { opacity: 0; }
 .confirm-enter-from .confirm { transform: scale(0.92); }
+
+/* P2P 房間目錄 */
+.dash__p2p-title {
+  margin: 4px 12px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary, #8a8a8e);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dash__p2p-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent, #6c8cff);
+  color: #fff;
+}
 </style>
