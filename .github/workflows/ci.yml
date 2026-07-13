@@ -90,6 +90,7 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
+      # 觀察期自 2026-07-13 起算（稽核 R8）：連續兩週綠 → 2026-07-27 後翻 continue-on-error: false
       - name: Run E2E stable subset against emulators
         run: npm run test:e2e:stable
         env:
