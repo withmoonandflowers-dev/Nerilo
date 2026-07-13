@@ -150,6 +150,11 @@ async function registerFresh(page: Page, cred: Cred): Promise<void> {
   await page.fill('#password', cred.password);
   await page.locator('.login-form button[type="submit"]').click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  // 等 AuthContext 把註冊完成的（非匿名）帳號結算成 role='user' 再往下。
+  // 正式站 guestCreateAllowed=false：若在 user 尚未結算（null/guest）時就按「建立房間」，
+  // goCreateRoom 會把人導回 /login → 後續 createRoom 卡在等不到「建立房間」確認鈕。
+  // 與 e2e helper 的 setupUser 同一道等待（role-badge 讀到 user）。
+  await expect(page.locator('.role-badge')).toContainText('user', { timeout: 10_000 });
   await dismissWelcomeModal(page);
 }
 
