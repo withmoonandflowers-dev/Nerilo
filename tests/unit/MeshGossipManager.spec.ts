@@ -119,6 +119,19 @@ describe('MeshGossipManager', () => {
     });
   });
 
+  // ── 加密狀態（ADR-0026 R2）────────────────────────────────────────────────
+  describe('getEncryptionState()', () => {
+    it('未初始化 → exchanging（安全預設，不誤報明文/已加密）', () => {
+      expect(manager.getEncryptionState()).toBe('exchanging');
+    });
+
+    it('初始化後、mock 無 ECDH → keyCoordinator=null → plaintext（真降級）', async () => {
+      // IdentityManager mock 未提供 exportEcdhPublicKey → ECDH 不可用分支 → keyCoordinator=null
+      await manager.initialize();
+      expect(manager.getEncryptionState()).toBe('plaintext');
+    });
+  });
+
   // ── cleanup() 清除 interval ───────────────────────────────────────────────
 
   describe('cleanup()', () => {
