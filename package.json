@@ -1,9 +1,29 @@
 {
   "name": "nerilo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Firebase + WebRTC P2P 即時互動平台",
   "type": "module",
+  "//sdk": "可嵌入 SDK 公開出口。JS 由 esbuild --splitting（firebase 進動態 chunk）＋ tsc 產 .d.ts；build:sdk 產 dist。內部 app 以 @/ @legacy 別名解析，不經此。",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/types/sdk/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/sdk/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./sdk": {
+      "types": "./dist/types/sdk/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
+    "build:sdk": "esbuild src/sdk/index.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json",
+    "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
+    "prepublishOnly": "npm run build:sdk",
     "dev": "vite",
     "dev:test": "vite --port 4173 --strictPort --mode test",
     "build": "tsc && vite build",
@@ -40,7 +60,8 @@
     "ci:full": "npm run type-check && npm run lint && npm run test:emulator",
     "ci:fast": "npm run type-check && npm run test:run",
     "check": "npm run ci",
-    "test:property": "vitest run --config vitest.unit.config.mjs tests/unit/**/*.property.spec.ts"
+    "test:property": "vitest run --config vitest.unit.config.mjs tests/unit/**/*.property.spec.ts",
+    "test:mutation": "stryker run"
   },
   "dependencies": {
     "@netlify/functions": "^5.3.0",
@@ -68,6 +89,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^18.2.43",

@@ -74,7 +74,7 @@ describe('MeshGossipManager', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    manager = new MeshGossipManager('room-xyz');
+    manager = new MeshGossipManager('room-xyz', 'firebase-uid-123');
   });
 
   afterEach(async () => {

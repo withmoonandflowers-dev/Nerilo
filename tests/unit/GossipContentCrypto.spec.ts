@@ -115,3 +115,32 @@ describe('P2-②a：Gossip 內容密文化接線', () => {
     expect(shown[0]).not.toContain('看不到');
   });
 });
+
+describe('P2-③：Firestore 備援層加解密（房間金鑰）', () => {
+  it('encryptForFallback → decryptForFallback round-trip 還原明文，且密文不外洩', async () => {
+    const key = await roomKey();
+    const { handler } = makeHandler();
+    handler.setContentKey(key, 3);
+    const env = await handler.encryptForFallback('祕密備援');
+    expect(env).not.toBeNull();
+    expect(isEncryptedContent(env!)).toBe(true);
+    expect(env!).not.toContain('祕密備援');
+    expect(await handler.decryptForFallback(env!)).toBe('祕密備援');
+  });
+
+  it('無金鑰：encryptForFallback 回 null（呼叫端據此不送明文）', async () => {
+    const { handler } = makeHandler();
+    expect(await handler.encryptForFallback('x')).toBeNull();
+  });
+
+  it('缺對應 epoch 金鑰：decryptForFallback 拋錯（未在籍/未補齊）', async () => {
+    const key = await roomKey();
+    const a = makeHandler().handler;
+    a.setContentKey(key, 1);
+    const env = await a.encryptForFallback('hi'); // epoch 1 密文
+
+    const b = makeHandler().handler; // 只有 epoch 2 的金鑰 → 解不了 epoch 1
+    b.setContentKey(await roomKey(), 2);
+    await expect(b.decryptForFallback(env!)).rejects.toThrow();
+  });
+});

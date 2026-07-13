@@ -1,4 +1,5 @@
 import { P2PConnectionManager } from './P2PConnectionManager';
+import type { SignalingTransport } from './SignalingTransport';
 import { P2PChannelBus } from './P2PChannelBus';
 import { P2PProtocolRegistry } from './P2PProtocolRegistry';
 import { P2PFileTransferService } from './P2PFileTransferService';
@@ -29,13 +30,24 @@ export class P2PManager {
   /** 協商完成後的回呼（外部可用 onNegotiated 設定） */
   private negotiatedCallback: ((result: NegotiatedCapabilities) => void) | null = null;
 
-  constructor(roomId: string, localUid: string, dataChannelLabel = 'main', isInitiator = true) {
+  /**
+   * @param signaling 選填的 signaling 傳輸位置。省略＝房內 p2pRooms/{roomId}/signals（預設）；
+   *   注入 RelaySignalingTransport 即把整套硬化過的連線邏輯（DataChannel/HELLO/ICE restart）
+   *   跑在站級 relaySignals 上（陌生節點連線，ADR-0023 P4-B）——不為 relay 重寫半套 WebRTC。
+   */
+  constructor(
+    roomId: string,
+    localUid: string,
+    dataChannelLabel = 'main',
+    isInitiator = true,
+    signaling?: SignalingTransport
+  ) {
     this.roomId = roomId;
     this.localUid = localUid;
     this.deviceId = generateDeviceId();
     this.dataChannelLabel = dataChannelLabel;
     this.isInitiator = isInitiator;
-    this.connectionManager = new P2PConnectionManager(roomId, localUid, dataChannelLabel);
+    this.connectionManager = new P2PConnectionManager(roomId, localUid, dataChannelLabel, signaling);
     this.protocolRegistry = new P2PProtocolRegistry();
   }
 

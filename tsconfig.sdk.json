@@ -1,0 +1,13 @@
+{
+  "//": "SDK 型別產出（.d.ts）。JS 由 esbuild bundle 產（見 package.json build:sdk）。",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "allowImportingTsExtensions": false,
+    "outDir": "dist/types"
+  },
+  "include": ["src"],
+  "references": []
+}

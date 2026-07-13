@@ -2,6 +2,7 @@
 import { RoomService } from '@legacy/services/RoomService'
 import { FriendService, type Friendship } from '@legacy/services/FriendService'
 import { indexedDBService } from '@legacy/services/IndexedDBService'
+import { decodeContent } from '@legacy/features/chat/messageContent'
 import { localTimezone, timezoneToLatLng } from '@legacy/utils/geo'
 import type { P2PRoom, RoomMemberState } from '@legacy/types'
 import { featureLog } from '@legacy/utils/featureLog'
@@ -10,6 +11,10 @@ import { gradientFor, initialFor } from '~/lib/avatar'
 const { user, loading, logout } = useAuth()
 const { error: toastError, success } = useToast()
 const { balance, relayActive, ensureInit } = useCredits()
+// 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護，並看得到其他在線節點數。
+const { peerCount, announcing, start: startPresence, stop: stopPresence } = useNodePresence()
+// 盲信使節點（ADR-0023 P4-C）：信使角色 always-on + 成員背景備份；預設參與、可關。
+const { start: startCourierNode, stop: stopCourierNode, tombstoneRoom } = useCourierNode()
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
@@ -62,6 +67,7 @@ onUnmounted(() => {
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('scroll', closeMenu, true)
   window.removeEventListener('keydown', onMenuKeydown)
+  void stopPresence()
 })
 
 const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
@@ -81,6 +87,8 @@ watchEffect(() => {
   const uid = user.value.uid
   featureLog('dashboard', 'init', { uid })
   ensureInit() // 點數餘額載入（中繼狀態指示）
+  void startPresence(uid) // 宣告本節點在線可守護 + 週期查在線節點數
+  startCourierNode(uid) // 盲信使：接受寄存 + 背景備份自己房間（預設參與，可關）
   unsubFriends = FriendService.subscribeFriendships(uid, (list) => {
     friendships.value = list
   })
@@ -99,6 +107,7 @@ watchEffect(() => {
 onUnmounted(() => {
   unsubMine?.()
   unsubFriends?.()
+  void stopCourierNode() // 盲信使節點清理（關頁即停幫忙）
 })
 
 /** DM 房顯示對方名字（roomName 是共享欄位，雙方視角不同 → 由 friendship 解析） */
@@ -208,6 +217,8 @@ function deleteRoomAction(room: P2PRoom) {
       patchState(room.roomId, { deletedAt: Date.now() })
       try {
         const result = await RoomService.softDeleteRoom(room.roomId, user.value!.uid)
+        // 房間真正刪除（所有成員皆刪）→ 簽房籍墓碑請盲信使丟掉代管副本（best-effort，不擋 UI）。
+        if (result === 'deleted') void tombstoneRoom(room.roomId)
         success(result === 'deleted' ? '聊天室已刪除（所有成員皆已刪除）' : '已從你的列表刪除')
       } catch {
         toastError('刪除失敗，請再試一次')
@@ -223,7 +234,7 @@ async function loadPreviews(rooms: P2PRoom[]) {
     try {
       const msgs = await indexedDBService.getChatMessages(room.roomId, 1)
       const last = msgs[msgs.length - 1]
-      if (last && !last.deleted) previews.value[room.roomId] = last.content
+      if (last && !last.deleted) previews.value[room.roomId] = decodeContent(last.content).text
     } catch {
       /* 無本機歷史 → 顯示 fallback 文案 */
     }
@@ -337,8 +348,11 @@ function relativeTime(ts?: number): string {
 
     <!-- 中繼狀態 × 點數（誠實顯示：只反映真實連線與真實進帳） -->
     <section v-if="user" class="card dash__relay" aria-label="中繼狀態與點數">
-      <span class="dash__relay-dot" :class="{ 'dash__relay-dot--active': relayActive }" aria-hidden="true" />
-      <span class="dash__relay-text">{{ relayActive ? '節點中繼中 · 累積點數' : '節點待命中' }}</span>
+      <span class="dash__relay-dot" :class="{ 'dash__relay-dot--active': relayActive || announcing }" aria-hidden="true" />
+      <span class="dash__relay-text">
+        {{ relayActive ? '節點中繼中 · 累積點數' : '節點待命中' }}
+        <template v-if="announcing && peerCount > 0"> · 還有 <span data-testid="online-node-count">{{ peerCount }}</span> 個節點一起守護</template>
+      </span>
       <span class="dash__relay-balance">✦ {{ balance }}</span>
     </section>
 
