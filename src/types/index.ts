@@ -587,5 +587,14 @@ export interface HostMigrationEvent {
   reason: 'owner_left' | 'owner_timeout' | 'manual';
 }
 
+/**
+ * 房間加密狀態（ADR-0026 R2 明文降級 fail-visible）。中立層型別：core 引擎產生，
+ * 前端 UI 消費（避免後端依賴前端 features 層，見 no-restricted-imports 合約）。
+ *  - 'encrypted'  房間內容金鑰就緒，密文送出
+ *  - 'exchanging' keyx 進行中（暫態）或狀態未知
+ *  - 'plaintext'  ECDH 不可用 → 房間永久無法加密（真降級）
+ */
+export type EncryptionState = 'encrypted' | 'exchanging' | 'plaintext';
+
 
 

@@ -5,6 +5,7 @@ import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
 import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallback';
 import type { ReactionEvent, ReactionOp } from './reactions';
 import type { ReadEvent } from './readReceipts';
+import type { EncryptionState } from './encryptionGate';
 import type { SignalingFactory } from '../../core/p2p/SignalingTransport';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { logger } from '../../utils/logger';
@@ -239,6 +240,11 @@ export class MeshChatService {
   /** 本機 mesh userId（reaction/去重的「我」；initialize 後才有值）。 */
   getMeshUserId(): string | null {
     return this.meshUserId;
+  }
+
+  /** 加密狀態（ADR-0026 R2）：encrypted / exchanging / plaintext（真降級）。 */
+  getEncryptionState(): EncryptionState {
+    return this.meshGossipManager.getEncryptionState();
   }
 
   /**
