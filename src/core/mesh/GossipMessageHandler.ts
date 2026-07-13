@@ -91,6 +91,11 @@ export class GossipMessageHandler {
     this.ecdhPrivateKey = ecdhPrivateKey;
   }
 
+  /** 送出時是否會加密（sendEpoch 已就緒）。false = 目前送出走明文（ADR-0026 R2）。 */
+  hasSendKey(): boolean {
+    return this.sendEpoch !== null;
+  }
+
   /** 金鑰環中已知最高 epoch（-1 = 尚無金鑰）；供產生方交接時 epoch 單調遞增。 */
   getMaxKnownEpoch(): number {
     let max = -1;
