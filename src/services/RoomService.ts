@@ -891,50 +891,56 @@ export class RoomService {
   /**
    * 監聽所有公開房間（非 private、狀態為 open）
    */
-  static subscribePublicRooms(
-    callback: (rooms: P2PRoom[]) => void
-  ): () => void {
+  /**
+   * 公開房列表：一次性讀取（進頁載入 + 手動刷新），不再掛常駐 onSnapshot。
+   *
+   * 讀取衛生（2026-07-13 配額事件根因）：舊版 isPrivate 在前端過濾且無 limit，
+   * Firestore 實際把「所有 open 房（含私人房與累積的測試房）」整批讀出來，
+   * 每次進 dashboard 燒一次全集——8.1 萬讀/日的元兇。改為伺服器端
+   * isPrivate==false + limit(20)：無論垃圾房累積多少，每次最多讀 20 筆。
+   * 代價：缺 isPrivate 欄位的遠古房不再出現在公開列表（皆為測試遺留，可接受）。
+   * 需要複合索引 status+isPrivate+ttlExpireAt（firestore.indexes.json）；
+   * 索引未建好或查詢失敗時回空陣列並記 warn，不擋 dashboard。
+   */
+  static async getPublicRooms(): Promise<P2PRoom[]> {
     const roomsRef = collection(db, 'p2pRooms');
     // status == 'open' + ttlExpireAt 未過期：殭屍房（全員斷線、心跳已停）在
     // 原生 TTL 實際刪除前（可延遲 ~24h）就先從公開列表消失。
-    // isPrivate 仍在前端過濾，避免舊資料沒有該欄位時被排除。
     const q = query(
       roomsRef,
       where('status', '==', 'open'),
-      where('ttlExpireAt', '>', Timestamp.now())
+      where('isPrivate', '==', false),
+      where('ttlExpireAt', '>', Timestamp.now()),
+      limit(20)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    try {
+      const snapshot = await getDocs(q);
       const rooms: P2PRoom[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
-        const room: P2PRoom = {
+        rooms.push({
           roomId: doc.id,
           ownerUid: data.ownerUid,
           ownerName: data.ownerName,
           participants: data.participants || [],
           status: data.status || 'open',
-          isPrivate: !!data.isPrivate, // 沒有欄位時視為 false（公開）
+          isPrivate: !!data.isPrivate,
           createdAt: data.createdAt?.toMillis() || Date.now(),
           waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
           waitingStartedAt: data.waitingStartedAt?.toMillis(),
           lastActiveAt: typeof data.lastActiveAt === 'number' ? data.lastActiveAt : undefined,
-        };
-        rooms.push(room);
-      });
-
-      // 只在前端過濾出非 private 的房間
-      const publicRooms = rooms.filter((room) => !room.isPrivate);
-      if (DEBUG_ROOMS) {
-        logger.info('[RoomService] subscribePublicRooms snapshot', {
-          count: publicRooms.length,
-          rooms: publicRooms,
         });
+      });
+      if (DEBUG_ROOMS) {
+        logger.info('[RoomService] getPublicRooms', { count: rooms.length });
       }
-      callback(publicRooms);
-    });
-
-    return unsubscribe;
+      return rooms;
+    } catch (err) {
+      // 最可能是複合索引尚在建置（failed-precondition）；公開列表非關鍵路徑，降級為空。
+      logger.warn('[RoomService] getPublicRooms failed, returning empty list', { err });
+      return [];
+    }
   }
 
   /**

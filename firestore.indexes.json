@@ -15,6 +15,24 @@
       ]
     },
     {
+      "collectionGroup": "p2pRooms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isPrivate",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ttlExpireAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "signals",
       "queryScope": "COLLECTION",
       "fields": [
