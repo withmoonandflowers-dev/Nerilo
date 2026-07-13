@@ -35,12 +35,39 @@ export async function dismissWelcomeModal(page: Page): Promise<void> {
   await expect(page.locator('.welcome-modal-overlay')).toHaveCount(0);
 }
 
+const TEST_PASSWORD = 'Test123456';
+const uniqueEmail = () =>
+  `e2e-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@nerilo-e2e.test`;
+
 /**
- * Spin up an isolated browser context and land on /dashboard with anonymous
- * auth completed (waits for the role badge to read 'guest' or 'user'), then
- * dismiss the first-run onboarding modal so the dashboard UI is interactable.
+ * Spin up an isolated browser context, register a throwaway email/password
+ * account against the Firebase Auth emulator, and land on /dashboard as a
+ * non-anonymous 'user'. Firestore rules require a non-anonymous account to
+ * create rooms, so this is the default setup for any test that creates one.
+ * Dismisses the first-run onboarding modal so the dashboard is interactable.
  */
 export async function setupUser(browser: Browser): Promise<User> {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto('/login');
+  // Switch the login form into register mode, then submit a unique account.
+  await page.locator('.auth-toggle-link').click();
+  await expect(page.locator('.login-form button[type="submit"]')).toHaveText('註冊');
+  await page.fill('#email', uniqueEmail());
+  await page.fill('#password', TEST_PASSWORD);
+  await page.locator('.login-form button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
+  await expect(page.locator('.role-badge')).toContainText('user', { timeout: 5_000 });
+  await dismissWelcomeModal(page);
+  return { ctx, page };
+}
+
+/**
+ * Spin up an isolated browser context and land on /dashboard with anonymous
+ * auth (role 'guest'). Anonymous users can join rooms but cannot create them —
+ * use this only for tests that specifically exercise the guest path.
+ */
+export async function setupAnonUser(browser: Browser): Promise<User> {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto('/dashboard');

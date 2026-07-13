@@ -64,8 +64,12 @@ function idbPut(db: IDBDatabase, key: string, value: unknown): Promise<void> {
 }
 
 interface StoredKeyPair {
-  publicKeyData: string;  // Base64-encoded SPKI
-  privateKeyData: string; // Base64-encoded PKCS8
+  publicKeyData: string;  // Base64-encoded SPKI（ECDSA 簽章公鑰）
+  privateKeyData: string; // Base64-encoded PKCS8（ECDSA 簽章私鑰）
+  /** ECDH 公鑰 SPKI（Base64）；keyx 成對封裝用（ADR-0023 P2-②c）。舊 blob 無此欄位。 */
+  ecdhPublicKeyData?: string;
+  /** ECDH 私鑰 PKCS8（Base64）；與 ECDSA 私鑰同持久策略（見檔頭 threat model 註）。 */
+  ecdhPrivateKeyData?: string;
 }
 
 /**
@@ -83,6 +87,13 @@ interface StoredKeyPair {
 export class IdentityManager {
   private keyPair: CryptoKeyPair | null = null;
   private userId: string | null = null;
+  /**
+   * ECDH P-256 金鑰對（keyx 成對封裝房間內容金鑰，ADR-0023 P2-②c）。
+   * 與 ECDSA 身分金鑰分離：ECDSA 只能簽/驗，ECDH 只能協商，SubtleCrypto 不可混用。
+   * 持久化 → 全員斷線重生後，日誌裡舊 keyx（封給舊 ECDH 公鑰）仍開得了 → 歷史金鑰可補齊
+   * （「金鑰韌性 = 資料韌性」，ADR 修訂三）。持久失敗（Safari 隱私模式/node）退 session 內暫時金鑰。
+   */
+  private ecdhKeyPair: CryptoKeyPair | null = null;
 
   /**
    * 初始化（生成或載入密鑰對）
@@ -104,6 +115,112 @@ export class IdentityManager {
         userId: this.userId,
       });
     }
+
+    // ECDH 金鑰對（獨立於 ECDSA 身分）：載入或生成 + 持久化。
+    // 失敗非致命——退 session 內暫時金鑰（該裝置重啟後無法解舊 epoch 歷史，已記錄的取捨）。
+    await this.ensureEcdhKeyPair();
+  }
+
+  /** 取得 ECDH 公鑰（供 keyx 對外發布；未初始化拋錯）。 */
+  getEcdhPublicKey(): CryptoKey {
+    if (!this.ecdhKeyPair) {
+      throw new Error('ECDH key pair not initialized. Call initialize() first.');
+    }
+    return this.ecdhKeyPair.publicKey;
+  }
+
+  /** 取得 ECDH 私鑰（供 openSealedRoomKey 開出封給自己的房間金鑰）。 */
+  getEcdhPrivateKey(): CryptoKey {
+    if (!this.ecdhKeyPair) {
+      throw new Error('ECDH key pair not initialized. Call initialize() first.');
+    }
+    return this.ecdhKeyPair.privateKey;
+  }
+
+  /** 匯出 ECDH 公鑰（Base64 SPKI），寫入 meshIdentities.ecdhPubKey 供他人封裝。 */
+  async exportEcdhPublicKey(): Promise<string> {
+    if (!this.ecdhKeyPair) {
+      throw new Error('ECDH key pair not initialized. Call initialize() first.');
+    }
+    const exported = await crypto.subtle.exportKey('spki', this.ecdhKeyPair.publicKey);
+    return arrayBufferToBase64(exported);
+  }
+
+  /**
+   * 確保 ECDH 金鑰對就緒：先試從 IndexedDB 載入既有；缺則生成並持久化（合併進既有 blob，
+   * 不動 ECDSA 欄位）。持久失敗 → 記憶體內暫時金鑰，本 session 仍可 keyx。
+   */
+  private async ensureEcdhKeyPair(): Promise<void> {
+    try {
+      const db = await openIdentityDB();
+      const stored = await idbGet<StoredKeyPair>(db, IDB_KEY);
+      db.close();
+      if (stored?.ecdhPublicKeyData && stored?.ecdhPrivateKeyData) {
+        this.ecdhKeyPair = await this.importEcdhKeyPair(
+          stored.ecdhPublicKeyData,
+          stored.ecdhPrivateKeyData
+        );
+        logger.info('[IdentityManager] Loaded ECDH key pair from storage');
+        return;
+      }
+    } catch (error) {
+      logger.warn('[IdentityManager] ECDH load failed, will generate', { error });
+    }
+
+    // 生成新 ECDH 金鑰對（extractable：要匯出以持久化與發布公鑰）
+    const gen = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      ['deriveBits', 'deriveKey']
+    );
+    const pub = arrayBufferToBase64(await crypto.subtle.exportKey('spki', gen.publicKey));
+    const priv = arrayBufferToBase64(await crypto.subtle.exportKey('pkcs8', gen.privateKey));
+
+    try {
+      await this.persistEcdhKeyPair(pub, priv);
+      logger.info('[IdentityManager] Generated and persisted ECDH key pair');
+    } catch (error) {
+      logger.warn('[IdentityManager] ECDH persist failed — ephemeral (session-only) key', { error });
+    }
+
+    // 一律以「私鑰不可匯出」的形式載入到記憶體（安全對齊 ECDSA 私鑰）
+    this.ecdhKeyPair = await this.importEcdhKeyPair(pub, priv);
+  }
+
+  /** 從 Base64 SPKI/PKCS8 匯入 ECDH 金鑰對；私鑰不可匯出（僅 deriveBits/deriveKey）。 */
+  private async importEcdhKeyPair(pubB64: string, privB64: string): Promise<CryptoKeyPair> {
+    const publicKey = await crypto.subtle.importKey(
+      'spki',
+      base64ToArrayBuffer(pubB64),
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true, // 公鑰可匯出（exportEcdhPublicKey 發布用）
+      [] // ECDH 公鑰無 key usages
+    );
+    const privateKey = await crypto.subtle.importKey(
+      'pkcs8',
+      base64ToArrayBuffer(privB64),
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false, // 私鑰不可匯出
+      ['deriveBits', 'deriveKey']
+    );
+    return { publicKey, privateKey };
+  }
+
+  /** 把 ECDH 金鑰材料合併寫回 IndexedDB blob（保留既有 ECDSA 欄位）。 */
+  private async persistEcdhKeyPair(pubB64: string, privB64: string): Promise<void> {
+    const db = await openIdentityDB();
+    const existing = (await idbGet<StoredKeyPair>(db, IDB_KEY)) ?? undefined;
+    if (!existing?.publicKeyData || !existing?.privateKeyData) {
+      // 理論上 ECDSA 已先存；缺則不覆寫（避免寫出殘缺 blob），留待下次
+      db.close();
+      throw new Error('ECDSA key blob missing; skip ECDH merge');
+    }
+    await idbPut(db, IDB_KEY, {
+      ...existing,
+      ecdhPublicKeyData: pubB64,
+      ecdhPrivateKeyData: privB64,
+    });
+    db.close();
   }
 
   /**

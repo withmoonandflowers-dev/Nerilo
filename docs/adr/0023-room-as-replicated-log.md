@@ -159,7 +159,177 @@ P2 把紀錄內容密文化。加解密原語已落地並測試（`RecordCrypto`
 |---|---|---|---|
 | **P2-①** | `RecordCrypto` 加解密原語 + 單元 | 零（純函數、無接線） | ✅ 完成 |
 | **P2-②** | keyx 分發紀錄接進 gossip 管線 + GossipMessageHandler 收送時加解密（mesh 房，內容金鑰就緒才啟用；未就緒退明文相容） | 中（動 mesh 收送路徑，有 mesh-diagnostic/rejoin E2E 護欄） | 🎯 next |
-| **P2-③** | 2 人房切 gossip 管線、star 退役；typing/遊戲/備援跟隨 | 高（改唯一穩定的 2 人路徑）→ 專注階段 | 🎯 待 P2-② 穩定後 |
+| **P2-③** | 2 人房切 gossip 管線、star 退役；typing/遊戲/備援跟隨 | 高（改唯一穩定的 2 人路徑）→ 專注階段 | ✅ 完成（見修訂五） |
 
 star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後，盲信使（P4）
 只需 mesh 房密文化（P2-②）即可先行驗證於 3-5 人房。
+
+---
+
+## 修訂四（2026-07-06）：P2-②c keyx 接進 live mesh（接線決策）
+
+把 keyx 分發接進 live mesh（`MeshGossipManager`／`GossipMessageHandler`／新增
+`RoomKeyCoordinator`），讓 3-5 人 mesh 房真正端到端加密。以下決策在接線時定案。
+
+### 決策 1：ECDH 公鑰走 `meshIdentities`（擴充欄位），非另發 gossip announce
+
+每成員的 ECDH 公鑰是「靜態身分」（如同既有 ECDSA 簽章公鑰），故加一個
+`meshIdentities[uid].ecdhPubKey` 欄位隨身分一起發布，而非用一筆 gossip 紀錄廣播。
+- **低風險**：沿用既有身分註冊路徑（`RoomService.updateMeshIdentity`），不新增 gossip 通道語義。
+- **MITM 防護沿用**：`firestore.rules` 的 `meshIdentitiesChangeIsValid`
+  （`affectedKeys ⊆ {auth.uid}`）本就擋下覆寫他人條目；另補 `ecdhPubKey` 格式驗證（可選、有才驗）。
+- ECDH 金鑰對持久化於 IndexedDB（`IdentityManager`，與 ECDSA 身分同 blob、獨立金鑰對）——
+  全員斷線重生後舊 keyx（封給舊 ECDH 公鑰）仍開得了，符合「金鑰韌性 = 資料韌性」。
+  持久失敗（Safari 隱私模式/node）退 session 內暫時金鑰（該裝置重啟後無法解舊 epoch，已記錄取捨）。
+
+對比「一筆 gossip announce 廣播 ECDH 公鑰」：雖與 key-as-record 更一致，但需新通道 + 收端信任處理，
+風險高於擴充靜態身分欄位；且 keyx 紀錄本身已走 gossip（下述），靜態公鑰無需再走一次。
+
+### 決策 2：keyx 紀錄走 gossip；產生方＝完整穩定名冊的最小 userId（三道閘門）
+
+內容金鑰產生方用 `RoomKeyDistribution.sealRoomKeyForAll` 封給所有在場成員，以
+`channel:'keyx'` 寫進 gossip 管線（與一般訊息同一條對帳，遲入/重進靠 anti-entropy 補齊）。
+產生方 deterministic 選舉＝在場成員 userId 字典序最小者。
+
+**接線中發現並修復的關鍵 bug（雙產生方 epoch 碰撞）**：形成期若以殘缺名冊搶先分發，
+兩個「各自視圖的最小者」會各發一把 epoch-0 金鑰（不同鑰、同 epoch）→ 金鑰環相互覆蓋
+→ 收端解密失敗。修法為 `RoomKeyCoordinator` 三道分發閘門：
+①全員 ecdh 就緒（eligible == participants）②名冊連續穩定數輪 ③我是完整名冊最小者。
+令「只有最終完整名冊的最小者」分發。殘留（Firestore 傳播 > 穩定窗的持久分裂視圖）極不可能且
+會在收斂後以 `getMaxKnownEpoch()+1` 自癒（新一輪 epoch 遞增，不再同號）。
+
+### 決策 3：消費在 `GossipMessageHandler`；金鑰環按信封 epoch 選鑰
+
+收到 `channel:'keyx'` 且 `forMember == 自己` → `openSealedRoomKey` → `setContentKey(key, epoch)`；
+keyx 不進聊天顯示（如同 game 通道分流），但照樣入 store／轉發／對帳（盲信使/遲入者補齊）。
+內容金鑰改為 **epoch → key 金鑰環**：送出用最高 epoch，解密按各密文信封 epoch 選鑰
+（加人/移除輪替後仍能解舊 epoch 歷史密文）。全程「無鑰退明文相容」不變——沒拿到 keyx 前 mesh 房照舊明文。
+
+### 決策 4：keyx 名冊＝`meshIdentities ∩ participants`（移除成員前向保密的前提）
+
+接續時發現：`RoomService.leaveRoom` 只縮 `participants`、**不清 `meshIdentities`**（離開者條目殘留）。
+若產生方直接用 `meshIdentities` 當名冊，離開者會（a）續留名冊使 sig 不變 → 不觸發重發、
+（b）被續封鑰 → **無前向保密**。故 `rosterFromRoom` 只認「仍在 `participants` 的成員」：
+離開即退出名冊 → 名冊縮小 → 新 epoch 新金鑰只封給留下者 → 離開者持舊 epoch 鑰、解不了新 epoch。
+以確定性整合測（`tests/unit/MeshKeyxIntegration.spec.ts`）驗證加人/移除兩向的 epoch 輪替與前向保密。
+
+### P2 分階段狀態更新
+
+| 階段 | 狀態 |
+|---|---|
+| P2-②a `GossipMessageHandler` 收送加解密接線（金鑰為閘、無鑰退明文） | ✅ 完成 |
+| P2-②b `RoomKeyDistribution` 成對封裝協議（純函數） | ✅ 完成 |
+| **P2-②c keyx 接進 live mesh（本修訂）** | ✅ 完成（3 人 mesh E2E：UI 明文、複本密文；mesh-diagnostic 未迴歸） |
+| P2-③ 2 人房切 gossip、star 退役 | ✅ 完成（見修訂五） |
+
+---
+
+## 修訂五（2026-07-07）：P2-③ 2 人房切 mesh、star 退役（Vue 版）
+
+Vue 版（web-vue，ADR-0017 重寫；React 生產版凍結、仍星型）2 人房從此走
+gossip 複寫日誌，star 特例邏輯退役（`decideTopology` 一律回 mesh）。分三階段
+（characterization-first，每階段逐層閘門 + 連跑確認非 flaky）：
+
+- **Phase 1 — mesh typing**：typing 是暫態信號，走 `MeshConnection` 新增的
+  `ns:'presence'` lossy 通道（不進 gossip 可靠日誌/對帳，仿 `relay:forward` 分流）。
+  `MeshGossipManager.broadcastTyping/onTyping`，Vue chat page 依拓撲分流 `emitTyping`。
+- **Phase 2 — mesh 遊戲**：`useTicTacToe`/`TicTacToePanel` 的 bus 型別由具象
+  `P2PChannelBus` 放寬為最小 `GameBus` 介面（星型結構相容、零回退）；
+  `MeshChatService.sendGameEnvelope/onGameMessage` 走 M4 `channel:'game'` 可靠管線；
+  `MeshGameBus`（web-vue）轉接。回合制事件走可靠管線比星型 lossy bus 更穩。
+- **Phase 3 — 切換 + rejoin**：chat page 2 人房接 `MeshGameBus` + mesh typing +
+  房主=X；🔒 指示器/遊戲鈕/橫幅改按 mesh 現況（已 E2EE, keyx）與 2 人房閘控。
+  **`tests/e2e-vue/rejoin.spec.ts` 由 fixme 轉綠（連跑 3 次穩定）**——「離開再進
+  收不到」整類消滅：重進＝cold→syncing→live，B 重連 mesh、缺的訊息由留房者經
+  anti-entropy 補齊。前兩次修復卡在的 star signaling 復活術，整個繞過。
+
+驗收：全 Vue E2E 套件綠（golden-path/game-theme/rejoin×3/mesh-diagnostic/mesh-e2ee/
+all-offline-revival/friends/persistent-rooms/room-manage/mesh-rejoin）；單元 1196 綠；
+React 護欄未迴歸。
+
+### 收尾（2026-07-07，接續本修訂當日完成）
+
+修訂五當下記的兩條誠實邊界已於同日收尾階段關閉：
+
+- **① 2 人房 Firestore 備援改密文**（commit 收尾①）：`GossipMessageHandler`
+  加 `encryptForFallback/decryptForFallback`（房間金鑰 + 金鑰環按 epoch 選鑰），
+  逐層透出到 `MeshChatService`（映射 `FallbackEncryptedContent`）。chat page 的
+  `sendMessage` 改 mesh-first store-first：一律先入 gossip 日誌，覆蓋不足才**加密**
+  橋接；無金鑰則不送明文（靠 anti-entropy 補）。備援層明文洩漏消除。
+- **② star 死碼清除**（commit 收尾②）：`StarTopologyController` 與 `starTopology.ts`
+  刪除，chat page 的 star 分支/輪詢/typing-star 分歧/`decideTopology` 全移除，
+  `Topology` 型別收斂為 `'mesh'`。全 Vue E2E 套件（11 spec）仍綠。
+
+---
+
+## 修訂六（2026-07-07）：P4-A 全站節點名冊地基（盲信使前置）
+
+盲信使（R1 / ADR-0024）＝非成員為他人房間保存密文複本並參與補齊。硬前提「紀錄
+密文化」已由 P2-②c 完成，剩下的地基是「非成員怎麼找到要幫誰、怎麼連上」。P4 依相依
+分四塊：**A 名冊 → B 陌生節點 signaling → C 寄存/對帳 → D 計量**。本修訂交付 **A**。
+
+盤點發現 `src/core/relay/` 與 `transport/` 有大量休眠但已測的模組（`RelayManager`/
+Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndForward`），
+0 個 app 檔引用。`RelayCoordinator` 自己標注「全域 overlay 尚未建立」。故 P4 多為接線。
+
+- **P4-A.1**（commit）：`FirestoreRelayDirectory` — `IRelayDirectory` 的 production
+  adapter，宣告寫 `relayDirectory/{ownerUid}`，query 濾 TTL/exclude/sort/limit（對齊
+  記憶體版語義）。firestore.rules：只能寫自己那格（docId==auth.uid、ownerUid 相符、
+  非匿名反女巫、announcedAt ±60s）、任何登入者可讀。單元 4 + 整合 rules 7 綠。
+- **P4-A.2**（commit）：`useNodePresence` — dashboard 掛載即宣告本節點（nodeId=mesh
+  userId）+ 週期查在線節點數，離頁撤回；誠實條款（只有非匿名宣告成功才顯示，匿名/
+  被拒靜默降級）。UI「還有 N 個節點一起守護」。E2E：兩瀏覽器 dashboard 互相發現。
+
+**P4-B（done）**：不綁房的站級 signaling（`relaySignals/{channelId}`，rules 驗 participants）
++ `RelayConnector` 編排（主動 connectToRelayNode／中繼 startListening，對稱去重）。relay 連線
+複用 `P2PManager`（DataChannel + HELLO + ICE restart 全套），不為 relay 重寫半套 WebRTC。
+真 WebRTC E2E 綠：兩瀏覽器陌生節點雙端 connected（`tests/e2e-vue/relay-connect.spec.ts`）。
+
+**P4-C（done，剩簽章/觸發收尾）**：盲信使寄存協議。
+- C.1 `CourierStore`：ADR-0024 儲存經濟學（單筆 4KB／單房 5MB／總預算配額、14 天 TTL、
+  預算 LRU 淘汰整房、簽章墓碑刪除、first-write-wins）。純邏輯，unit + property 測試。
+- C.2 `CourierService`：deposit/pull/tombstone 協議跑在 P2PChannelBus（ns='courier'），
+  request/response 關聯 + 逾時。整合測試（記憶體對接 bus）綠。
+- C.3 接真 relay 通道：member 寄存密文紀錄 → courier 代管 → 回線 pull 原樣取回，
+  真 WebRTC E2E 綠（密文位元對位相同，證明盲存不改 byte）。
+- C.4 anti-entropy 自動對帳（reconcile）：複用 `antiEntropy` 的 computeDigest/peerLacks，
+  一輪雙向收斂——成員送 digest → 信使補「成員缺的」+ 回自己 digest → 成員回推「信使缺的」。
+  整合測試（含 missing 洞、已一致無多餘傳輸）+ 真 WebRTC 雙向 E2E 綠。
+- C.5 app 觸發整合（`useCourierNode`，dashboard 掛載即啟）：
+  - 信使角色 always-on：RelayConnector.startListening → 對每條來連掛 CourierServer（共用 CourierStore）。
+  - 成員背景備份：每 30s runCourierBackup — 發現候選信使（新鮮者優先、上限 4，多候選容忍
+    崩潰未撤回的陳舊名冊條目：連線到不了 'connected' 即換下一個）→ 對「持久層持有紀錄的每一房」
+    reconcile（推信使缺的、收信使有我缺的並落地 IndexedDB）。
+  - 預設參與、可關（localStorage `nerilo.courier.enabled`，ADR-0024 Decision 3.4）；關頁即停。
+  - 真 production E2E 綠：成員 seed 一筆持久紀錄 → runCourierBackup（真 deps）→ 線上信使收下
+    （100% production 路徑，只不等 30s interval）。listRooms 加進 IGossipPersistence。
+- C.6 房籍簽章墓碑（`TombstoneCrypto`，ADR-0024 Decision 3.3）：盲信使不知名冊，如何驗房籍？
+  觀察每筆代管密文都帶寄件人簽章、senderId=hash(pubKey)。故墓碑由「senderId 出現在該房
+  store 的 pubKey」簽 `TOMBSTONE|${roomId}`；信使驗①簽章對得上②senderId∈roomStore → 刪。
+  非成員沒對該房送過東西 → senderId 不在 store → 偽造驗不過。綁 roomId 防跨房重放。
+  真 crypto 單元測試（簽/驗、非成員、竄改、跨房、冒用 pubKey、畸形）+ 協議整合 + 真 WebRTC
+  E2E 綠。app 觸發：房間真刪（softDeleteRoom=='deleted'）時 dashboard 簽墓碑 best-effort 廣播。
+
+**P4-C 完成。**
+
+**P4-D（done）計量：共簽收據 → 點數（ADR-0022「中繼即價值」）。**
+- `CourierReceipts`：具體 ECDSA 字串簽/驗 + pubKey↔nodeId 綁定 + verifyCoSignedReceipt（三關：
+  雙 pubKey 綁定 + CoSignedReceipt 雙簽有效 + 非自簽自）。真金鑰單元測試。
+- 協議（CourierService）：IDENTIFY（成員自報身分，可靠遞送＝等 ack 重試）→ 信使代管 bytes
+  累計 → claimCredit 起草簽 → 成員驗 relay 半簽 + 綁定 + approve → 回簽 → 信使驗三關 → 計點。
+  信使一個人偽造不了（沒成員回簽不成立）；成員冒名不了（pubKey 必須導出 nodeId）。
+- app 觸發（useCourierNode）：信使 CourierServer 帶計量設定（onCredit→CreditEconomy
+  .recordRelayContribution，落 CreditLedger 可驗帳本）；成員 CourierClient 自動回簽；每 30s
+  claim 一輪。餘額帳戶以 firebase uid 為鍵（與 useCredits 一致），收據身分用 mesh nodeId。
+- 真 WebRTC E2E 綠：成員寄存 → 信使起草+成員回簽 → 信使餘額增加 + 帳本 verify ok。
+- 誠實邊界：CreditEconomy 餘額目前 localStorage；in-flight 收據無逾時回補（成員不回簽則
+  該輪 bytes 作廢，best-effort）。
+
+**P4-C.7（done）代管持久化：** `CourierStore` 記憶體為權威 + `CourierReplicaStore`（Dexie，
+獨立 DB `NeriloCourier`）鏡像增/刪；重載後 `hydrate()` 從 IndexedDB 載回代管密文（逾 TTL 者跳過
+並清除），信使關頁再開仍守著別人的密文。真 WebRTC E2E 綠：寄存 → reload 信使頁 → 記憶體全清後
+仍從 IndexedDB 補回該筆。這讓「全員斷線重生」真正跨會話成立。
+
+**P4（網絡）全數完成：A 名冊 · B 連線 · C 盲信使寄存/對帳/墓碑/持久化 · D 計量。**
+
+**尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。

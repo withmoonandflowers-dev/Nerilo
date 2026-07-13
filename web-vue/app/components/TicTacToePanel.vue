@@ -1,31 +1,38 @@
 <script setup lang="ts">
-import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
+import type { GameBus } from '~/lib/gameBus'
+import type { Mark } from '@legacy/features/game/ticTacToe'
 
 const props = defineProps<{
-  bus: P2PChannelBus | null
-  isInitiator: boolean
+  bus: GameBus | null
+  /** 我的棋子；null = 觀戰（不能下、仍渲染雙方落子） */
+  myMark: Mark | null
   selfId: string
   /** P2P 活著才可互動；false = 對局暫停（遊戲不走伺服器備援） */
   connected: boolean
 }>()
 defineEmits<{ close: [] }>()
 
-const { state, myMark, play, restart } = useTicTacToe(
+const { state, play, restart } = useTicTacToe(
   computed(() => props.bus),
-  computed(() => props.isInitiator),
+  computed(() => props.myMark),
   computed(() => props.selfId)
 )
 
 const status = computed(() => {
   if (state.value.winner === 'draw') return '平手'
-  if (state.value.winner) return state.value.winner === myMark.value ? '你贏了 ✧' : '對方獲勝'
-  return state.value.turn === myMark.value ? `輪到你（${myMark.value}）` : `等待對方（${state.value.turn}）`
+  if (!props.myMark) {
+    if (state.value.winner) return `${state.value.winner} 獲勝`
+    return `觀戰中 · 輪到 ${state.value.turn}`
+  }
+  if (state.value.winner) return state.value.winner === props.myMark ? '你贏了 ✧' : '對方獲勝'
+  return state.value.turn === props.myMark ? `輪到你（${props.myMark}）` : `等待對方（${state.value.turn}）`
 })
 
 const cellDisabled = (i: number) =>
   !props.connected ||
+  !props.myMark ||
   state.value.board[i] !== null ||
-  state.value.turn !== myMark.value ||
+  state.value.turn !== props.myMark ||
   state.value.winner !== null
 </script>
 

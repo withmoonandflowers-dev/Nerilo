@@ -4,12 +4,18 @@ import { sendMessageViaFirestore, subscribeToFirestoreMessages } from '@legacy/s
 import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
-import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
-import { StarTopologyController } from '~/lib/starTopology'
+import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
+import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
+import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
+import { MeshGameBus } from '~/lib/meshGameBus'
+import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
 
-type Topology = 'star' | 'mesh'
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'] as const
+
+// star 特例已退役（ADR-0023 P2-③）；保留具名型別供 currentTopology 語義清楚。
+type Topology = 'mesh'
 
 definePageMeta({ pageTransition: { name: 'slide', mode: 'out-in' } })
 
@@ -22,10 +28,96 @@ const { messages, addMessage, updateMessageStatus } = useChatMessages()
 const roomName = ref<string | undefined>(undefined)
 const connectionState = ref<ConnectionState>('idle')
 const currentTopology = ref<Topology | null>(null)
-// ── 遊戲（整合頁：聊天 × 井字棋，2 人星型房）────────────────────────
+// ── 遊戲（整合頁：聊天 × 井字棋，2 人房；星型或 mesh 皆可，見 MeshGameBus）──
 const showGame = ref(false)
-const gameBus = ref<P2PChannelBus | null>(null)
+const selectedGame = ref<'ttt' | 'gomoku'>('ttt') // 房內小遊戲選擇（同一條 mesh game 通道）
+const gameBus = ref<GameBus | null>(null)
 const isRoomOwner = ref(false)
+const roomOwnerId = ref('') // 房主 firebase uid（座位模型：座 0 恆房主）
+// ── 表情 reactions ──
+const reactions = ref<ReactionMap>({})
+const myMeshId = ref('')
+const pickerFor = ref<string | null>(null) // 開著表情選單的 messageId
+
+function toggleReaction(messageId: string, emoji: string) {
+  if (!meshChat || !myMeshId.value) return
+  const op = hasReacted(reactions.value, messageId, emoji, myMeshId.value) ? 'remove' : 'add'
+  reactions.value = applyReaction(reactions.value, { messageId, emoji, from: myMeshId.value, op }) // 樂觀
+  void meshChat.sendReaction(messageId, emoji, op)
+  pickerFor.value = null
+}
+function reactionChips(messageId: string): Array<{ emoji: string; count: number; mine: boolean }> {
+  const byEmoji = reactions.value[messageId]
+  if (!byEmoji) return []
+  return Object.entries(byEmoji).map(([emoji, froms]) => ({
+    emoji, count: froms.length, mine: froms.includes(myMeshId.value),
+  }))
+}
+// ── 已讀人數（per-member 水位；聚合見 readReceipts.ts）──
+const readState = ref<ReadState>({})
+let myWatermark = '' // 上次送出的自身水位（僅前進才再送，天然限流）
+/** 我目前看到的最高訊息水位；若前進了就樂觀套用並廣播（只在我正在看時呼叫）。 */
+function advanceMyRead() {
+  if (!meshChat || !myMeshId.value) return
+  let top = ''
+  for (const m of messages.value) {
+    const k = orderKeyOf(m)
+    if (k > top) top = k
+  }
+  if (!top || top <= myWatermark) return // 未前進 → 不送
+  myWatermark = top
+  readState.value = applyRead(readState.value, { from: myMeshId.value, watermark: top }) // 樂觀（自身不計入顯示）
+  void meshChat.sendRead(top)
+}
+/** 只在自己訊息下顯示：已讀人數（3+ 人房「已讀 N」；2 人房對方讀過即「已讀」）。 */
+function readReceiptText(msg: ChatMessage): string {
+  if (!myMeshId.value) return ''
+  const n = readCount(readState.value, orderKeyOf(msg), myMeshId.value) // author=我 → 自動排除自己
+  if (n <= 0) return ''
+  return Math.max(0, memberCount.value - 1) > 1 ? `已讀 ${n}` : '已讀'
+}
+// ── 訊息回覆 ──
+const replyingTo = ref<{ messageId: string; text: string; mine: boolean } | null>(null)
+const messageById = computed(() => {
+  const m = new Map<string, ChatMessage>()
+  for (const msg of messages.value) m.set(msg.messageId, msg)
+  return m
+})
+/** 訊息顯示文字（回覆訊息去掉編碼標記）。 */
+function bodyText(msg: ChatMessage): string {
+  return decodeContent(msg.content).text
+}
+/** 若此訊息是回覆，回傳被引用訊息的預覽（作者側 + 文字）；否則 null。 */
+function quotedFor(msg: ChatMessage): { text: string; mine: boolean } | null {
+  const { replyTo } = decodeContent(msg.content)
+  if (!replyTo) return null
+  const orig = messageById.value.get(replyTo)
+  if (!orig) return { text: '訊息', mine: false }
+  return { text: bodyText(orig), mine: orig.from === user.value?.uid }
+}
+function startReply(msg: ChatMessage) {
+  replyingTo.value = { messageId: msg.messageId, text: bodyText(msg), mine: msg.from === user.value?.uid }
+  pickerFor.value = null
+  textareaEl.value?.focus()
+}
+/** 房間成員數（reactive，供模板閘控：遊戲 2+ 人房、mesh 橫幅僅 3+ 人房） */
+const memberCount = ref(0)
+
+// ── 遊戲座位（3–5 人房：2 人對戰、其餘觀戰；2 人房非房主自動入座）──
+const { role: seatRole, canSit, releaseSeat, claimSeat } = useGameSeats(
+  gameBus,
+  computed(() => user.value?.uid ?? ''),
+  roomOwnerId,
+  isRoomOwner,
+  memberCount
+)
+const tttMark = computed<'X' | 'O' | null>(() =>
+  seatRole.value === 'first' ? 'X' : seatRole.value === 'second' ? 'O' : null
+)
+const gomokuMark = computed<'B' | 'W' | null>(() =>
+  seatRole.value === 'first' ? 'B' : seatRole.value === 'second' ? 'W' : null
+)
+
 const { theme, cycleTheme } = useTheme()
 const themeLabel = computed(
   () => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value]
@@ -38,7 +130,6 @@ const unseenCount = ref(0)
 const listEl = ref<HTMLElement | null>(null)
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 
-const starTopology = new StarTopologyController()
 const roomSubscription = new RoomSubscriptionController()
 // mesh（3-5 人）：直接複用零框架依賴的 MeshChatService（gossip + anti-entropy 對帳）
 let meshChat: MeshChatService | null = null
@@ -56,7 +147,7 @@ let disposed = false
 const statusText = computed(() => {
   switch (connectionState.value) {
     case 'connected':
-      return currentTopology.value === 'star' ? '已連線 · P2P 直連' : '已連線'
+      return '已連線'
     case 'connecting':
       return '連線中…'
     case 'failed':
@@ -68,16 +159,6 @@ const statusText = computed(() => {
   }
 })
 
-/** decideArchitecture — 對齊 React 版 useP2PArchitecture：3+ 人或明確標記 → mesh */
-function decideTopology(room: P2PRoom, effectiveCount: number): Topology {
-  if (room.topology === 'mesh') return 'mesh'
-  return effectiveCount >= 3 ? 'mesh' : 'star'
-}
-
-function setConnectionState(state: ConnectionState) {
-  connectionState.value = state
-}
-
 // 在房內收到訊息即已讀（節流 5s，metadata 寫入）
 let lastReadWriteAt = 0
 function touchRead() {
@@ -86,11 +167,6 @@ function touchRead() {
   if (now - lastReadWriteAt < 5_000) return
   lastReadWriteAt = now
   RoomService.markRead(roomId.value, user.value.uid).catch(() => {})
-}
-
-function onIncomingMessage(msg: ChatMessage) {
-  addMessage(msg)
-  touchRead()
 }
 
 // 送訊後 bump 房間活躍度（節流 10s；只寫 lastActiveAt/ttl metadata，
@@ -111,49 +187,45 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     const uid = user.value!.uid
     const effectiveCount = effectiveParticipantCount ?? room.participants.length
     participantCount = Math.max(participantCount, effectiveCount)
+    memberCount.value = participantCount
     if (room.status !== 'open' || effectiveCount < 2) return
 
-    const decision = decideTopology(room, effectiveCount)
-    if (currentTopology.value === decision) return
+    if (currentTopology.value === 'mesh') return // 已建立，勿重複初始化
 
-    featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: decision, from: currentTopology.value })
+    featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: 'mesh', from: currentTopology.value })
 
-    if (decision === 'mesh') {
-      // 3-5 人 mesh：複用 @legacy MeshChatService（gossip + seq anti-entropy 對帳，
-      // 恰好一次保證見 docs/QA-REPORT-chat.md 第三輪）。star→mesh 遷移先清星型。
-      starTopology.cleanup()
-      currentTopology.value = 'mesh'
-      connectionState.value = 'connecting'
-      const svc = new MeshChatService(roomId.value, uid)
-      await svc.initialize()
-      if (disposed) {
-        await svc.cleanup()
-        return
-      }
-      meshChat = svc
-      svc.onMessage((msg) => addMessage(msg))
-      svc.loadHistory().then((history) => history.forEach((m) => addMessage(m))).catch(() => {})
-      // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
-      meshStateInterval = setInterval(() => {
-        if (!meshChat) return
-        const s = meshChat.getConnectionState()
-        const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
-        if (mapped !== connectionState.value) connectionState.value = mapped
-      }, 2000)
+    // ADR-0023 P2-③：一律走 gossip 複寫日誌（star 退役）。複用 @legacy MeshChatService
+    // （gossip + seq anti-entropy 對帳，恰好一次見 docs/QA-REPORT-chat.md 第三輪）。
+    currentTopology.value = 'mesh'
+    connectionState.value = 'connecting'
+    isRoomOwner.value = room.ownerUid === uid // 房主＝座 0（first）；遊戲騎 mesh gossip（MeshGameBus）
+    roomOwnerId.value = room.ownerUid ?? ''
+    const svc = new MeshChatService(roomId.value, uid)
+    await svc.initialize()
+    if (disposed) {
+      await svc.cleanup()
       return
     }
-
-    if (currentTopology.value === null) {
-      const isInitiator = room.ownerUid === uid
-      isRoomOwner.value = isInitiator
-      await starTopology.initialize(roomId.value, uid, isInitiator, setConnectionState, onIncomingMessage)
-      currentTopology.value = 'star'
-      // 遊戲騎同一條 bus（ns:'ttt'）；連線建立後 bus 才存在
-      gameBus.value = starTopology.getChannelBus()
-      typingUnsub = starTopology.onTyping(({ userId, isTyping }) => {
-        if (userId !== uid) peerTyping.value = isTyping
-      })
-    }
+    meshChat = svc
+    myMeshId.value = svc.getMeshUserId() ?? ''
+    gameBus.value = new MeshGameBus(svc)
+    svc.onMessage((msg) => addMessage(msg))
+    // 表情 reactions：遠端事件套進聚合（本機送出時已樂觀套用）
+    svc.onReaction((ev) => { reactions.value = applyReaction(reactions.value, ev) })
+    // 已讀水位：遠端成員的水位套進聚合（單調取 max）
+    svc.onRead((ev) => { readState.value = applyRead(readState.value, ev) })
+    // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
+    typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
+    svc.loadHistory()
+      .then((history) => { history.forEach((m) => addMessage(m)); advanceMyRead() })
+      .catch(() => {})
+    // 連線狀態輪詢（對齊 React useMeshTopology：mesh 內部無 push 事件）
+    meshStateInterval = setInterval(() => {
+      if (!meshChat) return
+      const s = meshChat.getConnectionState()
+      const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
+      if (mapped !== connectionState.value) connectionState.value = mapped
+    }, 2000)
   } catch (e) {
     console.error('[chat] initializeP2P failed', e)
     connectionState.value = 'failed'
@@ -229,9 +301,9 @@ function startFallbackSubscription() {
   }, {
     localUid: uid,
     decrypt: (payload: unknown, senderId: string) => {
-      const chatService = starTopology.getChatService()
-      if (!chatService) return Promise.reject(new Error('ChatService not ready'))
-      return chatService.decryptFromFallback(payload as never, senderId)
+      // 2 人房已一律 mesh（P2-③）：備援密文用房間金鑰（keyx）解，非星型 sender key。
+      if (!meshChat) return Promise.reject(new Error('mesh chat not ready'))
+      return meshChat.decryptFromFallback(payload as never, senderId)
     },
   })
 }
@@ -247,9 +319,7 @@ onUnmounted(() => {
   roomSubscription.unsubscribe()
   typingUnsub?.()
   fallbackUnsub?.()
-  starTopology.cleanup()
   if (meshStateInterval) clearInterval(meshStateInterval)
-  clearInterval(gameBusPoll)
   meshChat?.cleanup().catch(() => {})
   meshChat = null
   credits.stopEarning()
@@ -278,34 +348,26 @@ async function sendMessage(content: string, existingMessageId?: string) {
   }
 
   try {
-    if (connectionState.value === 'connected' && currentTopology.value === 'star') {
-      await starTopology.sendMessage(content, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_star' })
-    } else if (currentTopology.value === 'mesh' && connectionState.value === 'connected' && meshChat) {
-      await meshChat.sendMessage(content, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_mesh' })
-      // 混合模式橋接（同 React 版）：mesh 連上數 < 應到人數-1 → 同 id 雙寫備援，
-      // 掉隊者收得到、mesh 成員兩份同 id 由 useChatMessages 去重
-      const coverage = meshChat.getMeshCoverage()
-      const expectedPeers = participantCount - 1
-      if (expectedPeers > 0 && coverage.connected < expectedPeers) {
-        await sendMessageViaFirestore(roomId.value, uid, { content }, tempId)
+    // ADR-0023 P2-③：2 人房一律走 gossip 複寫日誌（star 退役）。
+    if (!meshChat) {
+      throw new Error('連線建立中，請稍候再送')
+    }
+    // store-first：先入複寫日誌（此刻沒連上也會由 anti-entropy 補送），liveness 不綁當下連線。
+    await meshChat.sendMessage(content, tempId)
+    featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_mesh' })
+    // 覆蓋不足（有成員不在 mesh，多半離線/連線中）→ 加密備援橋接，讓其收得到。
+    // 用房間金鑰（keyx）加密；無金鑰則「不送明文」——靠 mesh anti-entropy 補齊，
+    // 不再明文洩漏到 Firestore（P2-③ 收尾；星型舊路徑的密文備援等價）。
+    const coverage = meshChat.getMeshCoverage()
+    const expectedPeers = participantCount - 1
+    if (expectedPeers > 0 && coverage.connected < expectedPeers) {
+      const encrypted = await meshChat.encryptForFallback(content)
+      if (encrypted) {
+        await sendMessageViaFirestore(roomId.value, uid, { encrypted }, tempId)
         featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_bridge' })
+      } else {
+        featureLog('chat', 'fallback_skipped_no_key', { roomId: roomId.value })
       }
-    } else if (currentTopology.value === 'star' || currentTopology.value === null) {
-      // ADR-0004：星型房的備援一律密文；金鑰未就緒時擲錯（訊息標失敗、可重送）
-      const chatService = starTopology.getChatService()
-      if (!chatService) {
-        throw new Error('E2EE 金鑰尚未建立（P2P 交換未完成），無法經備援通道傳送')
-      }
-      const encrypted = await chatService.encryptForFallback(content)
-      await sendMessageViaFirestore(roomId.value, uid, { encrypted }, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_fallback' })
-    } else {
-      // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文。
-      // tempId 貫穿寫入：否則 onSnapshot 以另一個 id 回吐自己的訊息 → 兩顆泡泡
-      await sendMessageViaFirestore(roomId.value, uid, { content }, tempId)
-      featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'firestore_fallback' })
     }
     updateMessageStatus(tempId, 'sent')
     setTimeout(() => updateMessageStatus(tempId, 'delivered'), 1500)
@@ -321,10 +383,12 @@ async function sendMessage(content: string, existingMessageId?: string) {
 async function handleSend() {
   const content = inputValue.value.trim()
   if (!content) return
+  const raw = encodeContent(content, replyingTo.value?.messageId) // 回覆時嵌入被回覆 id（隨內容加密）
+  replyingTo.value = null
   inputValue.value = ''
   if (textareaEl.value) textareaEl.value.style.height = 'auto'
   emitTyping(false)
-  await sendMessage(content)
+  await sendMessage(raw)
 }
 
 function handleResend(msg: ChatMessage) {
@@ -346,11 +410,16 @@ function autoGrow() {
   emitTyping(true)
 }
 
+function sendTypingSignal(isTyping: boolean) {
+  // mesh gossip presence 通道（lossy）；star 退役後無其他路徑。
+  meshChat?.sendTyping(isTyping)
+}
+
 function emitTyping(isTyping: boolean) {
-  starTopology.sendTyping(isTyping)
+  sendTypingSignal(isTyping)
   if (typingDebounce) clearTimeout(typingDebounce)
   if (isTyping) {
-    typingDebounce = setTimeout(() => starTopology.sendTyping(false), 2500)
+    typingDebounce = setTimeout(() => sendTypingSignal(false), 2500)
   }
 }
 
@@ -411,7 +480,7 @@ function onScroll() {
   const el = listEl.value
   if (!el) return
   isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-  if (isNearBottom.value) unseenCount.value = 0
+  if (isNearBottom.value) { unseenCount.value = 0; advanceMyRead() } // 捲到底＝看到最新 → 推進已讀水位
 }
 
 function scrollToBottom(smooth = true) {
@@ -426,7 +495,7 @@ watch(
   (len, prevLen) => {
     if (len <= prevLen) return
     const last = messages.value[len - 1]
-    if (isNearBottom.value || (last && isMine(last))) scrollToBottom()
+    if (isNearBottom.value || (last && isMine(last))) { scrollToBottom(); advanceMyRead() } // 在底部看到新訊息 → 推進水位
     else unseenCount.value += len - prevLen
   }
 )
@@ -438,26 +507,14 @@ watch(connectionState, (s) => {
   else credits.stopEarning()
 })
 
-// 非房主側的 ChannelBus 在遠端 DataChannel open 後才存在，且晚於 ICE
-// 'connected'（一次性 watch 會撲空後再也不觸發）。改輪詢直到取得、即停。
-const gameBusPoll = setInterval(() => {
-  if (gameBus.value) {
-    clearInterval(gameBusPoll)
-    return
-  }
-  if (currentTopology.value === 'star') {
-    const b = starTopology.getChannelBus()
-    if (b) {
-      gameBus.value = b
-      clearInterval(gameBusPoll)
-    }
-  }
-}, 500)
-
 function retryConnection() {
   connectionState.value = 'connecting'
   currentTopology.value = null
-  starTopology.cleanup()
+  // mesh 收乾淨再重建，否則舊 MeshChatService 續跑（interval/連線洩漏）
+  if (meshStateInterval) { clearInterval(meshStateInterval); meshStateInterval = null }
+  meshChat?.cleanup().catch(() => {})
+  meshChat = null
+  gameBus.value = null
   RoomService.getRoom(roomId.value, true).then((room) => {
     if (room && room.status === 'open') initializeP2P(room, Math.max(room.participants.length, 2))
   })
@@ -469,13 +526,13 @@ async function leaveRoom() {
 </script>
 
 <template>
-  <main class="chat" :class="{ 'chat--game': showGame && currentTopology === 'star' }">
+  <main class="chat" :class="{ 'chat--game': showGame && !!gameBus && memberCount >= 2 }">
     <header class="chat__header">
       <button type="button" class="chat__back" aria-label="離開房間" @click="leaveRoom">‹</button>
       <div class="chat__head-center">
         <h1 class="chat__title">
           {{ roomName ?? '聊天室' }}
-          <span v-if="currentTopology === 'star'" class="chat__lock" title="端對端加密">🔒</span>
+          <span v-if="currentTopology !== null" class="chat__lock" title="端對端加密">🔒</span>
         </h1>
         <p class="chat__status" :class="`chat__status--${connectionState}`">{{ statusText }}</p>
       </div>
@@ -488,7 +545,7 @@ async function leaveRoom() {
           @click="cycleTheme"
         >◐</button>
         <button
-          v-if="currentTopology === 'star'"
+          v-if="gameBus && memberCount >= 2"
           type="button"
           class="chat__action"
           :class="{ 'chat__action--on': showGame }"
@@ -503,27 +560,74 @@ async function leaveRoom() {
       <span>連線中斷了</span>
       <button type="button" @click="retryConnection">重新連線</button>
     </div>
-    <div v-else-if="currentTopology === 'mesh'" class="chat__banner chat__banner--info">
-      <span>多人房間走 P2P mesh 傳輸（訊息最終一致；尚未端對端加密）</span>
+    <div v-else-if="currentTopology === 'mesh' && memberCount > 2" class="chat__banner chat__banner--info">
+      <span>多人房間走 P2P mesh 傳輸（訊息最終一致、端對端加密）</span>
     </div>
 
     <div ref="listEl" class="chat__list" @scroll="onScroll">
       <TransitionGroup name="msg">
         <div v-for="row in rows" :key="row.msg.messageId" class="msg-row"
              :class="[row.mine ? 'msg-row--mine' : 'msg-row--other', { 'msg-row--group-end': row.groupEnd }]">
-          <div class="bubble" :class="[row.mine ? 'bubble--mine' : 'bubble--other', { 'bubble--tail': row.groupEnd }]">
-            {{ row.msg.content }}
+          <div class="bubble-wrap">
+            <div class="bubble" :class="[row.mine ? 'bubble--mine' : 'bubble--other', { 'bubble--tail': row.groupEnd }]">
+              <div v-if="quotedFor(row.msg)" class="bubble-quote" :data-testid="`quote-${row.msg.messageId}`">
+                <span class="bubble-quote__who">{{ quotedFor(row.msg)?.mine ? '你' : '對方' }}</span>
+                <span class="bubble-quote__text">{{ quotedFor(row.msg)?.text }}</span>
+              </div>
+              {{ bodyText(row.msg) }}
+            </div>
+            <div class="bubble-actions">
+              <button
+                type="button"
+                class="react-trigger"
+                :data-testid="`reply-btn-${row.msg.messageId}`"
+                aria-label="回覆"
+                @click="startReply(row.msg)"
+              >↩</button>
+              <button
+                type="button"
+                class="react-trigger"
+                :data-testid="`react-btn-${row.msg.messageId}`"
+                aria-label="加表情"
+                @click="pickerFor = pickerFor === row.msg.messageId ? null : row.msg.messageId"
+              >☺</button>
+            </div>
+            <div v-if="pickerFor === row.msg.messageId" class="react-picker" role="menu">
+              <button
+                v-for="e in REACTION_EMOJIS"
+                :key="e"
+                type="button"
+                class="react-picker__item"
+                :data-testid="`react-pick-${row.msg.messageId}-${e}`"
+                @click="toggleReaction(row.msg.messageId, e)"
+              >{{ e }}</button>
+            </div>
+          </div>
+          <div v-if="reactionChips(row.msg.messageId).length" class="react-chips"
+               :class="row.mine ? 'react-chips--mine' : 'react-chips--other'">
+            <button
+              v-for="chip in reactionChips(row.msg.messageId)"
+              :key="chip.emoji"
+              type="button"
+              class="react-chip"
+              :class="{ 'react-chip--mine': chip.mine }"
+              :data-testid="`react-chip-${row.msg.messageId}-${chip.emoji}`"
+              @click="toggleReaction(row.msg.messageId, chip.emoji)"
+            >{{ chip.emoji }} <span class="react-chip__n">{{ chip.count }}</span></button>
           </div>
           <div v-if="row.showTime" class="msg-meta">
             <span>{{ formatTime(row.msg.timestamp) }}</span>
           </div>
-          <div v-if="row.mine && row.msg.deliveryStatus && (row.msg.messageId === lastMineId || row.msg.deliveryStatus === 'failed')"
+          <div v-if="row.mine && ((row.msg.messageId === lastMineId && (readReceiptText(row.msg) || row.msg.deliveryStatus)) || row.msg.deliveryStatus === 'failed')"
                class="msg-status" :class="{ 'msg-status--failed': row.msg.deliveryStatus === 'failed' }">
             <template v-if="row.msg.deliveryStatus === 'failed'">
               傳送失敗 ·
               <button type="button" class="msg-status__retry" @click="handleResend(row.msg)">重新傳送</button>
             </template>
-            <template v-else>{{ statusLabel[row.msg.deliveryStatus] }}</template>
+            <template v-else-if="readReceiptText(row.msg)">
+              <span :data-testid="`read-receipt-${row.msg.messageId}`">{{ readReceiptText(row.msg) }}</span>
+            </template>
+            <template v-else-if="row.msg.deliveryStatus">{{ statusLabel[row.msg.deliveryStatus] }}</template>
           </div>
         </div>
       </TransitionGroup>
@@ -541,18 +645,71 @@ async function leaveRoom() {
       </button>
     </Transition>
 
-    <!-- 井字棋：桌面右側玻璃卡、窄幕底部抽屜；斷線由面板顯示對局暫停 -->
+    <!-- 房內小遊戲：桌面右側玻璃卡、窄幕底部抽屜；斷線由面板顯示對局暫停 -->
     <Transition name="game">
-      <aside v-if="showGame && currentTopology === 'star' && user" class="chat__game">
+      <aside v-if="showGame && gameBus && memberCount >= 2 && user" class="chat__game">
+        <div class="chat__game-tabs" role="tablist" aria-label="選擇遊戲">
+          <button
+            type="button"
+            role="tab"
+            data-testid="game-tab-ttt"
+            :aria-selected="selectedGame === 'ttt'"
+            :class="{ 'is-on': selectedGame === 'ttt' }"
+            @click="selectedGame = 'ttt'"
+          >井字棋</button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="game-tab-gomoku"
+            :aria-selected="selectedGame === 'gomoku'"
+            :class="{ 'is-on': selectedGame === 'gomoku' }"
+            @click="selectedGame = 'gomoku'"
+          >五子棋</button>
+        </div>
+        <!-- 3+ 人房：觀戰者可入座、對戰者可離座（2 人房自動入座、不顯示） -->
+        <div v-if="memberCount > 2 && !isRoomOwner" class="chat__seat" data-testid="seat-bar">
+          <button
+            v-if="canSit"
+            type="button"
+            class="chat__seat-btn"
+            data-testid="seat-sit"
+            @click="claimSeat()"
+          >入座對戰</button>
+          <button
+            v-else-if="seatRole === 'second'"
+            type="button"
+            class="chat__seat-btn chat__seat-btn--leave"
+            data-testid="seat-leave"
+            @click="releaseSeat()"
+          >離座（讓下一位）</button>
+          <span v-else class="chat__seat-note" data-testid="seat-spectating">觀戰中 · 座位已滿</span>
+        </div>
         <TicTacToePanel
+          v-if="selectedGame === 'ttt'"
           :bus="gameBus"
-          :is-initiator="isRoomOwner"
+          :my-mark="tttMark"
+          :self-id="user.uid"
+          :connected="connectionState === 'connected'"
+          @close="showGame = false"
+        />
+        <GomokuPanel
+          v-else
+          :bus="gameBus"
+          :my-mark="gomokuMark"
           :self-id="user.uid"
           :connected="connectionState === 'connected'"
           @close="showGame = false"
         />
       </aside>
     </Transition>
+
+    <div v-if="replyingTo" class="chat__reply-bar" data-testid="reply-bar">
+      <div class="chat__reply-info">
+        <span class="chat__reply-to">回覆 {{ replyingTo.mine ? '你自己' : '對方' }}</span>
+        <span class="chat__reply-text">{{ replyingTo.text }}</span>
+      </div>
+      <button type="button" class="chat__reply-cancel" data-testid="reply-cancel" aria-label="取消回覆" @click="replyingTo = null">✕</button>
+    </div>
 
     <footer class="chat__input-bar">
       <textarea
@@ -677,6 +834,84 @@ async function leaveRoom() {
 .bubble--mine.bubble--tail { border-bottom-right-radius: 4px; }
 .bubble--other.bubble--tail { border-bottom-left-radius: 4px; }
 
+/* ── 引用回覆區塊（bubble 內） ── */
+.bubble-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 5px;
+  padding: 4px 8px;
+  border-left: 3px solid currentColor;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 13px;
+  opacity: 0.85;
+}
+.bubble-quote__who { font-weight: 700; font-size: 11px; }
+.bubble-quote__text {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+
+/* ── 表情 / 回覆操作 ── */
+.bubble-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
+.msg-row--mine .bubble-wrap { flex-direction: row-reverse; }
+.bubble-actions { display: flex; gap: 4px; opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+.bubble-wrap:hover .bubble-actions, .bubble-actions:focus-within { opacity: 1; }
+.react-trigger {
+  flex: none;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  font-size: 14px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--separator);
+}
+.react-trigger:hover { color: var(--text); border-color: var(--text-3); }
+
+/* ── 回覆輸入預覽列 ── */
+.chat__reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--separator);
+  background: var(--surface);
+}
+.chat__reply-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; border-left: 3px solid var(--primary); padding-left: 8px; }
+.chat__reply-to { font-size: 11px; font-weight: 700; color: var(--primary); }
+.chat__reply-text { font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat__reply-cancel { color: var(--text-3); font-size: 14px; padding: 4px; }
+.react-picker {
+  position: absolute;
+  top: calc(100% + 6px); /* 開在下方：訊息列表 overflow 會裁掉往上的 popover（尤其頂部訊息） */
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  box-shadow: var(--shadow-2);
+}
+.msg-row--mine .react-picker { right: 0; }
+.msg-row--other .react-picker { left: 0; }
+.react-picker__item { font-size: 20px; padding: 3px 5px; border-radius: 50%; line-height: 1; }
+.react-picker__item:hover { transform: scale(1.25); background: var(--bubble-other); }
+.react-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.react-chips--mine { justify-content: flex-end; }
+.react-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--bubble-other);
+  border: 1px solid var(--separator);
+}
+.react-chip--mine { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 16%, var(--bubble-other)); }
+.react-chip__n { font-variant-numeric: tabular-nums; color: var(--text-2); }
+
 .msg-meta {
   margin-top: 3px;
   font-size: 11px;
@@ -775,12 +1010,53 @@ async function leaveRoom() {
   position: fixed;
   top: 76px;
   right: 20px;
-  width: 288px;
+  width: 320px;
   z-index: 30;
   border-radius: var(--r-card);
   box-shadow: var(--shadow-2);
   backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
+.chat__game-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-card);
+}
+.chat__game-tabs button {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-btn);
+}
+.chat__game-tabs button.is-on {
+  color: var(--text);
+  background: var(--bubble-other);
+  border-color: var(--separator);
+}
+.chat__seat {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+.chat__seat-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: var(--primary);
+  border-radius: var(--r-btn);
+}
+.chat__seat-btn--leave { color: var(--text); background: var(--bubble-other); border: 1px solid var(--separator); }
+.chat__seat-note { font-size: 12px; color: var(--text-2); }
 @media (max-width: 760px) {
   .chat__game {
     top: auto;

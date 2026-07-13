@@ -46,6 +46,14 @@ jobs:
       - name: Unit tests
         run: npm run test:run
 
+      # 稽核不變量硬閘（core-invariants R8）：SDK 進入點必須脫離 Firebase。
+      # 先建 dist（供 eager 進入點檢查），再跑靜態圖 + dist 雙檢；破則擋 merge。
+      - name: Build SDK (dist)
+        run: npm run build:sdk
+
+      - name: QA gate — SDK firebase isolation
+        run: npm run qa:sdk-isolation
+
   e2e:
     name: E2E (stable subset, emulator-backed)
     runs-on: ubuntu-latest
@@ -82,6 +90,7 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
+      # 觀察期自 2026-07-13 起算（稽核 R8）：連續兩週綠 → 2026-07-27 後翻 continue-on-error: false
       - name: Run E2E stable subset against emulators
         run: npm run test:e2e:stable
         env:

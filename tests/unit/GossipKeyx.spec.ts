@@ -1,0 +1,193 @@
+/**
+ * ADR-0023 P2-②c：GossipMessageHandler 的 keyx 消費 + 密文顯示接線
+ * - 收到 channel:'keyx' 且封給自己 → 開出房間金鑰入環，之後同 epoch 密文可顯示還原
+ * - keyx 不進聊天顯示（不觸發 message listener）
+ * - 封給別人的 keyx / 無 ECDH 私鑰 → 不安裝金鑰、不顯示、不炸
+ * - 金鑰環按信封 epoch 選鑰（輪替後仍能解舊 epoch 歷史密文）
+ */
+import { describe, it, expect, vi } from 'vitest';
+import { GossipMessageHandler } from '../../src/core/mesh/GossipMessageHandler';
+import {
+  generateRoomKey,
+  sealRoomKeyForMember,
+} from '../../src/core/mesh/RoomKeyDistribution';
+import { encryptRecordContent } from '../../src/core/mesh/RecordCrypto';
+import { arrayBufferToBase64 } from '../../src/utils/crypto';
+import type { GossipMessage, KeyxRecordPayload } from '../../src/types';
+
+async function ecdhPair(): Promise<CryptoKeyPair> {
+  return crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, [
+    'deriveBits',
+    'deriveKey',
+  ]) as Promise<CryptoKeyPair>;
+}
+async function spkiB64(k: CryptoKey): Promise<string> {
+  return arrayBufferToBase64(await crypto.subtle.exportKey('spki', k));
+}
+
+function makeMocks() {
+  const neighbor = {
+    getId: vi.fn().mockReturnValue('n1'),
+    getState: vi.fn().mockReturnValue('connected'),
+    send: vi.fn().mockResolvedValue(undefined),
+    sendDigest: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    neighbor,
+    topology: {
+      getNeighbors: vi.fn().mockReturnValue([neighbor]),
+      getGossipConfig: vi.fn().mockReturnValue({ fanout: 2, ttl: 8 }),
+    },
+    identity: {
+      exportPublicKey: vi.fn().mockResolvedValue('pk'),
+      getPrivateKey: vi.fn().mockReturnValue({} as CryptoKey),
+      deriveUserId: vi.fn().mockResolvedValue('producer'),
+    },
+    security: {
+      signMessage: vi.fn().mockResolvedValue('sig'),
+      importPublicKey: vi.fn().mockResolvedValue({} as CryptoKey),
+      verifyMessage: vi.fn().mockResolvedValue(true),
+    },
+  };
+}
+
+/** handler 的本機 userId（= keyx forMember 比對對象） */
+const ME = 'me-user';
+
+function makeHandler(m = makeMocks()) {
+  return {
+    handler: new GossipMessageHandler(
+      'room-r', ME,
+      m.identity as never, m.security as never, m.topology as never,
+    ),
+    mocks: m,
+  };
+}
+
+/** 造一則已簽章的 keyx wire 訊息（producer 送、封給 forMember 們） */
+function keyxWire(payload: KeyxRecordPayload, seq = 1): GossipMessage {
+  return {
+    roomId: 'room-r',
+    senderId: 'producer',
+    pubKey: 'producer-pk',
+    seq,
+    timestamp: Date.now(),
+    content: JSON.stringify(payload),
+    ttl: 8,
+    signature: 'sig',
+    channel: 'keyx',
+  };
+}
+function chatWire(content: string, seq = 2): GossipMessage {
+  return {
+    roomId: 'room-r',
+    senderId: 'producer',
+    pubKey: 'producer-pk',
+    seq,
+    timestamp: Date.now(),
+    content,
+    ttl: 8,
+    signature: 'sig',
+  };
+}
+
+async function buildKeyx(
+  roomKey: CryptoKey,
+  forMember: string,
+  epoch: number,
+  producer: CryptoKeyPair,
+  recipientPub: CryptoKey
+): Promise<KeyxRecordPayload> {
+  const sealed = await sealRoomKeyForMember(
+    roomKey, forMember, epoch, producer.privateKey, recipientPub
+  );
+  return { v: 'keyx1', producerEcdh: await spkiB64(producer.publicKey), keys: [sealed] };
+}
+
+describe('P2-②c：GossipMessageHandler keyx 消費', () => {
+  it('收到封給自己的 keyx → 安裝金鑰；不進聊天顯示', async () => {
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const roomKey = await generateRoomKey();
+    const payload = await buildKeyx(roomKey, ME, 0, producer, me.publicKey);
+
+    const { handler } = makeHandler();
+    handler.setKeyxPrivateKey(me.privateKey);
+    const shown: string[] = [];
+    handler.onMessage((msg) => shown.push(msg.content));
+
+    await handler.handleReceivedMessage(keyxWire(payload), 'n1');
+
+    expect(shown).toHaveLength(0); // keyx 不顯示
+    expect(handler.getMaxKnownEpoch()).toBe(0); // 金鑰已入環
+
+    // 之後同 epoch 密文 → 顯示還原
+    const ct = await encryptRecordContent('房內密語', roomKey, 0);
+    await handler.handleReceivedMessage(chatWire(ct), 'n1');
+    expect(shown).toEqual(['房內密語']);
+  });
+
+  it('封給別人的 keyx → 不安裝金鑰、不顯示（拿到的密文顯示佔位）', async () => {
+    const producer = await ecdhPair();
+    const other = await ecdhPair();
+    const me = await ecdhPair();
+    const roomKey = await generateRoomKey();
+    // 封給 'someone-else'，不是 ME
+    const payload = await buildKeyx(roomKey, 'someone-else', 0, producer, other.publicKey);
+
+    const { handler } = makeHandler();
+    handler.setKeyxPrivateKey(me.privateKey);
+    const shown: string[] = [];
+    handler.onMessage((msg) => shown.push(msg.content));
+
+    await handler.handleReceivedMessage(keyxWire(payload), 'n1');
+    expect(handler.getMaxKnownEpoch()).toBe(-1); // 沒我的份 → 未安裝
+
+    const ct = await encryptRecordContent('看不到', roomKey, 0);
+    await handler.handleReceivedMessage(chatWire(ct), 'n1');
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toContain('🔒');
+    expect(shown[0]).not.toContain('看不到');
+  });
+
+  it('無 ECDH 私鑰（不參與密文化）：keyx 略過、不炸、不顯示', async () => {
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const roomKey = await generateRoomKey();
+    const payload = await buildKeyx(roomKey, ME, 0, producer, me.publicKey);
+
+    const { handler } = makeHandler(); // 不呼叫 setKeyxPrivateKey
+    const shown: string[] = [];
+    handler.onMessage((msg) => shown.push(msg.content));
+
+    await handler.handleReceivedMessage(keyxWire(payload), 'n1');
+    expect(shown).toHaveLength(0);
+    expect(handler.getMaxKnownEpoch()).toBe(-1);
+  });
+
+  it('金鑰環按信封 epoch 選鑰：舊 epoch 密文用舊鑰、新 epoch 用新鑰', async () => {
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const key0 = await generateRoomKey();
+    const key1 = await generateRoomKey();
+
+    const { handler } = makeHandler();
+    handler.setKeyxPrivateKey(me.privateKey);
+    const shown: string[] = [];
+    handler.onMessage((msg) => shown.push(msg.content));
+
+    // 先裝 epoch 0，再裝 epoch 1（模擬輪替）
+    await handler.handleReceivedMessage(keyxWire(await buildKeyx(key0, ME, 0, producer, me.publicKey), 1), 'n1');
+    await handler.handleReceivedMessage(keyxWire(await buildKeyx(key1, ME, 1, producer, me.publicKey), 2), 'n1');
+    expect(handler.getMaxKnownEpoch()).toBe(1);
+
+    // epoch 0 的舊密文仍解得開
+    const ct0 = await encryptRecordContent('舊時代訊息', key0, 0);
+    await handler.handleReceivedMessage(chatWire(ct0, 3), 'n1');
+    // epoch 1 的新密文
+    const ct1 = await encryptRecordContent('新時代訊息', key1, 1);
+    await handler.handleReceivedMessage(chatWire(ct1, 4), 'n1');
+
+    expect(shown).toEqual(['舊時代訊息', '新時代訊息']);
+  });
+});

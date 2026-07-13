@@ -64,6 +64,16 @@ export async function createReceiptDraft(
 }
 
 /**
+ * 驗證 relay 起草的半成品（requester 回簽前，先確認 relay 那半簽章有效、不是自簽自）。
+ */
+export async function verifyDraft(draft: ReceiptDraft, relayVerify: VerifyFn): Promise<boolean> {
+  if (draft.bytesRelayed <= 0) return false;
+  if (draft.relayNodeId === draft.requesterNodeId) return false; // 自己簽給自己 → 拒
+  const data = canonical(draft);
+  return relayVerify(data, draft.relaySig);
+}
+
+/**
  * requester 方共簽（受益方確認「對，A 確實幫我轉了」）。
  * 這一步讓 relay 無法單方偽造——沒有 requester 的簽章收據不成立。
  */

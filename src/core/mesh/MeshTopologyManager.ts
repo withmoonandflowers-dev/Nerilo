@@ -1,8 +1,7 @@
-import { MeshConnection } from './MeshConnection';
-import { RoomService } from '../../services/RoomService';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { MeshConnection, REJOIN_READY_TIMEOUT_MS } from './MeshConnection';
+import type { SignalingFactory } from '../p2p/SignalingTransport';
 import { logger } from '../../utils/logger';
+import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { AdaptiveTopologyManager, type TopologyStrategy, type GossipConfig } from './AdaptiveTopologyManager';
 
 /**
@@ -31,11 +30,15 @@ export class MeshTopologyManager {
   private reconnectAttempts: Map<string, number> = new Map();
   /** 進行中的重連 timer，cleanup 時需要清除 */
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** 每個 peer 上次觀察到的 joinedAt（session 版本戳），用來偵測「離開再進」 */
+  private lastJoinedAt: Map<string, number> = new Map();
 
   constructor(
     private roomId: string,
     private localUserId: string,
-    private localFirebaseUid: string
+    private localFirebaseUid: string,
+    private directory: IRoomDirectory, // 名冊/發現後端（預設 Firestore；SDK 可注入）
+    private signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端
   ) {}
 
   /**
@@ -87,22 +90,44 @@ export class MeshTopologyManager {
    * 這解決了「所有人同時加入，互相看不到」的競態問題。
    */
   private startReactiveDiscovery(): void {
-    const roomRef = doc(db, 'p2pRooms', this.roomId);
-
-    this.discoveryUnsubscribe = onSnapshot(roomRef, (snapshot) => {
-      if (!snapshot.exists()) return;
-      const data = snapshot.data();
-      if (!data.meshIdentities) return;
-
+    this.discoveryUnsubscribe = this.directory.watchIdentities((snapshot) => {
       const newCandidates: string[] = [];
 
-      for (const [firebaseUid, identity] of Object.entries(data.meshIdentities)) {
+      for (const [firebaseUid, identity] of Object.entries(snapshot.meshIdentities)) {
         if (firebaseUid === this.localFirebaseUid) continue;
         const typedIdentity = identity as { userId: string; pubKey: string; joinedAt: unknown };
         const userId = typedIdentity.userId;
 
         // 更新 identity map
         this.identityMap.set(firebaseUid, userId);
+
+        // ── 偵測「離開再進」（rejoin）──
+        // 對方離開再進時仍用同一持久化身分（userId 不變），故 neighbors.has(userId)
+        // 為真、走不到 newCandidates；但本端手上是對方舊 session 的死 pc，對方的全新
+        // offer 無處可接 → 卡在連線中。RoomService 每次 (re)join 會把 joinedAt 往上
+        // 推，這裡據此偵測：joinedAt 變新且對方已是鄰居 → 拆舊建新，讓兩端各自用全新
+        // pc 重新協商。首次觀察（prev===undefined）不算 rejoin。
+        const joinedAt = this.parseJoinedAt(typedIdentity.joinedAt);
+        const prevJoinedAt = this.lastJoinedAt.get(firebaseUid);
+        if (joinedAt !== null) this.lastJoinedAt.set(firebaseUid, joinedAt);
+        const rejoined =
+          joinedAt !== null &&
+          prevJoinedAt !== undefined &&
+          joinedAt > prevJoinedAt &&
+          this.neighbors.has(userId);
+        if (rejoined) {
+          logger.info('[MeshTopologyManager] Peer rejoined (session renewed), rebuilding connection', {
+            roomId: this.roomId,
+            remoteUserId: userId,
+          });
+          this.reconnectAttempts.delete(userId);
+          const t = this.reconnectTimers.get(userId);
+          if (t) { clearTimeout(t); this.reconnectTimers.delete(userId); }
+          this.connectToSingleNeighbor(userId, REJOIN_READY_TIMEOUT_MS).catch(error => {
+            logger.error('[MeshTopologyManager] Rejoin rebuild error', { error });
+          });
+          continue;
+        }
 
         // 如果這個節點不是現有鄰居，且不在連線中，就加入候選
         if (!this.neighbors.has(userId) && !this.reconnectAttempts.has(userId)) {
@@ -121,8 +146,6 @@ export class MeshTopologyManager {
           logger.error('[MeshTopologyManager] Reactive connect error', { error });
         });
       }
-    }, (error) => {
-      logger.warn('[MeshTopologyManager] Reactive discovery error', { error });
     });
   }
 
@@ -140,9 +163,11 @@ export class MeshTopologyManager {
   }
 
   /**
-   * 連線到單一鄰居，失敗時排程指數退避重試
+   * 連線到單一鄰居，失敗時排程指數退避重試。
+   * readyTimeoutMs 供 rejoin 首次重建傳較短逾時（快速讓乾淨重試接手）；退避重試不帶，
+   * 回到 MeshConnection 預設的耐心 30s。
    */
-  private async connectToSingleNeighbor(userId: string): Promise<void> {
+  private async connectToSingleNeighbor(userId: string, readyTimeoutMs?: number): Promise<void> {
     try {
       // ── 防止資源洩漏：若已有連線物件，先關閉它 ──
       const existing = this.neighbors.get(userId);
@@ -173,7 +198,9 @@ export class MeshTopologyManager {
         localFirebaseUid,
         remoteFirebaseUid,
         userId,
-        isInitiator
+        isInitiator,
+        readyTimeoutMs,
+        this.signalingFactory
       );
 
       this.neighbors.set(userId, connection);
@@ -270,6 +297,20 @@ export class MeshTopologyManager {
   }
 
   /**
+   * 解析 joinedAt：RoomService 寫入的是 Date.now() number，但保險起見也接受
+   * Firestore Timestamp（{ toMillis() } 或 { seconds }）。無法解析回 null。
+   */
+  private parseJoinedAt(raw: unknown): number | null {
+    if (typeof raw === 'number') return raw;
+    if (raw && typeof raw === 'object') {
+      const obj = raw as { toMillis?: () => number; seconds?: number };
+      if (typeof obj.toMillis === 'function') return obj.toMillis();
+      if (typeof obj.seconds === 'number') return obj.seconds * 1000;
+    }
+    return null;
+  }
+
+  /**
    * 從 userId 獲取 Firebase UID
    */
   private getFirebaseUidFromUserId(userId: string): string | null {
@@ -353,29 +394,26 @@ export class MeshTopologyManager {
   private async discoverNodes(): Promise<string[]> {
     const discoveredUserIds = new Set<string>();
     
-    // 方法 1：從 Firestore 獲取房間參與者和 mesh 身分資訊
+    // 方法 1：從 directory 取名冊（預設 Firestore，SDK 可注入自架後端）
     try {
-      const room = await RoomService.getRoom(this.roomId, true);
-      if (room && room.participants) {
-        // 獲取 meshIdentities
-        if (room.meshIdentities) {
-          for (const [firebaseUid, identity] of Object.entries(room.meshIdentities)) {
-            if (firebaseUid !== this.localFirebaseUid) {
-              discoveredUserIds.add(identity.userId);
-              this.identityMap.set(firebaseUid, identity.userId);
-            }
+      const snap = await this.directory.getSnapshot();
+      const entries = Object.entries(snap.meshIdentities);
+      if (entries.length > 0) {
+        for (const [firebaseUid, identity] of entries) {
+          if (firebaseUid !== this.localFirebaseUid) {
+            discoveredUserIds.add(identity.userId);
+            this.identityMap.set(firebaseUid, identity.userId);
           }
-        } else if (room.participants.length >= 2) {
-          // 如果還沒有 meshIdentities，但已經有參與者，等待一下
-          // 其他參與者可能還在註冊身分
-          logger.info('[MeshTopologyManager] No meshIdentities yet, participants may still be registering', {
-            roomId: this.roomId,
-            participants: room.participants.length,
-          });
         }
+      } else if (snap.participants.length >= 2) {
+        // 還沒有 meshIdentities 但已有參與者：其他人可能還在註冊身分
+        logger.info('[MeshTopologyManager] No meshIdentities yet, participants may still be registering', {
+          roomId: this.roomId,
+          participants: snap.participants.length,
+        });
       }
     } catch (error) {
-      logger.warn('[MeshTopologyManager] Failed to get room from Firestore', { error });
+      logger.warn('[MeshTopologyManager] Failed to get room snapshot', { error });
     }
     
     // 方法 2：從現有鄰居獲取他們的鄰居列表（簡化版，暫時不實作）

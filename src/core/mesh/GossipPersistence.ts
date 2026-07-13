@@ -31,4 +31,7 @@ export interface IGossipPersistence {
 
   /** 淘汰一筆紀錄並推進 floor */
   evictRecord(roomId: string, senderId: string, seq: number, newFloor: number): Promise<void>;
+
+  /** 列出目前持有紀錄的所有 roomId（盲信使備份：備份「我有資料的房」，含已離開仍持有者）。 */
+  listRooms(): Promise<string[]>;
 }
