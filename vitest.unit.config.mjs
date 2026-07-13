@@ -23,14 +23,14 @@ export default defineConfig({
       include: ['src/core/**/*.ts', 'src/services/**/*.ts', 'src/utils/**/*.ts'],
       exclude: ['**/*.spec.ts', 'src/**/index.ts', '**/types.ts'],
       // 門檻＝迴歸地板（棘輪只升不降，見 .claude/skills/harden-tests）。
-      // 基線 2026-07-06（含 relay/transport/ledger 等少測模組拉低整體）：
-      //   Lines 49.6 / Stmts 48.4 / Funcs 53.3 / Branches 45.8。
-      // 地板設基線略下（留緩衝避免 v8 逐次微幅波動誤觸 CI 紅）；有意義的提升就上調。
+      // 量測 2026-07-06（P2-②c keyx live 接線後，含 RoomKeyCoordinator/GossipKeyx 單元）：
+      //   Lines 62.6 / Stmts 61.3 / Funcs 61.8 / Branches 55.9。
+      // 地板設現況略下（留緩衝避免 v8 逐次微幅波動誤觸 CI 紅）；有意義的提升就上調。
       thresholds: {
-        lines: 47,
-        statements: 46,
-        functions: 51,
-        branches: 43,
+        lines: 60,
+        statements: 59,
+        functions: 59,
+        branches: 53,
       },
     },
   },

@@ -7,7 +7,7 @@
  * 純邏輯（applyMove/sanitizeState/moveCount）與 React 版共用 @legacy 同一份。
  */
 import type { Ref } from 'vue'
-import type { P2PChannelBus } from '@legacy/core/p2p/P2PChannelBus'
+import type { GameBus } from '~/lib/gameBus'
 import type { P2PEnvelope } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { logger } from '@legacy/utils/logger'
@@ -23,12 +23,11 @@ import {
 const GAME_NS = 'ttt'
 
 export function useTicTacToe(
-  bus: Ref<P2PChannelBus | null>,
-  isInitiator: Ref<boolean>,
+  bus: Ref<GameBus | null>,
+  myMark: Ref<Mark | null>, // null = 觀戰（不能下、但仍渲染雙方落子）
   selfId: Ref<string>
 ) {
   const state = ref<TicTacToeState>(initialState())
-  const myMark = computed<Mark>(() => (isInitiator.value ? 'X' : 'O'))
 
   function send(type: 'MOVE' | 'RESTART' | 'SYNC_REQ' | 'SYNC_STATE', payload?: unknown) {
     const b = bus.value
@@ -77,16 +76,19 @@ export function useTicTacToe(
   onUnmounted(() => unsubscribe?.())
 
   function play(cell: number) {
+    const mark = myMark.value
+    if (!mark) return // 觀戰者不能下
     const s = state.value
-    if (s.turn !== myMark.value || s.winner !== null || s.board[cell] !== null) return
-    const next = applyMove(s, cell, myMark.value)
+    if (s.turn !== mark || s.winner !== null || s.board[cell] !== null) return
+    const next = applyMove(s, cell, mark)
     if (next !== s) {
       state.value = next
-      send('MOVE', { cell, mark: myMark.value })
+      send('MOVE', { cell, mark })
     }
   }
 
   function restart() {
+    if (!myMark.value) return // 觀戰者不能重開
     state.value = initialState()
     send('RESTART')
   }

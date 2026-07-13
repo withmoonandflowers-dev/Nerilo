@@ -1,5 +1,6 @@
 import { P2PManager } from '../p2p/P2PManager';
 import { P2PChannelBus } from '../p2p/P2PChannelBus';
+import type { SignalingFactory } from '../p2p/SignalingTransport';
 import type { GossipMessage } from '../../types';
 import type { GossipDigest } from './antiEntropy';
 import { logger } from '../../utils/logger';
@@ -8,11 +9,32 @@ import { logger } from '../../utils/logger';
  * Mesh 連線包裝類別
  * 封裝與單個鄰居的 P2P 連線
  */
+/**
+ * ChannelBus 就緒逾時（首次連線用）。逾時後 MeshTopologyManager 會 close + 指數退避
+ * 重試。首次（含 3 人同時進場）保持耐心 30s：直連/STUN 通常數秒內完成，但多人同時
+ * 協商 + TURN relay 配置偶爾會拖到十幾秒，太短會誤殺「慢但會成功」的協商 → 反而 churn
+ * 到連不上（實測全域改 10s 會讓 3 人 mesh 初連 churn 逾時）。
+ */
+const CHANNEL_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * 離開再進（rejoin）重建時的較短逾時。拆舊建新的第一次握手偶爾卡在與舊 pc 的交疊窗，
+ * 早點逾時讓乾淨重試接手（最壞 rejoin 從 ~40s 壓到 ~20s）。只用在 rejoin 首次重建；
+ * 之後的退避重試回到耐心的 30s，避免把「本來就要成功、只是慢」的重連也砍掉。
+ * 取 15s（非 10s）：實測 rejoin 首連常落在 13-15s，10s 會把它們一併砍掉造成 churn。
+ */
+export const REJOIN_READY_TIMEOUT_MS = 15_000;
+
 export class MeshConnection {
   private p2pManager: P2PManager;
   private channelBus: P2PChannelBus | null = null;
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
   private digestListeners: Set<(digest: GossipDigest) => void> = new Set();
+  /**
+   * 暫態信號（typing 等）監聽器。走 ns:'presence'，**不進** gossip store /
+   * anti-entropy 對帳——lossy（best-effort、掉了不補），語義同星型的 TYPING。
+   */
+  private ephemeralListeners: Set<(env: { type: string; from?: string; payload: unknown }) => void> = new Set();
   private readyPromise: Promise<void>;
   private meshUserId: string; // 用於 Gossip 的 userId
 
@@ -21,7 +43,9 @@ export class MeshConnection {
     private localFirebaseUid: string, // 用於 signaling 的 Firebase UID
     private remoteFirebaseUid: string, // 用於 signaling 的 Firebase UID
     meshUserId: string, // 用於 Gossip 的 userId
-    isInitiator: boolean
+    isInitiator: boolean,
+    private readyTimeoutMs: number = CHANNEL_READY_TIMEOUT_MS,
+    signalingFactory?: SignalingFactory // 省略＝P2PManager 預設走 Firestore；SDK 可注入自架後端
   ) {
     this.meshUserId = meshUserId;
 
@@ -35,7 +59,8 @@ export class MeshConnection {
       roomId,
       localFirebaseUid,
       symmetricLabel,
-      isInitiator
+      isInitiator,
+      signalingFactory?.(roomId, symmetricLabel)
     );
     
     this.readyPromise = this.initialize();
@@ -69,8 +94,8 @@ export class MeshConnection {
           remoteFirebaseUid: this.remoteFirebaseUid,
           meshUserId: this.meshUserId,
         });
-        reject(new Error('MeshConnection timeout: ChannelBus not ready after 30s'));
-      }, 30_000);
+        reject(new Error(`MeshConnection timeout: ChannelBus not ready after ${this.readyTimeoutMs}ms`));
+      }, this.readyTimeoutMs);
     });
 
     this.startBusRebindWatch();
@@ -140,6 +165,17 @@ export class MeshConnection {
         });
       }
     });
+
+    // 暫態信號（typing 等）：獨立 ns，不碰 gossip store / 對帳。
+    this.channelBus.subscribe('presence', async (envelope) => {
+      this.ephemeralListeners.forEach(listener => {
+        try {
+          listener({ type: envelope.type, from: envelope.from, payload: envelope.payload });
+        } catch (error) {
+          logger.error('[MeshConnection] Error in ephemeral listener', { error });
+        }
+      });
+    });
   }
 
   /**
@@ -186,6 +222,36 @@ export class MeshConnection {
     });
   }
 
+  /**
+   * 送暫態信號（typing 等）。lossy：bus 未 open 直接丟棄，**不** waitForReady——
+   * typing 遲送無意義，且不可拖住呼叫端。不進 gossip 日誌、不參與對帳。
+   */
+  async sendEphemeral(type: string, payload: unknown): Promise<void> {
+    if (this.channelBus?.getReadyState() !== 'open') return;
+    try {
+      await this.channelBus.send({
+        v: 1,
+        ns: 'presence',
+        type,
+        id: `${Date.now()}-${Math.random()}`,
+        ts: Date.now(),
+        from: this.localFirebaseUid,
+        to: this.remoteFirebaseUid,
+        payload,
+      });
+    } catch {
+      /* best-effort：掉了就掉了，下次 keystroke 再送 */
+    }
+  }
+
+  /** 監聽對方送來的暫態信號（typing 等）；不受 ttl/對帳影響 */
+  onEphemeral(listener: (env: { type: string; from?: string; payload: unknown }) => void): () => void {
+    this.ephemeralListeners.add(listener);
+    return () => {
+      this.ephemeralListeners.delete(listener);
+    };
+  }
+
   /** 監聽對方送來的 digest */
   onDigest(listener: (digest: GossipDigest) => void): () => void {
     this.digestListeners.add(listener);
@@ -219,12 +285,11 @@ export class MeshConnection {
    * digest 送進黑洞。因此 bus 未 open 一律降報為 connecting。
    */
   getState(): string {
-    const connectionManager = this.p2pManager.getConnectionManager();
-    const state = connectionManager.getState();
-    if (state === 'connected' && this.channelBus?.getReadyState() !== 'open') {
-      return 'connecting';
-    }
-    return state;
+    // DataChannel（bus）開著即為連上的真相：收發都走它。離開再進時對方 pc 重協商，
+    // RTCPeerConnection.connectionState 可能不轉為 'connected'（bus 已開卻卡在 connecting）。
+    if (this.channelBus?.getReadyState() === 'open') return 'connected';
+    const state = this.p2pManager.getConnectionManager().getState();
+    return state === 'connected' ? 'connecting' : state;
   }
 
   /**

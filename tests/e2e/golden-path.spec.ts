@@ -1,7 +1,7 @@
 /**
  * P0 golden-path E2E tests.
  *
- * Covers: anon login → dashboard → create room → second user joins via link
+ * Covers: email register → dashboard → create room → second user joins via link
  *         → both connected → message round-trip → E2EE indicator visible
  *         → leave room.
  *
@@ -25,7 +25,7 @@ import {
 } from './_helpers/users';
 
 test.describe('P0 golden path @stable', () => {
-  test('P0.1 anonymous user lands on dashboard with role badge', async ({ browser }) => {
+  test('P0.1 registered user lands on dashboard with role badge', async ({ browser }) => {
     const alice = await setupUser(browser);
     try {
       // role-badge already verified by setupUser; assert the create-room button

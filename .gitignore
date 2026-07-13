@@ -61,3 +61,13 @@ reports/
 # Production smoke test artifacts (local only)
 smoke-artifacts/
 .smoke-credentials.json
+
+# Vitest coverage output (generated)
+coverage/
+
+# Stryker mutation testing
+reports/
+.stryker-tmp/
+
+# SDK build 產物（publish 時由 build:sdk 產）
+/dist
