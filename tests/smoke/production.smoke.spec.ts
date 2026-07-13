@@ -163,10 +163,35 @@ interface SmokeUser {
   page: Page;
 }
 
+/**
+ * 配額耗盡偵測（診斷 2026-07-13）：Firestore 免費額度打爆時，joinRoom 等寫入吃
+ * resource-exhausted/429，症狀是各種「不透明的等待逾時」（如 alice 卡 /waiting）。
+ * 收集事件讓 afterEach 把失敗翻譯成明確診斷，而不是留一個 120s timeout 謎題。
+ */
+const quotaEvents: string[] = [];
+
+test.afterEach(({}, testInfo) => {
+  if (testInfo.status !== 'passed' && quotaEvents.length > 0) {
+    const msg =
+      `Firestore 配額耗盡（resource-exhausted/429，共 ${quotaEvents.length} 筆）——` +
+      `本次失敗極可能是額度問題而非功能迴歸。請查 Firebase console 用量，額度重置後重跑。` +
+      `首筆：${quotaEvents[0]}`;
+    testInfo.annotations.push({ type: 'quota-exhausted', description: msg });
+    console.error(`\n!!! ${msg}\n`);
+  }
+  quotaEvents.length = 0;
+});
+
 async function setupSmokeUser(browser: Browser, tag: string, mode: RtcMode): Promise<SmokeUser> {
   const ctx = await browser.newContext();
   await ctx.addInitScript(rtcInitScript(mode));
   const page = await ctx.newPage();
+  page.on('console', (msg) => {
+    const t = msg.text();
+    if (/resource-exhausted|Quota exceeded|status of 429/i.test(t)) {
+      quotaEvents.push(`[${tag}] ${t.slice(0, 160)}`);
+    }
+  });
   await registerFresh(page, freshCred(tag));
   return { ctx, page };
 }
