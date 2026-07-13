@@ -29,7 +29,8 @@ export interface IRoomService {
 
   subscribeRoom(roomId: string, callback: (room: P2PRoom | null) => void): () => void;
   subscribeUserRooms(uid: string, callback: (rooms: P2PRoom[]) => void): () => void;
-  subscribePublicRooms(callback: (rooms: P2PRoom[]) => void): () => void;
+  /** 一次性讀公開房（伺服器端過濾 + limit；讀取衛生，見 RoomService.getPublicRooms） */
+  getPublicRooms(): Promise<P2PRoom[]>;
 
   updateMeshIdentity(
     roomId: string,

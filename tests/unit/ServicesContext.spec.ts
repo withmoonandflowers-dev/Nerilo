@@ -28,7 +28,7 @@ describe('Ports / 可插拔與測試', () => {
       activateRoom: async () => {},
       subscribeRoom: () => () => {},
       subscribeUserRooms: () => () => {},
-      subscribePublicRooms: () => () => {},
+      getPublicRooms: async () => [],
       updateMeshIdentity: async () => {},
       getMeshIdentities: async () => new Map(),
     };

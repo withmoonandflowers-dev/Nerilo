@@ -170,7 +170,7 @@ interface SmokeUser {
  */
 const quotaEvents: string[] = [];
 
-test.afterEach(({}, testInfo) => {
+test.afterEach((_fixtures, testInfo) => {
   if (testInfo.status !== 'passed' && quotaEvents.length > 0) {
     const msg =
       `Firestore 配額耗盡（resource-exhausted/429，共 ${quotaEvents.length} 筆）——` +
