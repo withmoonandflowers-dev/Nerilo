@@ -172,6 +172,34 @@ export class RoomAdvertCache {
   }
 }
 
+/**
+ * 組 announce 集合（多跳轉發）：自己的廣告優先，之後補上快取裡別人的（原簽轉發，
+ * 下一跳仍可驗簽），同 roomId 以自己的為準，總量帽 cap。
+ * 迴圈安全：轉發不改 issuedAt → 收端 upsert 冪等（非前進 no-op）+ TTL 界定壽命
+ * + answer-once/週期界定頻率 → 不會震盪。
+ */
+export function mergeAnnounceSet(
+  own: RoomAdvert[],
+  cached: RoomAdvert[],
+  cap: number = MAX_ADVERTS_PER_ANNOUNCE
+): RoomAdvert[] {
+  const out: RoomAdvert[] = [];
+  const seen = new Set<string>();
+  for (const ad of own) {
+    if (seen.has(ad.roomId)) continue;
+    seen.add(ad.roomId);
+    out.push(ad);
+    if (out.length >= cap) return out;
+  }
+  for (const ad of cached) {
+    if (seen.has(ad.roomId)) continue;
+    seen.add(ad.roomId);
+    out.push(ad);
+    if (out.length >= cap) return out;
+  }
+  return out;
+}
+
 // ── bus 掛載（鏡像 CourierService 的最小 bus 介面）──────────────────────────
 
 interface RoomDirEnvelope {

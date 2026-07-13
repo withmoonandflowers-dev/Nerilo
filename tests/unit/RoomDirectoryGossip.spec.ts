@@ -10,6 +10,7 @@ import {
   verifyRoomAdvert,
   RoomAdvertCache,
   attachRoomDirectory,
+  mergeAnnounceSet,
   ROOMDIR_NS,
   type RoomAdvert,
   type RoomDirBus,
@@ -187,5 +188,45 @@ describe('attachRoomDirectory（對接假 bus）', () => {
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(cacheB.size()).toBe(0); // 已 detach → announce 不進快取
+  });
+
+  it('多跳：C 經 B 轉發看到 A 的房（原簽在第二跳仍可驗）', async () => {
+    const a = await makeIdentity();
+    const b = await makeIdentity();
+    const [busAB_a, busAB_b] = busPair(); // A—B
+    const [busBC_b, busBC_c] = busPair(); // B—C
+    const cacheA = new RoomAdvertCache();
+    const cacheB = new RoomAdvertCache();
+    const cacheC = new RoomAdvertCache();
+    const adA = await makeAdvert(a, 'room-a');
+    const adB = await makeAdvert(b, 'room-b');
+
+    // B 的 announce 集合 = 自己的房 + 快取轉發（多跳的關鍵，同 useCourierNode 的接法）
+    const bAnnounce = async () => mergeAnnounceSet([adB], cacheB.list());
+    attachRoomDirectory({ bus: busAB_b, cache: cacheB, localUid: 'b', announceIntervalMs: 0, getLocalAdverts: bAnnounce });
+    attachRoomDirectory({ bus: busAB_a, cache: cacheA, localUid: 'a', announceIntervalMs: 0, getLocalAdverts: async () => [adA] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cacheB.list().map((x) => x.roomId)).toEqual(['room-a']); // 第一跳
+
+    // C 之後才連上 B：B attach 時 announce（此刻快取已含 room-a）→ C 收到 A 的房
+    attachRoomDirectory({ bus: busBC_c, cache: cacheC, localUid: 'c', announceIntervalMs: 0, getLocalAdverts: async () => [] });
+    attachRoomDirectory({ bus: busBC_b, cache: cacheB, localUid: 'b', announceIntervalMs: 0, getLocalAdverts: bAnnounce });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cacheC.list().map((x) => x.roomId).sort()).toEqual(['room-a', 'room-b']);
+  });
+});
+
+describe('mergeAnnounceSet', () => {
+  it('自己的優先、同房去重、cap 截斷', async () => {
+    const a = await makeIdentity();
+    const own = [await makeAdvert(a, 'r1', Date.now(), '我的')];
+    const cached = [
+      await makeAdvert(a, 'r1', Date.now() - 1000, '快取舊版'), // 同房 → 去重（自己的贏）
+      await makeAdvert(a, 'r2'),
+      await makeAdvert(a, 'r3'),
+    ];
+    const merged = mergeAnnounceSet(own, cached, 2);
+    expect(merged.map((x) => x.roomId)).toEqual(['r1', 'r2']); // cap=2 截斷
+    expect(merged[0].roomName).toBe('我的');
   });
 });
