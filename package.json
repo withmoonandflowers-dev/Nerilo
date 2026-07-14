@@ -25,6 +25,8 @@
   "scripts": {
     "build:sdk": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && esbuild src/sdk/index.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json",
     "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
+    "example:minimal": "npm run build:sdk && vite --config examples/minimal-chat/vite.config.ts",
+    "example:minimal:build": "npm run build:sdk && vite build --config examples/minimal-chat/vite.config.ts",
     "prepublishOnly": "npm run build:sdk",
     "dev": "vite",
     "dev:test": "vite --port 4173 --strictPort --mode test",
