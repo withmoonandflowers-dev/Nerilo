@@ -9,7 +9,8 @@
   "module": "./dist/index.js",
   "types": "./dist/types/sdk/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ],
   "exports": {
     ".": {
@@ -22,7 +23,7 @@
     }
   },
   "scripts": {
-    "build:sdk": "esbuild src/sdk/index.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json",
+    "build:sdk": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && esbuild src/sdk/index.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json",
     "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
     "prepublishOnly": "npm run build:sdk",
     "dev": "vite",
