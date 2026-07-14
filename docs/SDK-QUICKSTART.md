@@ -1,110 +1,117 @@
-# Nerilo SDK — Quickstart（可嵌入聊天/已讀/表情技術）
+# Nerilo SDK Quickstart
 
-把 Nerilo 的 P2P mesh 聊天、端到端加密、已讀人數、表情反應，當成一顆技術嵌進你自己的
-系統。你只依賴 `src/sdk` 匯出的 **穩定 API**（`NeriloClient` + 型別 + 純邏輯）；內部的
-mesh / gossip / crypto 不列入契約、會持續重構。
+把端到端加密、點對點直連、斷網送達的即時通訊，嵌進你自己的產品。你只依賴 `NeriloClient` 這個門面，內部的 mesh、gossip、密碼學細節都封裝掉，可自由重構而不動你的程式。
 
-> **成熟度**：目前是 **P1（地基）**。門面與契約已定，預設後端仍是 Firestore（需要一個已
-> 初始化的 Firebase 環境）。P2 會把 signaling / auth 改成可注入，屆時同一份 `NeriloClient`
-> 程式碼可換上自架 WebSocket 等後端而 **API 不變**。詳見 [ADR-0025](adr/0025-embeddable-sdk.md)。
+適用環境：瀏覽器（需要 WebRTC 與 SubtleCrypto）。伺服器端 Node 可以匯入型別與純函式，但 `connect()` 要在瀏覽器跑。
 
-## 安裝 / 建置
+完整可跑的範例（同頁兩個 peer、零 Firebase、瀏覽器實測互傳）見 [examples/minimal-chat](../examples/minimal-chat)，根目錄 `npm run example:minimal` 即開。
 
-`npm run build:sdk` 產出 `dist/`（esbuild bundle + tsc `.d.ts`），`package.json` 的
-`main`/`module`/`types`/`exports` 都指向它，即可 `npm publish` 給 JS/TS 消費者：
+## 安裝
 
-```ts
-import { NeriloClient, createChatClient, type ChatMessage } from 'nerilo'
-// 或 'nerilo/sdk'
+```bash
+npm install nerilo
 ```
 
-**firebase-free 進入點**：build 用 `--splitting`，把 Firestore/預設 adapter 切進**動態 chunk**，
-`dist/index.js`（eager 進入點）**零 Firebase 靜態 import**。實測在**純 Node（無 Vite、無 Firebase）**
-`import('nerilo')` 可載入,`NeriloClient`/`createChatClient`/純 reducer/`InMemory*`/型別全可用；
-只有真的呼叫 `createChatClient`（省略後端時）才動態載入 Firestore chunk。
+## 30 秒觀念
 
-## 30 秒上手
+- **一個門面**：`NeriloClient`，收發訊息、表情、已讀、輸入中、生命週期。
+- **四道可注入的縫**：signaling（誰幫忙交換連線資訊）、directory（房間名冊）、storage（本機訊息儲存）、身分（你傳進來的 userId）。全部可替換。
+- **省略後端會怎樣**：不注入 signaling/directory/storage 時，`initialize()` 才動態載入預設的 Firestore/IndexedDB。省略者延後載入，代表「全部注入」這條路徑的靜態相依圖裡沒有 Firebase。
 
-```ts
-// 前提：你的 app 已初始化 Firebase（P1 限制），且已取得使用者 uid。
-const client = await createFirestoreChatClient({ roomId: 'room-123', userId: myUid })
+## 最小範例（零 Firebase，單頁可跑）
 
-// 1) 連線 + 收訊
-client.onMessage((msg: ChatMessage) => {
-  const { text, replyTo } = client.decode(msg)   // 解出顯示文字（回覆會嵌入被回覆 id）
-  render(msg.from, text, replyTo)
-})
-await client.connect()
-
-// 2) 送訊 / 回覆
-await client.sendMessage('哈囉')
-await client.sendMessage('收到', someMessageId)   // 第二參數 = 回覆某則
-
-// 3) 表情（toggle：已按會移除）
-await client.react(someMessageId, '👍')
-client.reactionsFor(someMessageId)               // → [{ emoji:'👍', count:1, mine:true }]
-
-// 4) 已讀人數
-client.markReadUpTo(currentlyVisibleMessages)    // 我看到最新 → 廣播已讀水位（只前進才送）
-client.readCountFor(myMessage)                    // → 幾位其他成員已讀過這則
-
-// 5) 輸入中
-await client.setTyping(true)
-client.onTyping(({ userId, isTyping }) => showTyping(userId, isTyping))
-
-// 6) 收工
-await client.dispose()
-```
-
-## API 摘要
-
-| 方法 | 作用 |
-|---|---|
-| `connect()` / `dispose()` | 建立連線 / 退訂並關閉 |
-| `get userId` | 本機 mesh 身分（connect 後有值） |
-| `sendMessage(text, replyToId?)` | 送訊 / 回覆，回傳 messageId |
-| `onMessage(cb)` / `loadHistory()` | 收訊 / 載入歷史 |
-| `decode(msg)` | 解出 `{ text, replyTo? }` |
-| `react(id, emoji)` / `reactionsFor(id)` | 表情 toggle / 聚合 |
-| `markReadUpTo(msgs)` / `readCountFor(msg)` | 廣播已讀水位 / 查已讀人數 |
-| `setTyping(b)` / `onTyping(cb)` | 輸入中 |
-
-## 進階：自建 UI 聚合
-
-若你要接自己的狀態管理，可直接用出口的**純 reducer**（零依賴、可測），不透過門面：
-
-```ts
-import { applyRead, readCount, orderKeyOf, applyReaction } from 'nerilo/src/sdk'
-```
-
-## 進階：替換後端（P2 已可用）
-
-**signaling**（P2a）與**節點發現 directory**（P2b）兩道縫都可注入，省略即走 Firestore。
-附零 Firebase 的記憶體參考實作，也是自架後端的形狀：
+用全記憶體的參考 adapter，不需要任何後端帳號。適合先把 API 跑起來、寫整合測試、或做同頁展示。
 
 ```ts
 import {
-  createFirestoreChatClient,
-  InMemorySignalingHub, InMemorySignalingTransport,
-  InMemoryRoomDirectoryHub, InMemoryRoomDirectory,
-} from 'nerilo/src/sdk'
+  createChatClient,
+  InMemorySignalingHub,
+  InMemorySignalingTransport,
+  InMemoryRoomDirectory,
+  InMemoryRoomDirectoryHub,
+  InMemoryChatStorage,
+} from 'nerilo';
 
-import { createChatClient } from 'nerilo'
-
-const sig = new InMemorySignalingHub()    // 換成你的 WebSocket 匯流排
-const dir = new InMemoryRoomDirectoryHub() // 換成你的名冊/發現後端
+// 同一顆 hub 給同頁的多個 client 共用，就能在單一 JS context 內互通。
+const sigHub = new InMemorySignalingHub();
+const dirHub = new InMemoryRoomDirectoryHub();
 
 const client = await createChatClient({
-  roomId, userId,
-  signaling: (r, ch) => new InMemorySignalingTransport(sig, r, ch),
-  directory: new InMemoryRoomDirectory(dir, roomId, userId),
+  roomId: 'demo-room',
+  userId: 'alice',
+  signaling: (roomId, channelLabel) => new InMemorySignalingTransport(sigHub, roomId, channelLabel),
+  directory: new InMemoryRoomDirectory(dirHub, 'demo-room', 'alice'),
   storage: new InMemoryChatStorage(),
-})
+});
+
+// 訂閱先接、再連線，才不會漏掉早到的訊息。
+const off = client.onMessage((msg) => {
+  const { text } = client.decode(msg);
+  console.log(`${msg.from}: ${text}`);
+});
+
+await client.connect();
+await client.sendMessage('hello mesh');
+
+// 收工
+off();
+await client.dispose();
 ```
 
-> **firebase-free（已達成）**：四個後端（signaling / directory / auth-uid / storage）全注入時，
-> `MeshChatService` 的**整條靜態 import 圖已無 Firebase**（未注入的預設延到 `initialize()` 才
-> 動態載入）。第三方帶自己的後端即可 import + 建構完整引擎、全程不碰 Firebase。
->
-> **剩最後一哩**：`exports` 目前指向源碼 `.ts`（TS 消費者可用）；要 `npm publish` 給 JS 消費者
-> 需補 dist build（純 toolchain）。見 [ADR-0025](adr/0025-embeddable-sdk.md)。
+同頁要模擬兩個人對話，就用同一組 `sigHub`／`dirHub` 再建一個 `userId: 'bob'` 的 client。
+
+> 邊界：記憶體 adapter 只在同一個 JS context 內互通。要跨裝置、跨分頁，換成 Firestore 預設或你自己的 signaling 後端（見下一節）。
+
+## 核心 API
+
+| 方法 | 用途 |
+|---|---|
+| `connect()` | 建立連線並開始接收訊息/表情/已讀 |
+| `sendMessage(text, replyToId?)` | 送訊息，可帶回覆對象；回傳 messageId |
+| `onMessage(cb)` | 訂閱新訊息（含本機回音）；回傳退訂函式 |
+| `decode(msg)` | 解出顯示文字與被回覆 id |
+| `loadHistory()` | 載入歷史訊息 |
+| `react(messageId, emoji)` | toggle 表情，樂觀更新並廣播 |
+| `reactionsFor(messageId)` | 某訊息的表情聚合（emoji、count、mine） |
+| `markReadUpTo(messages)` | 標記已讀水位並廣播（只前進時送，天然限流） |
+| `readCountFor(msg)` | 某訊息的已讀人數（排除作者與自己） |
+| `setTyping(isTyping)` / `onTyping(cb)` | 輸入中狀態 |
+| `userId` | 本機身分（connect 後才有值） |
+| `dispose()` | 退訂所有事件並清理連線 |
+
+只有這個門面與注入契約算穩定 API。內部的 mesh/gossip/crypto 類別不列入公開契約，可能改。
+
+## 接真實後端
+
+### 用內建 Firestore（最快上線）
+
+省略三個後端參數，`initialize()` 會載入預設 Firestore/IndexedDB。需要你的環境已初始化 Firebase。
+
+```ts
+import { createFirestoreChatClient } from 'nerilo';
+
+const client = await createFirestoreChatClient({ roomId: 'r1', userId: 'alice' });
+await client.connect();
+```
+
+### 換成你自己的後端
+
+實作 `SignalingTransport`（把 publish/subscribe 換成你的 WebSocket 收送即可，形狀照 `InMemorySignalingTransport`），選擇性再換 `IRoomDirectory` 與 `IChatStorage`，注入 `createChatClient`。API 完全不變。
+
+```ts
+import { createChatClient, type SignalingTransport } from 'nerilo';
+
+class WsSignaling implements SignalingTransport {
+  // subscribe / send / cleanupOlderThan / cleanupOwn
+}
+
+const client = await createChatClient({
+  roomId: 'r1',
+  userId: 'alice',
+  signaling: (roomId, channelLabel) => new WsSignaling(/* ... */),
+});
+```
+
+## 版本承諾
+
+公開表面遵循語意化版號。破壞性變更只在主版號跳動時發生。內部模組不在此保證內。

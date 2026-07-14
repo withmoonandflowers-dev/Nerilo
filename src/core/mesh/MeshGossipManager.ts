@@ -12,6 +12,7 @@ import { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
+import type { EncryptionState } from '../../types';
 
 /**
  * Mesh Gossip 管理器
@@ -392,6 +393,18 @@ export class MeshGossipManager {
    */
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  /**
+   * 加密狀態（ADR-0026 R2 明文降級 fail-visible）：
+   *  - 未初始化 → 'exchanging'（未知，不誤報明文）
+   *  - keyCoordinator=null（ECDH 不可用）→ 'plaintext'（真降級，房間永久無法加密）
+   *  - sendEpoch 就緒 → 'encrypted'；否則 keyx 進行中 → 'exchanging'
+   */
+  getEncryptionState(): EncryptionState {
+    if (!this.initialized) return 'exchanging';
+    if (!this.keyCoordinator) return 'plaintext';
+    return this.messageHandler?.hasSendKey() ? 'encrypted' : 'exchanging';
   }
 
   /** 本機 mesh userId（hash pubKey）；未初始化時為 null。gossip senderId 用此。 */
