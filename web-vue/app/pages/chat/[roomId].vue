@@ -7,6 +7,7 @@ import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
 import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
+import { sendDecisionFor, type EncryptionState } from '@legacy/features/chat/encryptionGate'
 import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
@@ -53,6 +54,15 @@ function reactionChips(messageId: string): Array<{ emoji: string; count: number;
     emoji, count: froms.length, mine: froms.includes(myMeshId.value),
   }))
 }
+// ── 加密狀態（ADR-0026 R2 明文降級 fail-visible）──
+const encryptionState = ref<EncryptionState>('exchanging')
+/** 明文房送訊確認：暫存待送內容；非 null 時顯示阻斷式警告，使用者確認才真送。 */
+const plaintextPending = ref<string | null>(null)
+const e2eeLabel = computed(() =>
+  encryptionState.value === 'encrypted' ? '端對端加密'
+    : encryptionState.value === 'exchanging' ? '金鑰交換中…'
+    : '未加密（此房無法端對端加密）'
+)
 // ── 已讀人數（per-member 水位；聚合見 readReceipts.ts）──
 const readState = ref<ReadState>({})
 let myWatermark = '' // 上次送出的自身水位（僅前進才再送，天然限流）
@@ -181,13 +191,17 @@ function touchActivity() {
 }
 
 async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) {
+  // 人數簿記必須在互斥鎖之前：第三人的 join snapshot 常落在 mesh 初始化的
+  // async 窗口內，先 return 會把它吞掉；房間文件隨後可能再無寫入（下一個
+  // snapshot 要等有人送訊 bump 活躍度），memberCount 從此卡 2 → mesh banner、
+  // 座位列、已讀分母全部失真。mesh 初始化本身仍受鎖保護（冪等，一次就好）。
+  const effectiveCount = effectiveParticipantCount ?? room.participants.length
+  participantCount = Math.max(participantCount, effectiveCount)
+  memberCount.value = participantCount
   if (migrationInProgress) return
   migrationInProgress = true
   try {
     const uid = user.value!.uid
-    const effectiveCount = effectiveParticipantCount ?? room.participants.length
-    participantCount = Math.max(participantCount, effectiveCount)
-    memberCount.value = participantCount
     if (room.status !== 'open' || effectiveCount < 2) return
 
     if (currentTopology.value === 'mesh') return // 已建立，勿重複初始化
@@ -225,6 +239,8 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
       const s = meshChat.getConnectionState()
       const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
       if (mapped !== connectionState.value) connectionState.value = mapped
+      const enc = meshChat.getEncryptionState()
+      if (enc !== encryptionState.value) encryptionState.value = enc
     }, 2000)
   } catch (e) {
     console.error('[chat] initializeP2P failed', e)
@@ -384,11 +400,32 @@ async function handleSend() {
   const content = inputValue.value.trim()
   if (!content) return
   const raw = encodeContent(content, replyingTo.value?.messageId) // 回覆時嵌入被回覆 id（隨內容加密）
+  // ADR-0026 R2 fail-visible：明文房不靜默送出。真明文（ECDH 不可用）→ 阻斷式確認、預設拒送。
+  if (sendDecisionFor(encryptionState.value) === 'confirm-plaintext') {
+    plaintextPending.value = raw // 暫存，顯示警告 bar；使用者按「仍以明文送出」才真送
+    replyingTo.value = null
+    inputValue.value = ''
+    if (textareaEl.value) textareaEl.value.style.height = 'auto'
+    emitTyping(false)
+    return
+  }
   replyingTo.value = null
   inputValue.value = ''
   if (textareaEl.value) textareaEl.value.style.height = 'auto'
   emitTyping(false)
   await sendMessage(raw)
+}
+
+/** 明文房：使用者明確確認後才以明文送出（fail-visible 的「明確同意」）。 */
+async function confirmPlaintextSend() {
+  const raw = plaintextPending.value
+  plaintextPending.value = null
+  if (raw) await sendMessage(raw)
+}
+function cancelPlaintextSend() {
+  // 取消＝不送；把內容還回輸入框，避免使用者白打
+  if (plaintextPending.value) inputValue.value = decodeContent(plaintextPending.value).text
+  plaintextPending.value = null
 }
 
 function handleResend(msg: ChatMessage) {
@@ -532,7 +569,13 @@ async function leaveRoom() {
       <div class="chat__head-center">
         <h1 class="chat__title">
           {{ roomName ?? '聊天室' }}
-          <span v-if="currentTopology !== null" class="chat__lock" title="端對端加密">🔒</span>
+          <span
+            v-if="currentTopology !== null"
+            class="chat__lock"
+            :class="`chat__lock--${encryptionState}`"
+            :title="e2eeLabel"
+            :data-testid="`e2ee-${encryptionState}`"
+          >{{ encryptionState === 'encrypted' ? '🔒' : encryptionState === 'exchanging' ? '🔑' : '⚠️' }}</span>
         </h1>
         <p class="chat__status" :class="`chat__status--${connectionState}`">{{ statusText }}</p>
       </div>
@@ -711,6 +754,20 @@ async function leaveRoom() {
       <button type="button" class="chat__reply-cancel" data-testid="reply-cancel" aria-label="取消回覆" @click="replyingTo = null">✕</button>
     </div>
 
+    <!-- ADR-0026 R2：明文降級的常駐提示（此房永久無法加密，讓使用者「知情」）。 -->
+    <div v-if="encryptionState === 'plaintext' && !plaintextPending" class="chat__e2ee-warn" data-testid="plaintext-notice">
+      ⚠️ 此聊天室無法端對端加密，訊息將以明文送出。
+    </div>
+
+    <!-- 阻斷式確認：明文房送訊前必須明確同意，預設不送（fail-visible）。 -->
+    <div v-if="plaintextPending" class="chat__e2ee-confirm" data-testid="plaintext-confirm">
+      <span class="chat__e2ee-confirm-text">⚠️ 此房無法加密。這則訊息會以<strong>明文</strong>送出，仍要送嗎？</span>
+      <div class="chat__e2ee-confirm-actions">
+        <button type="button" class="chat__e2ee-cancel" data-testid="plaintext-cancel" @click="cancelPlaintextSend">取消</button>
+        <button type="button" class="chat__e2ee-proceed" data-testid="plaintext-proceed" @click="confirmPlaintextSend">仍以明文送出</button>
+      </div>
+    </div>
+
     <footer class="chat__input-bar">
       <textarea
         ref="textareaEl"
@@ -782,6 +839,39 @@ async function leaveRoom() {
   text-overflow: ellipsis;
 }
 .chat__lock { font-size: 12px; }
+.chat__lock--plaintext { filter: none; opacity: 1; }
+.chat__lock--exchanging { opacity: 0.7; }
+
+/* ADR-0026 R2：明文降級提示與阻斷式確認 */
+.chat__e2ee-warn {
+  margin: 0 12px 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #d9822b 16%, transparent);
+  color: #b45309;
+}
+.chat__e2ee-confirm {
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #d9822b 20%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat__e2ee-confirm-text { font-size: 13px; line-height: 1.4; }
+.chat__e2ee-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.chat__e2ee-cancel,
+.chat__e2ee-proceed {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat__e2ee-cancel { background: var(--surface-2, #e5e5ea); color: var(--text, #1c1c1e); }
+.chat__e2ee-proceed { background: #d9822b; color: #fff; }
 .chat__status { margin: 1px 0 0; font-size: 12px; color: var(--text-2); }
 .chat__status--connected { color: var(--success); }
 .chat__status--failed { color: var(--danger); }
