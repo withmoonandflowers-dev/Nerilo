@@ -4,6 +4,8 @@
 
 適用環境：瀏覽器（需要 WebRTC 與 SubtleCrypto）。伺服器端 Node 可以匯入型別與純函式，但 `connect()` 要在瀏覽器跑。
 
+完整可跑的範例（同頁兩個 peer、零 Firebase、瀏覽器實測互傳）見 [examples/minimal-chat](../examples/minimal-chat)，根目錄 `npm run example:minimal` 即開。
+
 ## 安裝
 
 ```bash
