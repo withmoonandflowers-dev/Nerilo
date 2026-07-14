@@ -21,6 +21,8 @@ Browser-only P2P chat with end-to-end encryption. Firebase handles signaling and
 
 ## Quick start
 
+> **Embedding Nerilo as an SDK in your own app?** See [docs/SDK-QUICKSTART.md](docs/SDK-QUICKSTART.md) — install `nerilo`, wire the injectable backends, run with zero Firebase. The section below is for running this repo's app locally.
+
 ### Prerequisites
 
 | | Why |
