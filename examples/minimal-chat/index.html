@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nerilo minimal chat（reference 整合）</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 1.5rem; max-width: 860px; margin-inline: auto; }
+      h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
+      p.sub { margin: 0 0 1rem; opacity: .7; font-size: .85rem; }
+      #status { font-size: .8rem; padding: .35rem .6rem; border-radius: 6px;
+        background: color-mix(in srgb, currentColor 8%, transparent); display: inline-block; margin-bottom: 1rem; }
+      .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      .peer { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 10px; padding: .75rem; }
+      .peer h2 { font-size: .9rem; margin: 0 0 .5rem; display: flex; justify-content: space-between; align-items: center; }
+      .e2ee { font-size: .7rem; opacity: .8; }
+      .log { min-height: 180px; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: .3rem; }
+      .msg { font-size: .85rem; padding: .3rem .5rem; border-radius: 8px;
+        background: color-mix(in srgb, currentColor 10%, transparent); align-self: flex-start; max-width: 90%; }
+      .msg.mine { align-self: flex-end; background: color-mix(in srgb, #3b82f6 30%, transparent); }
+      .composer { display: flex; gap: .5rem; margin-top: .5rem; }
+      input { flex: 1; padding: .4rem .6rem; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); background: transparent; color: inherit; }
+      button { padding: .4rem .8rem; border-radius: 8px; border: 0; cursor: pointer; background: #3b82f6; color: #fff; }
+      button:disabled { opacity: .5; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <h1>Nerilo minimal chat</h1>
+    <p class="sub">
+      第三方整合參考：<code>import { createChatClient } from 'nerilo'</code>，四道注入縫全走記憶體 adapter，
+      零 Firebase。同頁兩個 client（alice / bob）經 WebRTC 直連、端到端加密互傳。
+    </p>
+    <div id="status">啟動中…</div>
+    <div class="cols">
+      <section class="peer">
+        <h2>alice <span class="e2ee" id="e2ee-alice">🔑 交換中</span></h2>
+        <div class="log" id="log-alice"></div>
+        <div class="composer">
+          <input id="input-alice" placeholder="alice 說…" disabled />
+          <button id="send-alice" disabled>送出</button>
+        </div>
+      </section>
+      <section class="peer">
+        <h2>bob <span class="e2ee" id="e2ee-bob">🔑 交換中</span></h2>
+        <div class="log" id="log-bob"></div>
+        <div class="composer">
+          <input id="input-bob" placeholder="bob 說…" disabled />
+          <button id="send-bob" disabled>送出</button>
+        </div>
+      </section>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
