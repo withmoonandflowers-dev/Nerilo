@@ -12,6 +12,12 @@ export default defineConfig({
   testDir: 'tests/e2e-vue',
   timeout: 60_000,
   retries: 0,
+  // 每個 spec 各開 2-3 個真實瀏覽器跑 WebRTC/ICE。預設 workers=cores/2 在多核機上會同時
+  // 起十幾個瀏覽器，CPU 一被餓死，2 秒一次的 mesh anti-entropy 對帳與 DataChannel 送達
+  // 就被拖慢，3 人 mesh-diagnostic 的 20s 送達界線偶發撞不到（實測 workers=6 → 6/8；
+  // workers=2 → 6/6，17 個送達矩陣全乾淨）。故硬性限並行，讓測試在不被餓死的條件下量測，
+  // 而非放寬送達界線來掩蓋。要在強機上加速可用 CLI --workers 覆寫（自負風險）。
+  workers: 2,
   use: {
     baseURL: 'http://localhost:3210',
     trace: 'on-first-retry',
