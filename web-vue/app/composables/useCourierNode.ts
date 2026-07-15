@@ -29,7 +29,7 @@ import {
 import { FirestoreRelayDirectory } from '@legacy/core/relay/FirestoreRelayDirectory'
 import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
 import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
-import { ecdsaSigner } from '@legacy/core/relay/CourierReceipts'
+import { ecdsaSigner, ecdsaVerifier } from '@legacy/core/relay/CourierReceipts'
 import {
   RoomAdvertCache,
   attachRoomDirectory,
@@ -283,8 +283,14 @@ export function useCourierNode() {
         creditEconomy.attachLedger(new CreditLedger())
         courierCredit = {
           nodeId, pubKey, sign,
-          onCredit: (requesterNodeId, bytes) =>
-            creditEconomy.recordRelayContribution(requesterNodeId, bytes),
+          // Spec 002 / R5：收據隨計點傳遞，帳本入帳前再驗一次（fail-closed 縱深防禦）
+          onCredit: async (requesterNodeId, bytes, receipt, requesterPubKey) =>
+            creditEconomy.recordRelayContribution(requesterNodeId, bytes, {
+              kind: 'receipt',
+              receipt,
+              relayVerify: await ecdsaVerifier(pubKey),
+              requesterVerify: await ecdsaVerifier(requesterPubKey),
+            }),
         }
         memberCredit = { nodeId, pubKey, sign }
       } catch {

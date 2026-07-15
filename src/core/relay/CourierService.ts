@@ -72,8 +72,16 @@ export interface CourierCreditConfig {
   nodeId: string;
   pubKey: string;
   sign: SignFn;
-  /** 收到可驗共簽收據後的計點落點（例：CreditEconomy.recordRelayContribution）。 */
-  onCredit: (requesterNodeId: string, bytes: number) => void | Promise<void>;
+  /**
+   * 收到可驗共簽收據後的計點落點（例：CreditEconomy.recordRelayContribution）。
+   * 收據與 requester 公鑰一併傳遞（Spec 002 / R5）：帳本入帳前可再驗一次，縱深防禦。
+   */
+  onCredit: (
+    requesterNodeId: string,
+    bytes: number,
+    receipt: CoSignedRelayReceipt,
+    requesterPubKey: string
+  ) => void | Promise<void>;
 }
 
 /** 成員方計量設定（注入身分金鑰）。省略 = 不回簽（不參與計量）。 */
@@ -235,7 +243,7 @@ export class CourierServer {
     if (receipt.nonce !== this.inFlight.nonce || receipt.bytesRelayed !== this.inFlight.bytes) return;
     const ok = await verifyCoSignedReceipt(receipt, this.credit.pubKey, requesterPubKey);
     if (ok) {
-      await this.credit.onCredit(receipt.requesterNodeId, receipt.bytesRelayed);
+      await this.credit.onCredit(receipt.requesterNodeId, receipt.bytesRelayed, receipt, requesterPubKey);
     } else {
       logger.warn('[CourierServer] co-signed receipt failed verification');
     }
