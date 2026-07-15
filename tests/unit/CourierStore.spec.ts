@@ -220,3 +220,86 @@ describe('recordBytes', () => {
     expect(recordBytes(msg({ content: '中', signature: '' }))).toBe(3); // UTF-8 3 bytes
   });
 });
+
+describe('CourierStore — 寄存不刷熱度（Spec 001 Q4 小修）', () => {
+  it('攻擊者持續自我寄存不能保溫：預算 LRU 仍按最後真實使用排序', () => {
+    let t = 0;
+    const s = new CourierStore(cfg({ totalBudgetBytes: 250, maxRoomBytes: 1000, maxRecordBytes: 100 }), () => t);
+    t = 10; s.deposit(sizedMsg({ roomId: 'attacker', senderId: 'evil', seq: 1 }, 100));
+    t = 20; s.deposit(sizedMsg({ roomId: 'honest', senderId: 'good', seq: 1 }, 100));
+    t = 25; s.serveRoom('honest'); // 誠實房被成員真實取用 → 保鮮
+    // 攻擊者在更晚的時刻繼續寄存自己的房（舊行為會刷新 lastAccessedAt=26 蓋過誠實房的 25）
+    t = 26; s.deposit(sizedMsg({ roomId: 'attacker', senderId: 'evil', seq: 2 }, 40));
+    // 觸頂：240+100=340 > 250 → 淘汰「最久未真實使用」的房
+    t = 30; s.deposit(sizedMsg({ roomId: 'newroom', senderId: 'n', seq: 1 }, 100));
+    expect(s.serveRoom('attacker')).toHaveLength(0); // 攻擊房被淘汰（熱度停在建房的 10）
+    expect(s.serveRoom('honest')).toHaveLength(1);   // 誠實房存活
+    expect(s.serveRoom('newroom')).toHaveLength(1);
+  });
+
+  it('serve 仍是唯一保鮮途徑（釘住既有語義）', () => {
+    let t = 0;
+    const s = new CourierStore(cfg({ totalBudgetBytes: 250, maxRoomBytes: 1000, maxRecordBytes: 100 }), () => t);
+    t = 10; s.deposit(sizedMsg({ roomId: 'r1', seq: 1 }, 100));
+    t = 20; s.deposit(sizedMsg({ roomId: 'r2', seq: 1 }, 100));
+    t = 25; s.serveRoom('r1');
+    t = 30; s.deposit(sizedMsg({ roomId: 'r3', seq: 1 }, 100));
+    expect(s.serveRoom('r1')).toHaveLength(1);
+    expect(s.serveRoom('r2')).toHaveLength(0); // 只有 r2 沒被 serve 過 → 淘汰
+  });
+});
+
+describe('CourierStore — per-簽章身分占用統計（Spec 001）', () => {
+  it('deposit 累計、跨房加總、重複不重計', () => {
+    const s = new CourierStore(cfg());
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 100));
+    s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 50));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'b', seq: 1 }, 30));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 100)); // duplicate → 拒
+    expect(s.signerUsage('a')).toBe(150);
+    expect(s.signerUsage('b')).toBe(30);
+    expect(s.signerUsage('nobody')).toBe(0);
+  });
+
+  it('TTL 過期扣回；歸零即移除鍵', () => {
+    let t = 1000;
+    const s = new CourierStore(cfg({ ttlMs: 100 }), () => t);
+    s.deposit(sizedMsg({ senderId: 'a', seq: 1 }, 60));
+    t = 1201;
+    s.evictExpired();
+    expect(s.signerUsage('a')).toBe(0);
+    expect(s.signerStats().size).toBe(0);
+  });
+
+  it('預算 LRU 整房淘汰時按房內各 sender 扣回', () => {
+    let t = 0;
+    const s = new CourierStore(cfg({ totalBudgetBytes: 250, maxRoomBytes: 1000, maxRecordBytes: 100 }), () => t);
+    t = 10;
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 60));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'b', seq: 1 }, 40));
+    t = 20; s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 100));
+    t = 30; s.deposit(sizedMsg({ roomId: 'r3', senderId: 'c', seq: 1 }, 100)); // 觸頂 → 淘汰 r1
+    expect(s.signerUsage('a')).toBe(100); // r1 的 60 扣掉，剩 r2 的 100
+    expect(s.signerUsage('b')).toBe(0);
+    expect(s.signerUsage('c')).toBe(100);
+  });
+
+  it('墓碑刪房與 clearAll 會計歸零', async () => {
+    const s = new CourierStore(cfg());
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 80));
+    s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 20));
+    await s.applyTombstone('r1', () => true);
+    expect(s.signerUsage('a')).toBe(20);
+    s.clearAll();
+    expect(s.signerUsage('a')).toBe(0);
+  });
+
+  it('單房上限淘汰最舊時逐筆扣回', () => {
+    let t = 0;
+    const s = new CourierStore(cfg({ maxRoomBytes: 150, maxRecordBytes: 100 }), () => t);
+    t = 1; s.deposit(sizedMsg({ senderId: 'a', seq: 1 }, 100));
+    t = 2; s.deposit(sizedMsg({ senderId: 'b', seq: 1 }, 100)); // 房 200 > 150 → 淘汰最舊(a)
+    expect(s.signerUsage('a')).toBe(0);
+    expect(s.signerUsage('b')).toBe(100);
+  });
+});
