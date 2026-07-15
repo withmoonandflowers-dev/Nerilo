@@ -52,7 +52,11 @@ interface RoomHoldings {
   /** senderId → (seq → 紀錄)。與 antiEntropy 的 store 形狀一致，供 digest 直接複用。 */
   senders: Map<string, Map<number, StoredRecord>>;
   bytes: number;
-  /** 最近一次被存取（deposit 或 serve）的時刻，供總預算 LRU 淘汰整房。 */
+  /**
+   * 最近一次「真實使用」（serve/pull）的時刻，供總預算 LRU 淘汰整房。
+   * Spec 001 Q4：寄存不算使用、不刷新此值——否則攻擊者持續自我寄存即可
+   * 永久保溫，把誠實房擠出快取。建房時取初值。
+   */
   lastAccessedAt: number;
 }
 
@@ -93,6 +97,11 @@ export function recordBytes(msg: GossipMessage): number {
 export class CourierStore {
   private readonly rooms = new Map<string, RoomHoldings>();
   private totalBytes = 0;
+  /**
+   * per-寄存者占用（Spec 001）：簽章身分（紀錄的 senderId，可驗簽的出處）→ 目前占用位元組。
+   * 供上層做 per-身分配額/計價；與 totalBytes 同步增減（deposit/淘汰/TTL/墓碑/清空）。
+   */
+  private readonly bySigner = new Map<string, number>();
 
   /** 持久化寫入串鏈（best-effort，序列化避免競態）；flush() 可等寫入落定。 */
   private writeTail: Promise<void> = Promise.resolve();
@@ -102,6 +111,32 @@ export class CourierStore {
     private readonly now: () => number = () => Date.now(),
     private readonly persistence?: CourierPersistence
   ) {}
+
+  /** per-簽章身分占用增減；歸零即移除鍵（避免 map 無限膨脹）。 */
+  private addSigner(senderId: string, delta: number): void {
+    const next = (this.bySigner.get(senderId) ?? 0) + delta;
+    if (next > 0) this.bySigner.set(senderId, next);
+    else this.bySigner.delete(senderId);
+  }
+
+  /** 整房下架時的批次會計：把房內每筆按 senderId 扣回。 */
+  private subtractRoomSigners(room: RoomHoldings): void {
+    for (const [senderId, seqs] of room.senders) {
+      let sum = 0;
+      for (const rec of seqs.values()) sum += rec.bytes;
+      this.addSigner(senderId, -sum);
+    }
+  }
+
+  /** 某簽章身分目前的占用位元組（不存在＝0）。供上層配額/計價。 */
+  signerUsage(senderId: string): number {
+    return this.bySigner.get(senderId) ?? 0;
+  }
+
+  /** 全部簽章身分占用的快照（複本）。 */
+  signerStats(): Map<string, number> {
+    return new Map(this.bySigner);
+  }
 
   /** 把一個持久化寫入排進串鏈（吞錯，不影響記憶體權威）。 */
   private persist(op: () => Promise<void>): void {
@@ -147,6 +182,7 @@ export class CourierStore {
       room.bytes += p.bytes;
       this.rooms.set(p.roomId, room);
       this.totalBytes += p.bytes;
+      this.addSigner(p.msg.senderId, p.bytes);
     }
   }
 
@@ -174,9 +210,10 @@ export class CourierStore {
     const depositedAt = this.now();
     seqs.set(msg.seq, { msg, bytes, depositedAt });
     room.bytes += bytes;
-    room.lastAccessedAt = this.now();
+    // 寄存「不」刷新 lastAccessedAt（Spec 001 Q4）：只有 serve/pull 算真實使用
     this.rooms.set(msg.roomId, room);
     this.totalBytes += bytes;
+    this.addSigner(msg.senderId, bytes);
     this.persist(() => this.persistence!.putRecord({ roomId: msg.roomId, msg, depositedAt, bytes }));
 
     this.enforceRoomCap(msg.roomId);
@@ -236,6 +273,7 @@ export class CourierStore {
     const freed = room.bytes;
     this.rooms.delete(roomId);
     this.totalBytes -= freed;
+    this.subtractRoomSigners(room);
     this.persist(() => this.persistence!.deleteRoom(roomId));
     return freed;
   }
@@ -244,6 +282,7 @@ export class CourierStore {
   clearAll(): void {
     this.rooms.clear();
     this.totalBytes = 0;
+    this.bySigner.clear();
     this.persist(() => this.persistence!.clear());
   }
 
@@ -258,6 +297,7 @@ export class CourierStore {
             seqs.delete(seq);
             room.bytes -= rec.bytes;
             this.totalBytes -= rec.bytes;
+            this.addSigner(senderId, -rec.bytes);
             this.persist(() => this.persistence!.deleteRecord(roomId, senderId, seq));
             removed++;
           }
@@ -294,6 +334,7 @@ export class CourierStore {
       if (seqs && seqs.size === 0) room.senders.delete(senderId);
       room.bytes -= rec.bytes;
       this.totalBytes -= rec.bytes;
+      this.addSigner(senderId, -rec.bytes);
       this.persist(() => this.persistence!.deleteRecord(roomId, senderId, seq));
     }
   }
@@ -308,6 +349,7 @@ export class CourierStore {
       if (this.totalBytes <= this.config.totalBudgetBytes) break;
       this.rooms.delete(roomId);
       this.totalBytes -= room.bytes;
+      this.subtractRoomSigners(room);
       this.persist(() => this.persistence!.deleteRoom(roomId));
     }
   }
