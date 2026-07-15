@@ -28,6 +28,9 @@
 - CreditLedger 的 earn 型 append：型別加必填 `receiptRef`（收據雜湊/識別）＋建構時執行 `verifyReceipt` 雙簽驗證，驗證失敗拒絕入帳（fail-closed）。
 - 既有呼叫端（中繼計量迴路）已持有收據，改動為傳遞參照，行為不變。
 - 非 earn 型 append（初始配額、消費轉出）不受影響；型別以判別聯集區分。
+- 〔實作期修訂〕原計畫漏了「在線累積（uptime）無交易對手、不可能有收據」的既有運作路徑。
+  硬要求全 earn 附收據會弄壞它（違反 harden-tests 鐵律）。修訂為 `EarnAttestation` 判別聯集：
+  `receipt`（可驗收據）或 `self`（白名單 uptime/grant，顯性標注供稽核）。取捨記 ADR-0028。
 
 ## 5. 任務分解（tasks）
 
