@@ -77,7 +77,7 @@ min Σ_{j∈K} p_j·q   s.t. |K| = k，總支出 ≤ 點數餘額 m_i
 
 ## 5. 任務分解（tasks）
 
-- [ ] T0：等 Spec 002（R5 收斂）合併。
+- [x] T0：等 Spec 002（R5 收斂）合併。〔2026-07-14 已落地，ADR-0028〕
 - [ ] T1 ⚠：CourierStore 寄存不刷熱度 + per-身分占用統計（characterization-first，先釘現行 LRU 行為）。
 - [ ] T2：定價器純函式模組（含收斂性單元測試：固定供需下價格收斂、震盪參數界）。
 - [ ] T3 ⚠：CourierService QUOTE/扣點/拒收接線（P4 courier e2e 迴歸）。
