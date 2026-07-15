@@ -22,7 +22,7 @@
 import { LocalCreditProvider } from './LocalCreditProvider';
 import { DEFAULT_CREDIT_RATES } from './types';
 import type { CreditBalance, ServiceTier } from '../relay/types';
-import type { CreditLedger, VerifyResult } from './CreditLedger';
+import type { CreditLedger, VerifyResult, EarnAttestation } from './CreditLedger';
 import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
 
@@ -70,10 +70,18 @@ export class CreditEconomy {
     return this.ledger ? this.ledger.serialize() : null;
   }
 
-  /** 把「實際差額」記進帳本（差額 <= 0 或未掛帳本則略過）。 */
-  private recordToLedger(op: 'earn' | 'spend', amount: number, reason: string): void {
+  /**
+   * 把「實際差額」記進帳本（差額 <= 0 或未掛帳本則略過）。
+   * earn 必附 attestation（Spec 002 / R5）：收據或白名單自證，由帳本 fail-closed 把關。
+   */
+  private recordToLedger(op: 'spend', amount: number, reason: string): void;
+  private recordToLedger(op: 'earn', amount: number, reason: string, attestation: EarnAttestation): void;
+  private recordToLedger(op: 'earn' | 'spend', amount: number, reason: string, attestation?: EarnAttestation): void {
     if (!this.ledger || amount <= 0) return;
-    void this.ledger.append(op, amount, reason, Date.now(), generateUUID()).catch((err) => {
+    const p = op === 'earn'
+      ? this.ledger.append('earn', amount, reason, Date.now(), generateUUID(), attestation!)
+      : this.ledger.append('spend', amount, reason, Date.now(), generateUUID());
+    void p.catch((err) => {
       logger.warn('[CreditEconomy] ledger append failed', { err });
     });
   }
@@ -129,7 +137,8 @@ export class CreditEconomy {
     if (!this.nodeId || hours <= 0) return;
     const before = this.currentBalance();
     this.provider.recordUptime(this.nodeId, hours);
-    this.recordToLedger('earn', this.currentBalance() - before, 'uptime');
+    // 在線累積無交易對手 → 白名單自證（明白標注，稽核可辨識）
+    this.recordToLedger('earn', this.currentBalance() - before, 'uptime', { kind: 'self', basis: 'uptime' });
     this.persistAndEmit();
   }
 
@@ -138,15 +147,19 @@ export class CreditEconomy {
    * 本機為他人轉發了 bytesRelayed bytes 時呼叫；依 perKbRelayed + perRelayBonus
    * 獎勵本機節點，走 LocalCreditProvider 既有的每小時上限節流（防刷）。
    *
-   * requesterNodeId 供稽核（誰的流量）；proof 為簽章佔位（Phase 1 本機記帳用
-   * 'local'，Phase 2 換真實雙簽收據時填入）。Nerilo 只「產生」點數，
-   * 怎麼兌換由上層/玩家決定（不在本專案範圍）。
+   * requesterNodeId 供稽核（誰的流量）。attestation 必填（Spec 002 / R5）：
+   * 正常路徑帶共簽收據（信使驗過、帳本再驗一次 fail-closed，縱深防禦）。
+   * Nerilo 只「產生」點數，怎麼兌換由上層/玩家決定（不在本專案範圍）。
    */
-  async recordRelayContribution(requesterNodeId: string, bytesRelayed: number): Promise<void> {
+  async recordRelayContribution(
+    requesterNodeId: string,
+    bytesRelayed: number,
+    attestation: EarnAttestation
+  ): Promise<void> {
     if (!this.nodeId || bytesRelayed <= 0) return;
     const before = this.currentBalance();
     await this.provider.recordRelay(this.nodeId, requesterNodeId, bytesRelayed, 'local');
-    this.recordToLedger('earn', this.currentBalance() - before, 'relay');
+    this.recordToLedger('earn', this.currentBalance() - before, 'relay', attestation);
     this.persistAndEmit();
   }
 

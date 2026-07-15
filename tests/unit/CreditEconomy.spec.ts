@@ -9,9 +9,21 @@
  *
  * @vitest-environment node
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
 import { CreditEconomy } from '../../src/core/incentive/CreditEconomy';
-import { CreditLedger } from '../../src/core/incentive/CreditLedger';
+import { CreditLedger, webCryptoSigner, type EarnAttestation } from '../../src/core/incentive/CreditLedger';
+import { createReceiptDraft, counterSign } from '../../src/core/incentive/CoSignedReceipt';
+
+/** Spec 002：relay 賺點必附收據。測試共用一張真雙簽收據 fixture。 */
+let receiptAtt: EarnAttestation;
+beforeAll(async () => {
+  const gen = () => crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const relay = webCryptoSigner(await gen());
+  const requester = webCryptoSigner(await gen());
+  const draft = await createReceiptDraft('relay-alice', 'req-bob', 10 * 1024, 1, 'fixture-nonce', relay.sign);
+  const receipt = await counterSign(draft, requester.sign);
+  receiptAtt = { kind: 'receipt', receipt, relayVerify: relay.verify, requesterVerify: requester.verify };
+});
 
 function installLocalStorageStub(): Map<string, string> {
   const store = new Map<string, string>();
@@ -102,15 +114,15 @@ describe('CreditEconomy', () => {
 
   it('中繼貢獻產生點數：10KB → +15（10*perKb + perRelayBonus）', async () => {
     econ.init('alice');
-    await econ.recordRelayContribution('bob', 10 * 1024);
+    await econ.recordRelayContribution('bob', 10 * 1024, receiptAtt);
     // 初始 100 + (10*1 + 5) = 115
     expect((await econ.getBalance())!.balance).toBeCloseTo(115, 5);
   });
 
   it('中繼貢獻 0 bytes 不加點；未 init 安全 no-op', async () => {
-    await econ.recordRelayContribution('bob', 1024); // 未 init
+    await econ.recordRelayContribution('bob', 1024, receiptAtt); // 未 init
     econ.init('alice');
-    await econ.recordRelayContribution('bob', 0);
+    await econ.recordRelayContribution('bob', 0, receiptAtt);
     expect((await econ.getBalance())!.balance).toBe(100);
   });
 
@@ -118,7 +130,7 @@ describe('CreditEconomy', () => {
     econ.init('alice');
     const seen: number[] = [];
     econ.subscribe((b) => seen.push(b.balance));
-    await econ.recordRelayContribution('bob', 5 * 1024); // +10
+    await econ.recordRelayContribution('bob', 5 * 1024, receiptAtt); // +10
 
     expect(seen.length).toBeGreaterThanOrEqual(1);
     const econ2 = new CreditEconomy();
@@ -141,7 +153,7 @@ describe('CreditEconomy', () => {
     const ledger = new CreditLedger();
     econ.attachLedger(ledger);
 
-    await econ.recordRelayContribution('bob', 10 * 1024); // +15
+    await econ.recordRelayContribution('bob', 10 * 1024, receiptAtt); // +15
     await econ.trySpend(40, 'game:powerup'); // -40
     await ledger.settled(); // 等佇列中的簽章串鏈 append 落定
 
