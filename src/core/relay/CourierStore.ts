@@ -138,6 +138,12 @@ export class CourierStore {
     return new Map(this.bySigner);
   }
 
+  /** 目前總預算占用率（擁擠定價用）；不參與時視為滿載，避免報出免費容量。 */
+  utilization(): number {
+    if (this.config.totalBudgetBytes <= 0) return 1;
+    return Math.min(1, this.totalBytes / this.config.totalBudgetBytes);
+  }
+
   /** 把一個持久化寫入排進串鏈（吞錯，不影響記憶體權威）。 */
   private persist(op: () => Promise<void>): void {
     if (!this.persistence) return;
