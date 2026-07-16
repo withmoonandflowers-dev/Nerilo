@@ -4,6 +4,14 @@ import twilio from 'twilio';
 
 admin.initializeApp();
 
+// Scheduled cleanup 必須由入口 re-export 才會成為可部署 Function。
+export {
+  cleanupExpiredRooms,
+  cleanupStaleSignals,
+  cleanupExpiredInbox,
+  cleanupExpiredRoomRequests,
+} from './cleanupRooms';
+
 // 設定使用者角色
 export const setRole = functions.https.onCall(async (data, context) => {
   // 驗證使用者已登入且為 admin
@@ -76,6 +84,5 @@ export const getIceServers = functions.https.onCall(async (data, context) => {
     return { iceServers: defaultServers };
   }
 });
-
 
 

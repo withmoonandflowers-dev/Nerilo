@@ -4,6 +4,7 @@
  * cleanupExpiredRooms: runs every hour, deletes rooms past ttlExpireAt
  * cleanupStaleSignals: runs every 5 minutes, deletes old signaling docs
  * cleanupExpiredInbox: runs every 30 minutes, deletes expired store-and-forward messages
+ * cleanupExpiredRoomRequests: runs every 30 minutes, deletes expired merge/split requests
  */
 
 import * as functions from 'firebase-functions';
@@ -173,5 +174,22 @@ export const cleanupExpiredInbox = functions.pubsub
       console.log(`[cleanupExpiredInbox] Deleted ${count} expired inbox messages`);
     }
 
+    return null;
+  });
+
+/** 清除過期的合併／分岔請求；原生 TTL 的部署後備，亦補 ADR-0006 明列缺口。 */
+export const cleanupExpiredRoomRequests = functions.pubsub
+  .schedule('every 30 minutes')
+  .onRun(async () => {
+    const db = admin.firestore();
+    const expired = await db.collection('roomRequests')
+      .where('expiresAt', '<', firestore.Timestamp.now())
+      .limit(500)
+      .get();
+    if (expired.empty) return null;
+    const batch = db.batch();
+    for (const doc of expired.docs) batch.delete(doc.ref);
+    await batch.commit();
+    console.log(`[cleanupExpiredRoomRequests] Deleted ${expired.size} expired requests`);
     return null;
   });

@@ -78,6 +78,26 @@ jobs:
       - name: Generate Vue static app
         run: npm run generate --prefix web-vue
 
+  functions-quality:
+    name: Functions Build Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Functions dependencies
+        run: npm ci --prefix functions
+
+      - name: Build Functions
+        run: npm run build --prefix functions
+
   e2e:
     name: E2E (stable subset, emulator-backed)
     runs-on: ubuntu-latest
