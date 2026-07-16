@@ -17,7 +17,7 @@ const DELIVERY_TIMEOUT_MS = 20_000;
 const DUP_SETTLE_MS = 5_000;
 
 test.describe('Vue 版 3 人 mesh 診斷', () => {
-  test('每則訊息在每個畫面最終各恰好一次', async ({ browser }) => {
+  test('每則訊息在每個畫面最終各恰好一次 @vue-stable', async ({ browser }) => {
     test.setTimeout(240_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
