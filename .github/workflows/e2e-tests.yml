@@ -49,7 +49,7 @@ jobs:
 
       # Cache the emulator binaries (~150 MB) so subsequent runs are fast.
       - name: Cache Firebase emulator binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
