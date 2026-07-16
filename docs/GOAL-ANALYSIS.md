@@ -6,6 +6,9 @@
 > 現況事實以 codebase 掃描為準，引用附檔案位置。
 > 相關文件：[adr/](adr/)、[COMMERCIALIZATION-ROADMAP.md](COMMERCIALIZATION-ROADMAP.md)
 
+> 本檔保存 2026-07-03 的目標推導與當時差距。會變動的完成度與驗證數字已統一移至
+> [CURRENT-STATUS.md](CURRENT-STATUS.md)；兩者衝突時，以 CURRENT-STATUS 為準。
+
 ## 0. 定位聲明
 
 Nerilo 不是一個聊天 app，是一層**可重用的 P2P 資料傳遞架構**：
