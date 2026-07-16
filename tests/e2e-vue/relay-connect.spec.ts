@@ -317,7 +317,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
     }
   });
 
-  test('計量：成員寄存 → 本人簽欠條 → 信使記錄有對象債權（Spec 001）', async ({ browser }) => {
+  test('計量：成員寄存 → 本人簽欠條 → 信使記錄有對象債權（Spec 001） @vue-stable', async ({ browser }) => {
     test.setTimeout(150_000);
     const member = await setupUser(browser);
     const courier = await setupUser(browser);
