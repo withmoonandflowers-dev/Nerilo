@@ -2,6 +2,8 @@
 
 Browser-only P2P chat with end-to-end encryption. Firebase handles signaling and fallback only; message content travels over WebRTC DataChannels encrypted with per-room sender keys.
 
+Current implementation status, verified test baselines, active work and known gaps are maintained in [docs/CURRENT-STATUS.md](docs/CURRENT-STATUS.md). Use that file instead of older roadmap snapshots when deciding what is live today.
+
 ## What this is — and isn't
 
 | ✅ Is | ❌ Isn't |
@@ -27,8 +29,8 @@ Browser-only P2P chat with end-to-end encryption. Firebase handles signaling and
 
 | | Why |
 |---|---|
-| **Node.js 20+** | Tooling. |
-| **Java 17+** (Temurin recommended) | Firebase emulators (required for `npm run test:e2e:ci`). |
+| **Node.js 24** | Matches CI and the npm 11 lockfile. |
+| **Java 21+** (Temurin recommended) | Firebase Tools 15 emulator requirement. |
 | **Firebase account + 1–2 projects** | One for production (e.g. `nerilo`), one for staging (e.g. `nerilo-staging`) — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 
 ### Install
@@ -63,7 +65,7 @@ VITE_FIREBASE_APP_ID=1:123456789:web:abcdef
 ```bash
 npm run dev                # http://localhost:3000 (dev mode, talks to real Firebase)
 npm run build              # production bundle in dist/
-npm run test:run           # unit tests (Vitest, ~617 tests)
+npm run test:run           # unit tests (Vitest; current count in docs/CURRENT-STATUS.md)
 npm run test:e2e:ci        # E2E tests with Firebase emulators auto-booted
 ```
 
@@ -87,7 +89,7 @@ Both scripts refuse to run while `.env.staging` / `.env.production` contain `REP
 | `auth/configuration-not-found` | `VITE_FIREBASE_AUTH_DOMAIN` mismatch — it must be exactly `<project-id>.firebaseapp.com`. The older `.appspot.com` form (used by some legacy projects) won't work for Auth. |
 | `Failed to load resource: ERR_CONNECTION_REFUSED` to `127.0.0.1:9099` or `127.0.0.1:8080` | App is in test mode and emulators aren't running. Either: a) don't run with `--mode test`, or b) start emulators: `npx firebase emulators:start --only auth,firestore`. |
 | `npm run test:e2e` hangs at "Waiting for http://localhost:4173" | Vite startup blocked. On Windows, the Playwright `webServer.command` already uses `node ./node_modules/vite/bin/vite.js` directly to avoid the npm-shim issue. If you're still seeing this, run `npm run dev:test` in another terminal first and let Playwright reuse it. |
-| `npm run test:e2e:ci` exits with "java: not found" | Install Java 17 (Temurin). Required by Firebase emulators. |
+| `npm run test:e2e:ci` exits with a Java version error | Install Java 21+ (Temurin). Required by Firebase Tools 15 emulators. |
 | `firestore.rules` deploy fails with "Authentication Error" | Run `firebase login` first. |
 | `npm run deploy:staging` errors with "REPLACE_ME_ placeholders" | You haven't filled in `.env.staging` yet. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the Firebase Console walkthrough. |
 
