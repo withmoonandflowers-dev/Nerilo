@@ -14,7 +14,7 @@
 
 | 層級 | 2026-07-16 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；124 test files／1412 tests 全綠（既有 7 warnings） |
+| Core quality | TypeScript、ESLint gate 通過；124 test files／1416 tests 全綠（既有 7 warnings） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
@@ -36,7 +36,7 @@
 - T3：QUOTE、本人簽發寄存欠條、per-發票人未結上限與拒收。
 - T4：有明確對象的服務欠條可在原發票人、目前持有人、新持有人三方同意後交換；自己的欠條只有本人簽署才結清。
 - T5：單一垃圾身分耗盡授信後連續 19 筆拒收，誠實房未被擠出。
-- 尚餘 T6：回填正式 ADR 與 protocol 軌格式；V4「信使全拒仍走成員互補」需獨立可執行驗收。
+- T6／V4 已收口：ADR-0029 與 Protocol Spec 003 v1 固定格式；零授信信使拒收時，本地權威紀錄保留，兩成員仍經正式 anti-entropy 原語雙向補齊。
 
 這套經濟不是 coin 或全網餘額。每個信使只對自己持有的債權作權威判斷，不同發票人的欠條只有在使用者同意的交換中才具可比價格。
 
@@ -48,8 +48,8 @@
 
 ## 目前優先序
 
-1. 完成 Spec 001 T6 與 V4，收口欠條協議及免費底線服務證據。
-2. 觀察 Vue stable CI 到 2026-07-30；期間補齊 P0/P1 parity，不提前切 production。
+1. 觀察 React stable CI 到 2026-07-27、Vue stable CI 到 2026-07-30；期間補齊 P0/P1 parity，不提前切 production。
+2. 把欠條簿持久化、備份與遺失復原另開規格；v1 目前仍是每信使記憶體權威。
 3. 把成本儀表板、總量配額與 cleanup Functions 的 Blaze 決策獨立處理；Functions 未部署前，不宣稱伺服器端成本上限已完整成立。
 4. 取得真實使用資料後再擴功能；避免 React、Vue、SDK 三面同時發散。
 
@@ -58,5 +58,5 @@
 - CI 中 React stable E2E 與 Vue stable E2E 目前仍是 soft gate；Vue 觀察截止日為 2026-07-30，React 既定檢查日為 2026-07-27。
 - Nuxt 最大 bundle chunk 約 568 kB；不擋 correctness，但切 production 前應評估載入成本。
 - SDP offer/answer 尚未升級為平台級簽章身分；Firebase auth/rules 是現階段信令完整性邊界。
-- 信使欠條目前是每信使本地債權簿；跨節點長期持久化、遺失復原與 protocol 相容格式屬 Spec 001 T6。
+- 信使欠條目前是每信使記憶體債權簿；Protocol Spec 003 已固定 v1 相容格式，但跨節點長期持久化、備份與遺失復原尚未設計。
 - README 的安全摘要不能取代 `docs/THREAT_MODEL.md`；Nerilo 未經第三方安全認證，不適用高風險匿名通訊。

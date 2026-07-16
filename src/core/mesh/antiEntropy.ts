@@ -83,3 +83,19 @@ export function peerLacks(digest: NormalizedDigest, senderId: string, seq: numbe
   if (seq < h.floor) return false; // 對方已主動遺忘該區間，不回補
   return h.missing.has(seq);
 }
+
+/** 從本地 store 選出對方 digest 明確缺少的紀錄；digest 畸形時 fail-closed、不傳資料。 */
+export function recordsPeerLacks(
+  store: ReadonlyMap<string, ReadonlyMap<number, GossipMessage>>,
+  peerDigestRaw: GossipDigest,
+): GossipMessage[] {
+  const digest = normalizeDigest(peerDigestRaw);
+  if (!digest) return [];
+  const records: GossipMessage[] = [];
+  for (const [senderId, seqs] of store) {
+    for (const [seq, message] of seqs) {
+      if (peerLacks(digest, senderId, seq)) records.push(message);
+    }
+  }
+  return records;
+}

@@ -198,6 +198,8 @@ export class CourierIOUBook {
   }
 
   issueQuote(issuerNodeId: string, bytes: number, utilization: number): DepositQuote {
+    if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new RangeError('quote bytes must be a positive safe integer');
+    if (!Number.isFinite(utilization) || utilization < 0) throw new RangeError('utilization must be finite and non-negative');
     const now = this.now();
     if (this.lastPriceUpdateAt === null || now - this.lastPriceUpdateAt >= this.config.pricingIntervalMs) {
       this.currentStoragePrice = nextCongestionPrice(this.currentStoragePrice, utilization, this.config.pricing);

@@ -18,7 +18,7 @@
 
 import type { P2PEnvelope, GossipMessage } from '../../types';
 import { CourierStore, recordBytes, type DepositResult } from './CourierStore';
-import { computeDigest, normalizeDigest, peerLacks, type GossipDigest } from '../mesh/antiEntropy';
+import { computeDigest, recordsPeerLacks, type GossipDigest } from '../mesh/antiEntropy';
 import { verifyTombstone, type Tombstone } from './TombstoneCrypto';
 import { ecdsaVerifier, pubKeyBindsNodeId, verifyCoSignedReceipt } from './CourierReceipts';
 import {
@@ -143,7 +143,7 @@ interface SyncRespPayload {
 interface QuotePayload { bytes: number }
 type QuoteResponse =
   | { accepted: true; quote: DepositQuote }
-  | { accepted: false; reason: 'identity-required' | 'pricing-disabled' };
+  | { accepted: false; reason: 'identity-required' | 'pricing-disabled' | 'invalid-request' };
 interface PricedDepositPayload {
   record: GossipMessage;
   iou: DepositIOU;
@@ -162,22 +162,6 @@ export function buildRoomStore(records: GossipMessage[]): Map<string, Map<number
     if (!inner.has(m.seq)) inner.set(m.seq, m); // first-write-wins（對齊 CourierStore）
   }
   return store;
-}
-
-/** digest 對照下，store 中「對方缺」的紀錄。供雙向 push 用。 */
-function recordsPeerLacks(
-  store: ReadonlyMap<string, ReadonlyMap<number, GossipMessage>>,
-  peerDigestRaw: GossipDigest
-): GossipMessage[] {
-  const norm = normalizeDigest(peerDigestRaw);
-  if (!norm) return [];
-  const out: GossipMessage[] = [];
-  for (const [senderId, seqs] of store) {
-    for (const [seq, msg] of seqs) {
-      if (peerLacks(norm, senderId, seq)) out.push(msg);
-    }
-  }
-  return out;
 }
 
 function envelope(type: string, from: string, payload: unknown, over: Partial<P2PEnvelope> = {}): P2PEnvelope {
@@ -278,7 +262,7 @@ export class CourierServer {
   }
 
   private async onEnvelope(env: P2PEnvelope): Promise<void> {
-    if (env.from === this.selfId) return; // 不處理自己送的（bus 可能回放）
+    if (env.v !== 1 || env.from === this.selfId) return; // 未知協議版本與自己回放皆忽略
     try {
       switch (env.type) {
         case CourierMsgType.DEPOSIT: {
@@ -325,6 +309,10 @@ export class CourierServer {
             break;
           }
           const { bytes } = env.payload as QuotePayload;
+          if (!Number.isSafeInteger(bytes) || bytes <= 0) {
+            await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: false, reason: 'invalid-request' } as QuoteResponse);
+            break;
+          }
           const quote = this.iouBook.issueQuote(this.requester.nodeId, bytes, this.store.utilization());
           await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: true, quote } as QuoteResponse);
           break;
@@ -411,6 +399,7 @@ export class CourierClient {
   start(): void {
     if (this.unsub) return;
     this.unsub = this.bus.subscribe(COURIER_NS, (env) => {
+      if (env.v !== 1) return;
       // 計量：信使起草收據 → 驗 + 回簽（不是 replyTo 關聯，是信使主動推）。
       if (env.type === CourierMsgType.RECEIPT_DRAFT && env.from !== this.selfId) {
         void this.onReceiptDraft(env.payload as ReceiptDraftPayload);

@@ -12,6 +12,7 @@ import {
   CourierServer,
   CourierClient,
   COURIER_NS,
+  CourierMsgType,
   buildRoomStore,
   runCourierBackup,
 } from '../../src/core/relay/CourierService';
@@ -104,6 +105,18 @@ describe('CourierService — 寄存/取回端到端', () => {
     client.start();
     const ack = await client.deposit(rec({ content: 'way-too-long-ciphertext', signature: '' }));
     expect(ack).toEqual({ accepted: false, reason: 'record-too-large' });
+  });
+
+  it('未知 envelope 版本不得當作 v1 寄存', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    new CourierServer(courierBus, store, 'c').start();
+
+    await memberBus.send({
+      v: 2, ns: COURIER_NS, type: CourierMsgType.DEPOSIT,
+      id: 'future-deposit', ts: 1000, from: 'future-member', payload: rec(),
+    });
+    expect(store.stats().recordCount).toBe(0);
   });
 });
 
