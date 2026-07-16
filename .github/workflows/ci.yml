@@ -94,7 +94,7 @@ jobs:
 
       # Firebase emulators need a JRE — pin Java 21 explicitly (firebase-tools 15+ requires JDK 21+).
       - name: Setup Java 21 (for Firebase emulators)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -143,7 +143,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
