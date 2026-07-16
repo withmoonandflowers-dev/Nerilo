@@ -13,6 +13,7 @@ import {
 } from '../../src/core/relay/CourierService';
 import {
   CourierIOUBook,
+  createDepositIOU,
   createContributionTransferDraft,
   createRepaymentRequest,
   type CourierIOUBookConfig,
@@ -21,6 +22,7 @@ import { createReceiptDraft, counterSign } from '../../src/core/incentive/CoSign
 import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
 import { senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
 import { arrayBufferToBase64 } from '../../src/utils/crypto';
+import { computeDigest, recordsPeerLacks } from '../../src/core/mesh/antiEntropy';
 import type { GossipMessage, P2PEnvelope } from '../../src/types';
 
 class BusEnd implements CourierBus {
@@ -88,6 +90,7 @@ describe('Courier IOU — T3 報價、欠條與拒收', () => {
     const book = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 1000);
     const prices = Array.from({ length: 20 }, () => book.issueQuote(requester.nodeId, 10, 0).pricePerByteDay);
     expect(new Set(prices).size).toBe(1);
+    expect(() => book.issueQuote(requester.nodeId, 0, 0)).toThrow(RangeError);
   });
 
   it('寄存自動取得報價並開具本人欠條；超過該信使授信 epsilon 後拒收', async () => {
@@ -162,8 +165,54 @@ describe('Courier IOU — T4 貢獻欠條交換後恢復額度', () => {
       debtor.nodeId, debtor.pubKey, book.activeClaimIds(debtor.nodeId), transfer, debtor.sign
     );
     expect(await client.repay(repayment)).toMatchObject({ accepted: true, settledAmount: debtAmount });
+    expect(await client.repay(repayment)).toEqual({ accepted: false, reason: 'replayed-contribution' });
     expect(book.outstanding(debtor.nodeId)).toBe(0);
     expect(await client.deposit(rec({ seq: 2 }))).toMatchObject({ accepted: true });
+  });
+
+  it('缺原發票人轉讓同意或本人結清簽章時不註銷寄存欠條', async () => {
+    const courier = await node();
+    const debtor = await node();
+    const beneficiary = await node();
+    const record = rec();
+    const bookConfig = config();
+    const book = new CourierIOUBook(courier.nodeId, courier.sign, bookConfig, () => 1000);
+    const quote = book.issueQuote(debtor.nodeId, recordBytes(record), 0);
+    const depositIou = await createDepositIOU(quote, 1000, debtor.sign, 'deposit-nonce');
+    expect(await book.acceptDepositIOU(depositIou, debtor.pubKey)).toMatchObject({ accepted: true });
+
+    const receipt = await counterSign(
+      await createReceiptDraft(debtor.nodeId, beneficiary.nodeId, 10_000, 900, 'service-negative', debtor.sign),
+      beneficiary.sign,
+    );
+    const amount = Math.ceil(receipt.bytesRelayed * bookConfig.contributionPricePerByte * 1_000_000) / 1_000_000;
+    const transfer = await createContributionTransferDraft(
+      receipt, beneficiary.pubKey, debtor.pubKey, courier.nodeId, amount,
+      beneficiary.sign, debtor.sign, 'transfer-negative',
+    );
+    const valid = await createRepaymentRequest(
+      debtor.nodeId, debtor.pubKey, [depositIou.iouId], transfer, debtor.sign,
+    );
+
+    expect(await book.repay({ ...valid, settlementSig: 'forged' }))
+      .toEqual({ accepted: false, reason: 'invalid-settlement' });
+    expect(await book.repay({ ...valid, transfer: { ...transfer, issuerSig: 'forged' } }))
+      .toEqual({ accepted: false, reason: 'invalid-transfer' });
+    expect(book.outstanding(debtor.nodeId)).toBe(quote.amount);
+  });
+
+  it('store 拒收時回滾已接受的寄存欠條', async () => {
+    const courier = await node();
+    const debtor = await node();
+    const book = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 1000);
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore({ ...DEFAULT_COURIER_CONFIG, totalBudgetBytes: 0 }, () => 1000);
+    new CourierServer(courierBus, store, 'courier-uid', undefined, credit(courier), book).start();
+    const client = new CourierClient(memberBus, 'member-uid', 3000, member(debtor));
+    client.start();
+
+    expect(await client.deposit(rec())).toEqual({ accepted: false, reason: 'budget-zero' });
+    expect(book.outstanding(debtor.nodeId)).toBe(0);
   });
 });
 
@@ -207,5 +256,42 @@ describe('Courier IOU — T5 垃圾寄存攻擊模擬', () => {
     expect(rejected).toBe(19);
     expect(store.serveRoom('honest')).toHaveLength(1);
     expect(store.stats().recordCount).toBe(2);
+  });
+});
+
+describe('Courier IOU — V4 免費成員互補不受信使拒收影響', () => {
+  it('所有信使拒收時保留本地權威紀錄，成員 anti-entropy 仍最終補齊', async () => {
+    const courier = await node();
+    const sender = await node();
+    const localRecord = rec({ roomId: 'free-baseline', senderId: sender.nodeId, seq: 1 });
+    const peerRecord = rec({ roomId: 'free-baseline', senderId: 'peer-signer', seq: 1, content: 'ENC:peer' });
+    const book = new CourierIOUBook(courier.nodeId, courier.sign, config({ creditLimitPerIssuer: 0 }), () => 1000);
+    const [memberBus, courierBus] = linkedBuses();
+    const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    new CourierServer(courierBus, courierStore, 'courier-uid', undefined, credit(courier), book).start();
+    const client = new CourierClient(memberBus, 'member-uid', 3000, member(sender));
+    client.start();
+
+    // 信使路徑是可拒絕的加速層；拒收不能取得或刪除成員的本地權威紀錄。
+    const memberA = new Map([[localRecord.senderId, new Map([[localRecord.seq, localRecord]])]]);
+    const memberB = new Map([[peerRecord.senderId, new Map([[peerRecord.seq, peerRecord]])]]);
+    expect(await client.deposit(localRecord)).toEqual({ accepted: false, reason: 'insufficient-credit' });
+    expect(courierStore.stats().recordCount).toBe(0);
+    expect(memberA.get(localRecord.senderId)?.get(localRecord.seq)).toBe(localRecord);
+
+    // 免費底線：兩個房間成員用同一套正式 digest/select 原語互補，無欠條亦可收斂。
+    const digestA = computeDigest(memberA, new Map());
+    const digestB = computeDigest(memberB, new Map());
+    for (const message of recordsPeerLacks(memberA, digestB)) {
+      if (!memberB.has(message.senderId)) memberB.set(message.senderId, new Map());
+      memberB.get(message.senderId)!.set(message.seq, message);
+    }
+    for (const message of recordsPeerLacks(memberB, digestA)) {
+      if (!memberA.has(message.senderId)) memberA.set(message.senderId, new Map());
+      memberA.get(message.senderId)!.set(message.seq, message);
+    }
+
+    expect(memberA.get(peerRecord.senderId)?.get(peerRecord.seq)).toBe(peerRecord);
+    expect(memberB.get(localRecord.senderId)?.get(localRecord.seq)).toBe(localRecord);
   });
 });
