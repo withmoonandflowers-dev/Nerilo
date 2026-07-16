@@ -17,7 +17,7 @@
  */
 
 import type { P2PEnvelope, GossipMessage } from '../../types';
-import { CourierStore, type DepositResult } from './CourierStore';
+import { CourierStore, recordBytes, type DepositResult } from './CourierStore';
 import { computeDigest, normalizeDigest, peerLacks, type GossipDigest } from '../mesh/antiEntropy';
 import { verifyTombstone, type Tombstone } from './TombstoneCrypto';
 import { ecdsaVerifier, pubKeyBindsNodeId, verifyCoSignedReceipt } from './CourierReceipts';
@@ -31,6 +31,14 @@ import {
 } from '../incentive/CoSignedReceipt';
 import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
+import {
+  CourierIOUBook,
+  createDepositIOU,
+  type DepositIOU,
+  type DepositQuote,
+  type IOURepayResult,
+  type RepaymentRequest,
+} from '../incentive/CourierIOU';
 
 export const COURIER_NS = 'courier';
 
@@ -49,7 +57,16 @@ export const CourierMsgType = {
   IDENTIFY_ACK: 'identify-ack',
   RECEIPT_DRAFT: 'receipt-draft',
   RECEIPT_SIGNED: 'receipt-signed',
+  /** Spec 001：本地報價、欠條寄存與欠條交換結清。 */
+  QUOTE: 'quote',
+  QUOTE_RESP: 'quote-resp',
+  REPAY: 'repay',
+  REPAY_ACK: 'repay-ack',
 } as const;
+
+export type CourierDepositResult =
+  | DepositResult
+  | { accepted: false; reason: 'identity-required' | 'quote-required' | 'quote-expired' | 'quote-mismatch' | 'invalid-iou' | 'insufficient-credit' | 'duplicate-iou' };
 
 /** 成員自報 mesh 身分（供信使起草可驗收據）。 */
 interface IdentifyPayload {
@@ -123,6 +140,15 @@ interface SyncRespPayload {
   /** 信使自己對該房的 digest，讓成員回推信使缺的紀錄（雙向對帳）。 */
   digest: GossipDigest;
 }
+interface QuotePayload { bytes: number }
+type QuoteResponse =
+  | { accepted: true; quote: DepositQuote }
+  | { accepted: false; reason: 'identity-required' | 'pricing-disabled' };
+interface PricedDepositPayload {
+  record: GossipMessage;
+  iou: DepositIOU;
+  issuerPubKey: string;
+}
 
 /** 由紀錄陣列建 anti-entropy store 視圖：Map<senderId, Map<seq, GossipMessage>>。 */
 export function buildRoomStore(records: GossipMessage[]): Map<string, Map<number, GossipMessage>> {
@@ -184,7 +210,8 @@ export class CourierServer {
     private readonly store: CourierStore,
     private readonly selfId: string,
     private readonly verifyOverride?: (roomId: string, proof: unknown) => boolean | Promise<boolean>,
-    private readonly credit?: CourierCreditConfig
+    private readonly credit?: CourierCreditConfig,
+    private readonly iouBook?: CourierIOUBook
   ) {}
 
   /** 房籍簽章墓碑驗證：注入者優先，否則預設用 store 的 senderId 集合做盲驗。 */
@@ -255,10 +282,58 @@ export class CourierServer {
     try {
       switch (env.type) {
         case CourierMsgType.DEPOSIT: {
-          const rec = env.payload as GossipMessage;
-          const result = this.store.deposit(rec);
+          let rec: GossipMessage;
+          let result: CourierDepositResult;
+          if (this.iouBook) {
+            if (!this.requester) {
+              await this.reply(env, CourierMsgType.DEPOSIT_ACK, { accepted: false, reason: 'identity-required' });
+              break;
+            }
+            const priced = env.payload as Partial<PricedDepositPayload>;
+            if (!priced.record || !priced.iou || !priced.issuerPubKey) {
+              await this.reply(env, CourierMsgType.DEPOSIT_ACK, { accepted: false, reason: 'quote-required' });
+              break;
+            }
+            rec = priced.record;
+            const quote = this.iouBook.quoteFor(priced.iou);
+            if (!quote || quote.bytes !== recordBytes(rec)) {
+              await this.reply(env, CourierMsgType.DEPOSIT_ACK, { accepted: false, reason: 'quote-mismatch' });
+              break;
+            }
+            const accepted = await this.iouBook.acceptDepositIOU(priced.iou, priced.issuerPubKey);
+            if (!accepted.accepted) {
+              await this.reply(env, CourierMsgType.DEPOSIT_ACK, accepted);
+              break;
+            }
+            result = this.store.deposit(rec);
+            if (!result.accepted) this.iouBook.rollbackDepositIOU(priced.iou.iouId);
+          } else {
+            rec = env.payload as GossipMessage;
+            result = this.store.deposit(rec);
+          }
           if (result.accepted) this.bytesOwed += result.bytes; // 累計可計量代管
           await this.reply(env, CourierMsgType.DEPOSIT_ACK, result);
+          break;
+        }
+        case CourierMsgType.QUOTE: {
+          if (!this.iouBook) {
+            await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: false, reason: 'pricing-disabled' } as QuoteResponse);
+            break;
+          }
+          if (!this.requester) {
+            await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: false, reason: 'identity-required' } as QuoteResponse);
+            break;
+          }
+          const { bytes } = env.payload as QuotePayload;
+          const quote = this.iouBook.issueQuote(this.requester.nodeId, bytes, this.store.utilization());
+          await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: true, quote } as QuoteResponse);
+          break;
+        }
+        case CourierMsgType.REPAY: {
+          const result: IOURepayResult = this.iouBook
+            ? await this.iouBook.repay(env.payload as RepaymentRequest)
+            : { accepted: false, reason: 'invalid-settlement' };
+          await this.reply(env, CourierMsgType.REPAY_ACK, result);
           break;
         }
         case CourierMsgType.IDENTIFY: {
@@ -324,6 +399,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export class CourierClient {
   private readonly pending = new Map<string, (env: P2PEnvelope) => void>();
   private unsub: (() => void) | null = null;
+  private identifyPromise: Promise<void> | null = null;
 
   constructor(
     private readonly bus: CourierBus,
@@ -345,7 +421,7 @@ export class CourierClient {
       }
     });
     // 自報身分（可靠遞送：等 IDENTIFY_ACK，重試跨越「信使伺服器尚未掛上」視窗）。
-    if (this.credit) void this.identifyWithRetry();
+    if (this.credit) this.identifyPromise = this.identifyWithRetry();
   }
 
   /** 送 IDENTIFY 並等 ack，重試到成功（信使 CourierServer 晚訂閱時 inbound 不緩衝晚訂閱者）。 */
@@ -391,10 +467,32 @@ export class CourierClient {
   }
 
   /** 寄存一筆密文紀錄；回傳信使的 DepositResult（accepted / 拒收原因）。 */
-  async deposit(record: GossipMessage): Promise<DepositResult> {
+  async deposit(record: GossipMessage): Promise<CourierDepositResult> {
+    await this.identifyPromise;
     const req = envelope(CourierMsgType.DEPOSIT, this.selfId, record);
     const ack = await this.request(req);
-    return ack.payload as DepositResult;
+    const result = ack.payload as CourierDepositResult;
+    if (!result.accepted && result.reason === 'quote-required' && this.credit) {
+      const quoteResp = await this.request(
+        envelope(CourierMsgType.QUOTE, this.selfId, { bytes: recordBytes(record) } as QuotePayload)
+      );
+      const quoted = quoteResp.payload as QuoteResponse;
+      if (!quoted.accepted) return { accepted: false, reason: 'identity-required' };
+      const iou = await createDepositIOU(quoted.quote, Date.now(), this.credit.sign);
+      const priced = envelope(CourierMsgType.DEPOSIT, this.selfId, {
+        record,
+        iou,
+        issuerPubKey: this.credit.pubKey,
+      } as PricedDepositPayload);
+      return (await this.request(priced)).payload as CourierDepositResult;
+    }
+    return result;
+  }
+
+  /** 以第三方服務欠條交換並結清自己對此信使開出的寄存欠條。 */
+  async repay(request: RepaymentRequest): Promise<IOURepayResult> {
+    const req = envelope(CourierMsgType.REPAY, this.selfId, request);
+    return (await this.request(req)).payload as IOURepayResult;
   }
 
   /** 回線取回某房的全部代管密文紀錄。 */
@@ -436,8 +534,12 @@ export class CourierClient {
 
     // 方向二：我回推信使缺的（用信使 digest 過濾本地）。
     const toPush = recordsPeerLacks(localStore, courierDigest ?? {});
-    for (const m of toPush) await this.deposit(m); // 逐筆 deposit（已測、ack 冪等）
-    return { received: (records ?? []).length, pushed: toPush.length };
+    let pushed = 0;
+    for (const m of toPush) {
+      const result = await this.deposit(m); // 逐筆 deposit（已測、ack 冪等）
+      if (result.accepted || result.reason === 'duplicate') pushed += 1;
+    }
+    return { received: (records ?? []).length, pushed };
   }
 
   /** 送出 req，等 replyTo==req.id 的回覆；逾時即 reject。 */
