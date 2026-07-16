@@ -5,6 +5,7 @@
 ## 定位與交付面
 
 - Nerilo 是可嵌入的 P2P 韌性資料傳遞層；聊天是參考應用，不是最終產品邊界。
+- repo 已於 2026-07-16 轉為公開（Apache-2.0）；GitHub Actions 額度限制解除。npm 尚未發佈。
 - SDK 版本 `0.9.0`，可零 Firebase 嵌入；API 在 0.x 階段尚未鎖定。
 - React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版可 type-check、static generate，尚未取得切 production 資格。
 - Firebase Functions 未部署。Hosting 與 Firestore rules/indexes 由 master push workflow 部署；需 Blaze／Cloud Build 的 Functions 能力仍刻意排除。
