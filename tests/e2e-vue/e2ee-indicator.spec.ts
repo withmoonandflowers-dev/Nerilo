@@ -17,7 +17,7 @@ import {
 } from './_helpers/users';
 
 test.describe('Vue 版加密指示器（誠實）', () => {
-  test('正常房金鑰交換後顯示 encrypted，且明文閘門不擋加密送出', async ({ browser }) => {
+  test('正常房金鑰交換後顯示 encrypted，且明文閘門不擋加密送出 @vue-stable', async ({ browser }) => {
     test.setTimeout(180_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

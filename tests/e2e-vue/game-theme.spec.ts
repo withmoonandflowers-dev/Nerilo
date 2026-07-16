@@ -15,7 +15,7 @@ function cell(page: Page, i: number) {
 }
 
 test.describe('Vue 版遊戲 × 主題', () => {
-  test('井字棋出招雙向可見、回合輪替；neo 主題預設且可循環切換', async ({ browser }) => {
+  test('井字棋出招雙向可見、回合輪替；neo 主題預設且可循環切換 @vue-stable', async ({ browser }) => {
     test.setTimeout(180_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

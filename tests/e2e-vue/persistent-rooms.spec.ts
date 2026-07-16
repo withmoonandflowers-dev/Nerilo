@@ -17,7 +17,7 @@ import {
 } from './_helpers/users';
 
 test.describe('持久聊天室：跳出不離開、未讀、釘選、刪除', () => {
-  test('完整生命週期', async ({ browser }) => {
+  test('完整生命週期 @vue-stable', async ({ browser }) => {
     test.setTimeout(240_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
