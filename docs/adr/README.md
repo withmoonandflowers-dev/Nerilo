@@ -21,3 +21,4 @@
 | [0014](0014-multi-device-identity.md) | 多裝置身分與同步（缺口，方向已定） | Proposed |
 | [0015](0015-game-data-as-second-app.md) | 遊戲資料流成為第二參考應用（game/ 解凍） | Accepted |
 | [0016](0016-ui-theming-not-framework-swap.md) | 視覺升級用多主題設計系統，不換前端框架 | Accepted |
+| [0029](0029-courier-iou-claims.md) | 信使經濟採有對象、可同意交換的欠條 | Accepted |
