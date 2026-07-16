@@ -317,7 +317,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
     }
   });
 
-  test('計量：成員寄存 → 共簽收據 → 信使賺可驗點數（P4-D，ADR-0022）', async ({ browser }) => {
+  test('計量：成員寄存 → 本人簽欠條 → 信使記錄有對象債權（Spec 001）', async ({ browser }) => {
     test.setTimeout(150_000);
     const member = await setupUser(browser);
     const courier = await setupUser(browser);
@@ -325,14 +325,13 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       const courierUid = await ownerUid(courier.page);
       await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
 
-      const balanceOf = (page: Page) =>
-        page.evaluate(() => {
-          const w = window as unknown as { __nerilo_test__?: { relay?: { creditBalance?: () => Promise<number> } } };
-          return w.__nerilo_test__!.relay!.creditBalance!();
-        });
-      const before = await balanceOf(courier.page);
+      const memberNodeId = await member.page.evaluate(() => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { myNodeId?: () => string } } };
+        return w.__nerilo_test__!.relay!.myNodeId!();
+      });
+      expect(memberNodeId).toBeTruthy();
 
-      // 成員寄存一筆（成員 client 帶 memberCredit → 自報身分 + 之後回簽）。
+      // 成員寄存一筆：client 先取得本地擁擠報價，再以 mesh 身分簽發「我欠此信使」的欠條。
       const record = {
         roomId: 'room-c', senderId: 'sMeter', pubKey: 'pk', seq: 1, timestamp: 3,
         content: 'ENC:metered-payload-xxxxxxxxxxxxxxxx', ttl: 3, signature: 'SIG-C', messageId: 'C',
@@ -347,27 +346,14 @@ test.describe('陌生節點站級連線（P4-B）', () => {
         { uid: courierUid, rec: record }
       );
 
-      // 信使發起計量（起草收據 → 成員回簽 → 信使驗簽後計點）。輪詢時反覆觸發，
-      // 涵蓋 IDENTIFY/回簽的非同步視窗，直到餘額增加。
-      await expect
-        .poll(
-          async () => {
-            await courier.page.evaluate(async () => {
-              const w = window as unknown as { __nerilo_test__?: { relay?: { claimCreditsNow?: () => Promise<void> } } };
-              await w.__nerilo_test__!.relay!.claimCreditsNow!();
-            });
-            return balanceOf(courier.page);
-          },
-          { timeout: 30_000, intervals: [1000] }
-        )
-        .toBeGreaterThan(before);
-
-      // 帳本仍可驗（雜湊鏈完整、無竄改）。
-      const ledgerOk = await courier.page.evaluate(async () => {
-        const w = window as unknown as { __nerilo_test__?: { relay?: { verifyLedger?: () => Promise<boolean> } } };
-        return w.__nerilo_test__!.relay!.verifyLedger!();
-      });
-      expect(ledgerOk).toBe(true);
+      // 信使只記錄 member 這個明確發票人的未結債權，不存在全網 coin balance。
+      const outstanding = await courier.page.evaluate(async (issuerNodeId) => {
+        const w = window as unknown as {
+          __nerilo_test__?: { relay?: { iouOutstanding?: (id: string) => Promise<number> } };
+        };
+        return w.__nerilo_test__!.relay!.iouOutstanding!(issuerNodeId);
+      }, memberNodeId);
+      expect(outstanding).toBeGreaterThan(0);
     } finally {
       await teardown(member, courier);
     }
