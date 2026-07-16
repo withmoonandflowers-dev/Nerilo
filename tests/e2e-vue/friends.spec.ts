@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
 import { setupUser, sendMessage, uniqueMessage, expectChatReady, teardown } from './_helpers/users';
 
 test.describe('好友 × DM', () => {
-  test('加好友、接受、DM 互通', async ({ browser }) => {
+  test('加好友、接受、DM 互通 @vue-stable', async ({ browser }) => {
     test.setTimeout(240_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

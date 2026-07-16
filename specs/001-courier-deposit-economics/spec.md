@@ -94,7 +94,7 @@ min Σ_{j∈K} p_j·q   s.t. |K| = k，對每個信使 j 的未結欠條 d_ij + 
 - [x] V2（經濟迴路）：無貢獻史身分耗盡 ε 後被拒收；完成中繼貢獻（共簽收據）並交換欠條後配額恢復。
 - [x] V3（價格收斂）：模擬固定供需下，各信使價格收斂到同一水準（一價定律），高負載漲價、低負載降價。
 - [x] V4（出走選擇權）：信使全滿/全拒時，訊息仍經成員互補最終送達（免費底線不破）。〔2026-07-16：零授信信使拒收且無代管紀錄，兩成員仍用正式 digest/select anti-entropy 原語雙向補齊〕
-- [x] V5（受影響迴歸）：core 124 files／1416 tests 全綠；SDK isolation、Nuxt typecheck/generate 綠；Vue stable 真 WebRTC+emulator 2/2 綠。
+- [x] V5（受影響迴歸）：core 124 files／1421 tests 全綠；SDK isolation、Nuxt typecheck/generate 綠；Vue stable 真 WebRTC+emulator 9/9 綠。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 

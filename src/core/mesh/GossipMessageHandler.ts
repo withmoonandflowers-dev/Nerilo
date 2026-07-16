@@ -170,7 +170,7 @@ export class GossipMessageHandler {
     timestamp?: number
   ): Promise<void> {
     // Rate limiting
-    if (!this.checkSendRate(this.userId)) {
+    if (!this.checkSendRate(this.userId, channel ?? 'chat')) {
       throw new Error('Rate limit exceeded');
     }
 
@@ -534,9 +534,12 @@ export class GossipMessageHandler {
   /**
    * 檢查發送速率
    */
-  private checkSendRate(senderId: string): boolean {
+  private checkSendRate(senderId: string, channel: NonNullable<GossipMessage['channel']>): boolean {
     const now = Date.now();
-    const timestamps = this.sendRateLimiter.get(senderId) || [];
+    // 控制面 keyx/read/reaction 與使用者 chat 分桶；否則進房時的金鑰交換／已讀水位
+    // 會偷吃 10 msg/s 的聊天額度，使合法的 10 則 burst 在第 5–9 則被拒。
+    const bucket = `${senderId}:${channel}`;
+    const timestamps = this.sendRateLimiter.get(bucket) || [];
     const recent = timestamps.filter(ts => now - ts < 1000);
 
     if (recent.length >= this.MAX_MESSAGES_PER_SECOND) {
@@ -544,7 +547,7 @@ export class GossipMessageHandler {
     }
 
     recent.push(now);
-    this.sendRateLimiter.set(senderId, recent);
+    this.sendRateLimiter.set(bucket, recent);
     return true;
   }
 

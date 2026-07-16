@@ -385,5 +385,12 @@ describe('GossipMessageHandler', () => {
       // 第 11 次應被 rate limiter 拒絕
       await expect(handler.sendMessage('message-overflow')).rejects.toThrow('Rate limit exceeded');
     });
+
+    it('keyx/read 等控制訊息不占用 chat 的 10 則額度', async () => {
+      await handler.sendMessage('key', undefined, 'keyx');
+      await handler.sendMessage('read', undefined, 'read');
+      for (let i = 0; i < 10; i++) await handler.sendMessage(`chat-${i}`);
+      await expect(handler.sendMessage('chat-overflow')).rejects.toThrow('Rate limit exceeded');
+    });
   });
 });

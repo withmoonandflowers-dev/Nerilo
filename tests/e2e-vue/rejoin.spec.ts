@@ -20,7 +20,7 @@ test.describe('Vue 版重進聊天室', () => {
   // 無自動重連）。改資料中心後：重進＝cold→syncing→live，B 重連 mesh、缺的訊息
   // 由留房者 A 經 anti-entropy 補齊（複本落地 IndexedDB, P1；內容 E2EE, keyx P2-②c）。
   // 因此無需 star 的「連線復活術」（perfect-negotiation）——那正是前兩次修復失敗處。
-  test('B 離開回 dashboard 再進房，仍收得到 A 之後發的訊息', async ({ browser }) => {
+  test('B 離開回 dashboard 再進房，仍收得到 A 之後發的訊息 @vue-stable', async ({ browser }) => {
     test.setTimeout(180_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

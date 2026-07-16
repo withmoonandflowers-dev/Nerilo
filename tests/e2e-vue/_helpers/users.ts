@@ -89,7 +89,7 @@ export async function expectChatReady(page: Page, timeoutMs = 60_000): Promise<v
 export async function sendMessage(page: Page, text: string): Promise<void> {
   const input = page.getByLabel('訊息輸入框');
   await input.fill(text);
-  await page.getByRole('button', { name: '傳送' }).click();
+  await page.getByRole('button', { name: '傳送', exact: true }).click();
   await expect(input).toHaveValue('', { timeout: 5_000 });
 }
 
