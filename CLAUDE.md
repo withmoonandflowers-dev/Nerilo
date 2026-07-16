@@ -20,6 +20,9 @@ npm run ci           # type-check + lint + unit tests
 > known pitfalls, pending-work snapshot). Shared Claude skills/commands live in `.claude/commands/` and
 > `.claude/skills/` (committed); update the handoff doc when you learn something the other machine needs.
 
+> **Current truth:** changing status, verified counts and active priorities live in
+> [docs/CURRENT-STATUS.md](docs/CURRENT-STATUS.md). Older roadmap/handoff sections are historical context.
+
 ## Tech Stack
 
 - **Frontend (production):** React 18 + TypeScript 5 + Vite 5，手寫 CSS + design tokens（variables.css）
@@ -132,4 +135,4 @@ Use `import { logger } from '@/utils/logger'` instead of `console.log`:
 - **Every PR / master push**: `ci.yml` quality gate (type-check + lint + unit tests, Node 24) + emulator-backed E2E (soft gate, `continue-on-error`)
 - **Every master push auto-deploys** hosting + Firestore rules/indexes to https://nerilo.web.app via `firebase-deploy.yml` (first successful run 2026-06-11)
 - **Cloud Functions are NOT deployed** — never were in production; first deploy requires Blaze plan + Cloud Build API (steps in PR #15). CI still compile-validates `functions/`
-- E2E in CI runs against Firebase emulators (Java 17 + cached emulator/Playwright binaries) — no live Firebase, no secrets needed
+- E2E in CI runs against Firebase emulators (Java 21 + cached emulator/Playwright binaries) — no live Firebase, no secrets needed
