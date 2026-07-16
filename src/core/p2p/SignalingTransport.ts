@@ -62,6 +62,7 @@ export type SignalingFactory = (roomId: string, channelLabel: string) => Signali
  * 內嵌邏輯逐字一致（同 collection、同 lookback 查詢、同 channelLabel 清理過濾）。
  */
 export class RoomSignalingTransport implements SignalingTransport {
+  private static readonly SIGNAL_TTL_MS = 5 * 60 * 1000;
   constructor(
     private readonly roomId: string,
     private readonly channelLabel: string
@@ -90,9 +91,16 @@ export class RoomSignalingTransport implements SignalingTransport {
   async send(data: Record<string, unknown>): Promise<void> {
     // manager 現以毫秒 number 帶 createdAt（讓其不依賴 firebase）；此處轉 Firestore Timestamp
     // 以維持既有 `where('createdAt','>=',Timestamp)` 查詢語義。
-    const payload = typeof data.createdAt === 'number'
-      ? { ...data, createdAt: Timestamp.fromMillis(data.createdAt) }
-      : data;
+    const createdAt = typeof data.createdAt === 'number'
+      ? Timestamp.fromMillis(data.createdAt)
+      : data.createdAt;
+    const payload = {
+      ...data,
+      createdAt,
+      // Firestore 原生 TTL 只能看明確到期時間；不可直接拿 createdAt 當 TTL，
+      // 否則文件一建立就已「到期」。所有新 signal 統一五分鐘後到期。
+      expiresAt: Timestamp.fromMillis(Date.now() + RoomSignalingTransport.SIGNAL_TTL_MS),
+    };
     await addDoc(this.signalsRef(), payload);
   }
 

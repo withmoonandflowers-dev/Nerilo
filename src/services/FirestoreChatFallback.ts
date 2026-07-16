@@ -20,6 +20,7 @@ import { connectionStats } from '../core/metrics/ConnectionStats';
 import type { ChatMessage } from '../types';
 
 const MESSAGES_LIMIT = 100;
+const FALLBACK_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** fallback 密文 payload（與 P2P EncryptedChatPayload.encrypted 同形） */
 export interface FallbackEncryptedContent {
@@ -57,6 +58,7 @@ export async function sendMessageViaFirestore(
     from: uid,
     ...body,
     createdAt: now,
+    expiresAt: Timestamp.fromMillis(now.toMillis() + FALLBACK_MESSAGE_TTL_MS),
     timestamp: now,
     edited: false,
     deleted: false,

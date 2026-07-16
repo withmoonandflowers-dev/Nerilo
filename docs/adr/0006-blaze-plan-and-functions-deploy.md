@@ -5,8 +5,7 @@
 
 ## Context
 
-functions/ 內已有五個寫好且通過 CI 編譯的函式（setRole、getIceServers、
-cleanupExpiredRooms、cleanupStaleSignals、cleanupExpiredInbox），但從未部署，
+functions/ 內已有可編譯的 callable 與排程清理函式，但從未部署，
 因為需要 Blaze 方案與 Cloud Build API（步驟見 PR #15）。後果：
 
 - 正式環境的過期房間、殘留信令、過期收件匣沒有任何清理，資料只進不出。
@@ -70,10 +69,14 @@ cleanupExpiredRooms、cleanupStaleSignals、cleanupExpiredInbox），但從未�
 留在免費方案。頻率限制（ADR-0005 第 2 層）隨 Blaze 一起延後，
 在此之前由 rules 結構限制 + 未公開推廣（流量可控）承接風險。
 
-**實作進度（2026-07-03）**：
+**實作進度（2026-07-16）**：
 - room 的 ttlExpireAt 已改寫為 Firestore Timestamp（RoomService 建房與加入/
   離開三處寫入點），cleanupExpiredRooms 的比較同步改 Timestamp 以備並存。
-- TTL policy 設定腳本 scripts/setup-ttl-policies.sh 已備，**需專案擁有者
+- signals、fallback/store-and-forward messages、roomRequests 與 relaySignals 的新寫入
+  均帶獨立 `expiresAt` Timestamp；rules 限制可接受的未來時間，避免 client 寫入永不到期資料。
+- TTL policy 腳本已修正為對 `expiresAt` 設定 collection-group policy，不再誤把
+  `createdAt` 當到期時間，也移除不存在的 `inbox` collection group。**仍需專案擁有者
   以具 GCP 權限的帳號手動執行一次**（CI 無 GCP 憑證無法代跑）。
-- 已知殘留：signals/messages 的 createdAt 允許 number 或 Timestamp（rules），
-  TTL policy 只對 Timestamp 生效；number 型舊文件靠自然汰換，非阻塞。
+- cleanupExpiredRoomRequests 已補齊，四個 cleanup 都從 Functions 入口匯出，且
+  Functions build 已成 CI 硬閘；但 Blaze、預算警報與斷路器未決前仍刻意不部署。
+- 舊文件若沒有 `expiresAt` 不會被原生 TTL 清除，仍靠 client cleanup 或未來一次性遷移。

@@ -164,5 +164,5 @@ jobs:
         run: |
           echo "✅ 部署完成！"
           echo "🌐 Hosting: https://nerilo.web.app"
-          echo "⚡ Functions: deployed"
+          echo "⏸️ Functions: intentionally excluded (Blaze decision pending)"
           echo "🗄️  Firestore rules + indexes: deployed"

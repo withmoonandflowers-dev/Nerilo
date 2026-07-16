@@ -12,6 +12,8 @@
 | 相依套件 CVE | Dependabot 每週自動 PR（含 /functions） | `.github/dependabot.yml` |
 | 社群 TURN metadata | 僅無自營 TURN 時啟用 + 健康探測 | `IceServerProvider`（威脅模型 F2） |
 | 殭屍房 / 活房誤殺 | 房主心跳 + TTL 過濾 | `RoomHeartbeat` |
+| 短命 Firestore 資料 | `expiresAt` rules 上限 + 原生 TTL 設定腳本 | `firestore.rules`、`scripts/setup-ttl-policies.sh` |
+| Functions 漂移 | Functions TypeScript build 為 CI 硬閘 | `.github/workflows/ci.yml` |
 
 ## 每週（多為自動）
 
@@ -21,7 +23,7 @@
 ## 每月
 
 - [ ] 看 P0 連線數據（`?metrics=1` → console）：`directSuccessRate` 掉太多代表可能被灌 TURN 或網路劣化；`fallbackMessages` 暴增代表可能有人在刷 Firestore。
-- [ ] 抽查 Firestore 用量儀表板：p2pRooms 文件數異常成長 = 可能有人在刷房（威脅模型 F1，未修）。
+- [ ] 抽查 Firestore 用量儀表板：p2pRooms 文件數或寫入異常成長 = 可能有人在刷房／信令；rules 與 TTL 只能限制形狀、大小和保留期，不能做可信總量速率限制。
 - [ ] 檢視社群 TURN 登錄檔（`public/community-turn.json`）PR 歷史，確認沒有可疑登錄。
 
 ## 上線前（每次動到安全面）
@@ -42,6 +44,6 @@
 
 ## 尚未關閉的已知風險（追蹤中）
 
-- **F1 建房無上限**：需改 rules，已開背景任務。這是目前最該補的成本型風險。
+- **F1 全域寫入速率無可信上限**：rules 已有限制結構、大小與 expiry，原生 TTL 腳本已備；跨帳戶／跨裝置的可信總量配額仍需 Blaze Functions 或其他伺服器執行點。
 - **F5 TOFU 無驗證 UI**：可加公鑰指紋比對（Signal 式 safety number）。
 - **F4 metadata**：MessagePadding（256B 分塊）dormant，未接。

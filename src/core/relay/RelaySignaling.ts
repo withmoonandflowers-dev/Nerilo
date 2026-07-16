@@ -35,6 +35,8 @@ import { logger } from '../../utils/logger';
 
 /** 回看窗：涵蓋「一方先寫 offer、另一方數分鐘內才上線訂閱」 */
 const LOOKBACK_MS = 5 * 60 * 1000;
+const RELAY_SIGNAL_TTL_MS = 5 * 60 * 1000;
+const RELAY_CHANNEL_TTL_MS = 10 * 60 * 1000;
 
 export type RelaySignalType = 'offer' | 'answer' | 'ice';
 
@@ -77,6 +79,7 @@ export class RelaySignalingChannel {
       {
         participants: [this.localUid, this.remoteUid].sort(),
         createdAt: Timestamp.now(),
+        expiresAt: Timestamp.fromMillis(Date.now() + RELAY_CHANNEL_TTL_MS),
       },
       { merge: true }
     );
@@ -89,6 +92,7 @@ export class RelaySignalingChannel {
       type,
       payload,
       createdAt: Timestamp.now(),
+      expiresAt: Timestamp.fromMillis(Date.now() + RELAY_SIGNAL_TTL_MS),
     });
   }
 
