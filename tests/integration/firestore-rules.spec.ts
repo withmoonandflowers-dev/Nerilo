@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import {
   doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  collection, serverTimestamp,
+  collection, serverTimestamp, Timestamp,
 } from 'firebase/firestore';
 import {
   clearEmulatorData,
@@ -384,8 +384,17 @@ describe(
       const { db } = await signInWithToken('member-sig', token);
       await addDoc(
         collection(db, 'p2pRooms', ROOM_ID, 'signals'),
-        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: {}, createdAt: serverTimestamp() }
+        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: {}, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300_000) }
       );
+    });
+
+    it('缺 expiresAt 的 signal 會被拒絕', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('member-sig-no-expiry', token);
+      await assertDenied(() => addDoc(
+        collection(db, 'p2pRooms', ROOM_ID, 'signals'),
+        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: {}, createdAt: serverTimestamp() }
+      ));
     });
 
     it('不可更新 signal（append-only 規則）', async () => {
@@ -450,8 +459,25 @@ describe(
         collection(db, 'p2pRooms', ROOM_ID, 'messages'),
         // createdAt 為 messages 規則的必要欄位（防 replay ±30s 窗）；production 的
         // sendMessageViaFirestore 有寫，此測試原本漏了 → 修正對齊。
-        { from: UID_MEMBER, content: 'world', createdAt: serverTimestamp(), timestamp: serverTimestamp(), edited: false, deleted: false }
+        { from: UID_MEMBER, content: 'world', createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 86_400_000), timestamp: serverTimestamp(), edited: false, deleted: false }
       );
+    });
+
+    it('超過 25 小時的 message expiresAt 會被拒絕', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('member-message-long-expiry', token);
+      await assertDenied(() => addDoc(
+        collection(db, 'p2pRooms', ROOM_ID, 'messages'),
+        {
+          from: UID_MEMBER,
+          content: 'world',
+          createdAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 26 * 60 * 60 * 1000),
+          timestamp: serverTimestamp(),
+          edited: false,
+          deleted: false,
+        }
+      ));
     });
 
     it('不可更新 message（immutable 規則）', async () => {
@@ -594,6 +620,7 @@ describe(
       await setDoc(doc(db, 'relaySignals', cid), {
         participants: [uid, UID_MEMBER].sort(),
         createdAt: serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(Date.now() + 600_000),
       });
       expect((await getDoc(doc(db, 'relaySignals', cid))).exists()).toBe(true);
     });
@@ -605,6 +632,7 @@ describe(
         setDoc(doc(db, 'relaySignals', cid), {
           participants: [UID_MEMBER, UID_STRANGER].sort(),
           createdAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 600_000),
         })
       );
     });
@@ -616,6 +644,7 @@ describe(
         setDoc(doc(db, 'relaySignals', cid), {
           participants: [uid, UID_MEMBER].sort(),
           createdAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 600_000),
         })
       );
     });
@@ -626,11 +655,13 @@ describe(
       await setDoc(doc(owner.db, 'relaySignals', cid), {
         participants: [owner.uid, UID_MEMBER].sort(),
         createdAt: serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(Date.now() + 600_000),
       });
 
       // owner 寫 offer（from==自己）→ OK
       await addDoc(collection(owner.db, 'relaySignals', cid, 'signals'), {
         from: owner.uid, type: 'offer', payload: { type: 'offer', sdp: 'x' }, createdAt: serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
       });
 
       // 對方（member）可讀 signals
@@ -642,6 +673,7 @@ describe(
       await assertDenied(() =>
         addDoc(collection(member.db, 'relaySignals', cid, 'signals'), {
           from: owner.uid, type: 'ice', payload: {}, createdAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
         })
       );
 
