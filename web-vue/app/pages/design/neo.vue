@@ -56,7 +56,7 @@ const showGame = ref(true)
 
     <Transition name="game">
       <aside v-if="showGame" class="chat__game">
-        <TicTacToePanel :bus="null" :is-initiator="true" self-id="demo" :connected="true" @close="showGame = false" />
+        <TicTacToePanel :bus="null" my-mark="X" self-id="demo" :connected="true" @close="showGame = false" />
       </aside>
     </Transition>
 
