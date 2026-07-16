@@ -105,6 +105,7 @@ export class CourierStore {
 
   /** 持久化寫入串鏈（best-effort，序列化避免競態）；flush() 可等寫入落定。 */
   private writeTail: Promise<void> = Promise.resolve();
+  private persistenceHealthy = true;
 
   constructor(
     private readonly config: CourierStoreConfig = DEFAULT_COURIER_CONFIG,
@@ -147,12 +148,15 @@ export class CourierStore {
   /** 把一個持久化寫入排進串鏈（吞錯，不影響記憶體權威）。 */
   private persist(op: () => Promise<void>): void {
     if (!this.persistence) return;
-    this.writeTail = this.writeTail.then(op).catch(() => undefined);
+    this.writeTail = this.writeTail.then(op).catch(() => {
+      this.persistenceHealthy = false;
+    });
   }
 
   /** 等所有排入的持久化寫入落定（測試/關頁前確保耐久）。 */
-  async flush(): Promise<void> {
+  async flush(): Promise<boolean> {
     await this.writeTail;
+    return this.persistenceHealthy;
   }
 
   /**
@@ -230,6 +234,25 @@ export class CourierStore {
   /** 房內是否已有 (senderId, seq)——供 anti-entropy 判斷 peer 缺哪筆。 */
   has(roomId: string, senderId: string, seq: number): boolean {
     return this.rooms.get(roomId)?.senders.get(senderId)?.has(seq) ?? false;
+  }
+
+  /**
+   * 撤回單筆剛接受的寄存。供「紀錄已進記憶體，但經濟狀態無法耐久」時補償回滾；
+   * 一併修正容量／寄存者會計與耐久鏡像。不存在時為 no-op。
+   */
+  removeRecord(roomId: string, senderId: string, seq: number): boolean {
+    const room = this.rooms.get(roomId);
+    const seqs = room?.senders.get(senderId);
+    const record = seqs?.get(seq);
+    if (!room || !seqs || !record) return false;
+    seqs.delete(seq);
+    if (seqs.size === 0) room.senders.delete(senderId);
+    if (room.senders.size === 0) this.rooms.delete(roomId);
+    room.bytes -= record.bytes;
+    this.totalBytes -= record.bytes;
+    this.addSigner(senderId, -record.bytes);
+    this.persist(() => this.persistence!.deleteRecord(roomId, senderId, seq));
+    return true;
   }
 
   /**

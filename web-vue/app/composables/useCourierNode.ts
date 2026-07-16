@@ -30,6 +30,7 @@ import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
 import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
 import { ecdsaSigner } from '@legacy/core/relay/CourierReceipts'
 import { CourierIOUBook } from '@legacy/core/incentive/CourierIOU'
+import { getCourierIOUReplicaStore } from '@legacy/services/CourierIOUReplicaStore'
 import {
   RoomAdvertCache,
   attachRoomDirectory,
@@ -276,7 +277,10 @@ export function useCourierNode() {
       try {
         const pubKey = await identity.exportPublicKey()
         const sign = ecdsaSigner(identity.getPrivateKey())
-        iouBook = new CourierIOUBook(nodeId, sign)
+        iouBook = new CourierIOUBook(
+          nodeId, sign, undefined, undefined, getCourierIOUReplicaStore() ?? undefined, pubKey
+        )
+        await iouBook.hydrate()
         memberCredit = { nodeId, pubKey, sign }
       } catch {
         return // 身分/欠條簿失敗 → 不提供寄存，避免繞過 per-發票人額度

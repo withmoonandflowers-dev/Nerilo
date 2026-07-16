@@ -7,7 +7,7 @@
 
 ## 1. 目的與範圍
 
-定義盲信使寄存報價、寄存欠條、第三方服務欠條交換與本人結清的 JSON 線上格式。定價函式、授信上限、欠條交換匯率、儲存淘汰與持久化方式由各信使自行決定。
+定義盲信使寄存報價、寄存欠條、第三方服務欠條交換與本人結清的 JSON 線上格式。定價函式、授信上限、欠條交換匯率與儲存淘汰方式由各信使自行決定；參考實作的本機耐久語義見 Spec 004。
 
 本協議不定義 coin、全網餘額、鑄造、共識或法幣兌換，也不改變免費的成員間 anti-entropy。
 
@@ -77,7 +77,7 @@
 }
 ```
 
-`deposit-ack` 成功至少含 `{ "accepted": true }`。拒收 reason 為 `identity-required`、`quote-required`、`quote-expired`、`quote-mismatch`、`invalid-iou`、`insufficient-credit`、`duplicate-iou`，或既有 CourierStore 拒收原因。只有欠條驗證及 store 寄存都成功才可留存債權；store 拒收時必須回滾欠條。
+`deposit-ack` 成功至少含 `{ "accepted": true }`。拒收 reason 為 `identity-required`、`quote-required`、`quote-expired`、`quote-mismatch`、`invalid-iou`、`insufficient-credit`、`duplicate-iou`、`persistence-failed`，或既有 CourierStore 拒收原因。只有欠條驗證、store 寄存與已配置的耐久層都成功才可 ACK；任一失敗必須回滾紀錄與欠條。
 
 ### 3.3 服務欠條轉讓與本人結清
 
@@ -105,7 +105,7 @@
 }
 ```
 
-成功 `repay-ack` 為 `{ "accepted": true, "settledAmount": number, "recipientSig": string }`。失敗 reason 為 `invalid-settlement`、`invalid-transfer`、`unknown-iou`、`amount-too-low` 或 `replayed-contribution`。
+成功 `repay-ack` 為 `{ "accepted": true, "settledAmount": number, "recipientSig": string }`。失敗 reason 為 `invalid-settlement`、`invalid-transfer`、`unknown-iou`、`amount-too-low`、`replayed-contribution` 或 `persistence-failed`。
 
 ## 4. 密碼學語義
 
@@ -166,4 +166,4 @@
 - `src/core/relay/CongestionPricing.ts`：非規範性的本地定價參考。
 - `tests/unit/CourierIOU.spec.ts`、`tests/unit/CourierService.spec.ts`：C1–C7 可執行證據。
 
-已知邊界：參考債權簿仍是記憶體狀態；重啟持久化、備份與多裝置復原未納入 v1。
+已知邊界：參考債權簿已在同一瀏覽器以 IndexedDB 耐久化並於重載逐筆重驗；報價因短命且單次使用不保存。跨裝置備份、私鑰復原與多裝置合併未納入 v1。

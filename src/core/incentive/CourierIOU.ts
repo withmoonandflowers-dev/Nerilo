@@ -70,6 +70,26 @@ export interface AcceptedContributionIOU extends ContributionTransferDraft {
   acceptedAt: number;
 }
 
+export interface PersistedDepositClaim {
+  iou: DepositIOU;
+  issuerPubKey: string;
+}
+
+/** 欠條簿耐久快照；quotes 短命且單次使用，刻意不跨重載保存。 */
+export interface CourierIOUSnapshot {
+  version: 1;
+  ownerNodeId: string;
+  claims: PersistedDepositClaim[];
+  acceptedContributions: AcceptedContributionIOU[];
+  currentStoragePrice: number;
+  lastPriceUpdateAt: number | null;
+}
+
+export interface CourierIOUPersistence {
+  load(ownerNodeId: string): Promise<CourierIOUSnapshot | null>;
+  save(snapshot: CourierIOUSnapshot): Promise<void>;
+}
+
 export interface CourierIOUBookConfig {
   /** 每個發票人可對本信使開出的未結欠條上限（冷啟動 epsilon）。 */
   creditLimitPerIssuer: number;
@@ -99,7 +119,7 @@ export type IOUAcceptResult =
 
 export type IOURepayResult =
   | { accepted: true; settledAmount: number; recipientSig: string }
-  | { accepted: false; reason: 'invalid-settlement' | 'invalid-transfer' | 'unknown-iou' | 'amount-too-low' | 'replayed-contribution' };
+  | { accepted: false; reason: 'invalid-settlement' | 'invalid-transfer' | 'unknown-iou' | 'amount-too-low' | 'replayed-contribution' | 'persistence-failed' };
 
 function depositCanonical(iou: Omit<DepositIOU, 'issuerSig'>): string {
   return JSON.stringify([
@@ -183,16 +203,21 @@ export async function createRepaymentRequest(
 /** 一個信使持有的欠條簿。它不宣稱有全網餘額，只對自己接受的債權作權威判斷。 */
 export class CourierIOUBook {
   private readonly quotes = new Map<string, DepositQuote>();
-  private readonly claims = new Map<string, DepositIOU>();
+  private readonly claims = new Map<string, PersistedDepositClaim>();
   private readonly acceptedContributions = new Map<string, AcceptedContributionIOU>();
   private currentStoragePrice: number;
   private lastPriceUpdateAt: number | null = null;
+  private revision = 0;
+  private persistedRevision = 0;
+  private persistenceTail: Promise<void> = Promise.resolve();
 
   constructor(
     readonly ownerNodeId: string,
     private readonly ownerSign: SignFn,
     private readonly config: CourierIOUBookConfig = DEFAULT_COURIER_IOU_CONFIG,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly persistence?: CourierIOUPersistence,
+    private readonly ownerPubKey?: string,
   ) {
     this.currentStoragePrice = config.initialStoragePrice;
   }
@@ -228,7 +253,7 @@ export class CourierIOUBook {
   outstanding(issuerNodeId: string): number {
     let total = 0;
     for (const claim of this.claims.values()) {
-      if (claim.issuerNodeId === issuerNodeId) total += claim.amount;
+      if (claim.iou.issuerNodeId === issuerNodeId) total += claim.iou.amount;
     }
     return total;
   }
@@ -239,8 +264,8 @@ export class CourierIOUBook {
 
   activeClaimIds(issuerNodeId: string): string[] {
     return [...this.claims.values()]
-      .filter((claim) => claim.issuerNodeId === issuerNodeId)
-      .map((claim) => claim.iouId);
+      .filter((claim) => claim.iou.issuerNodeId === issuerNodeId)
+      .map((claim) => claim.iou.iouId);
   }
 
   async acceptDepositIOU(iou: DepositIOU, issuerPubKey: string): Promise<IOUAcceptResult> {
@@ -264,14 +289,116 @@ export class CourierIOUBook {
     if (this.outstanding(iou.issuerNodeId) + iou.amount > this.config.creditLimitPerIssuer) {
       return { accepted: false, reason: 'insufficient-credit' };
     }
-    this.claims.set(iou.iouId, iou);
+    this.claims.set(iou.iouId, { iou, issuerPubKey });
+    this.revision++;
     this.quotes.delete(iou.quoteId); // 單次報價，防重放
     return { accepted: true, amount: iou.amount };
   }
 
   /** store 在欠條接受後意外拒收時回滾，避免收債卻沒提供服務。 */
   rollbackDepositIOU(iouId: string): void {
-    this.claims.delete(iouId);
+    if (this.claims.delete(iouId)) this.revision++;
+  }
+
+  private snapshot(): CourierIOUSnapshot {
+    return {
+      version: 1,
+      ownerNodeId: this.ownerNodeId,
+      claims: [...this.claims.values()],
+      acceptedContributions: [...this.acceptedContributions.values()],
+      currentStoragePrice: this.currentStoragePrice,
+      lastPriceUpdateAt: this.lastPriceUpdateAt,
+    };
+  }
+
+  /**
+   * 把目前債權狀態耐久化。注入 persistence 時失敗回 false，讓 CourierServer fail-closed
+   * 撤回剛存的紀錄；未注入時維持純記憶體模式並視為成功。
+   */
+  async flush(): Promise<boolean> {
+    if (!this.persistence || this.persistedRevision >= this.revision) return true;
+    const targetRevision = this.revision;
+    let ok = true;
+    this.persistenceTail = this.persistenceTail.then(async () => {
+      if (this.persistedRevision >= targetRevision) return;
+      try {
+        const savedRevision = this.revision;
+        await this.persistence!.save(this.snapshot());
+        this.persistedRevision = savedRevision;
+      } catch {
+        ok = false;
+      }
+    });
+    await this.persistenceTail;
+    return ok && this.persistedRevision >= targetRevision;
+  }
+
+  /** 從本機耐久層恢復；逐張重驗 issuer 身分與簽章，壞資料跳過並以乾淨快照覆寫。 */
+  async hydrate(): Promise<void> {
+    if (!this.persistence) return;
+    let snapshot: CourierIOUSnapshot | null;
+    try {
+      snapshot = await this.persistence.load(this.ownerNodeId);
+    } catch {
+      return;
+    }
+    if (!snapshot || snapshot.version !== 1 || snapshot.ownerNodeId !== this.ownerNodeId) return;
+
+    this.claims.clear();
+    this.acceptedContributions.clear();
+    const issuerTotals = new Map<string, number>();
+    const persistedClaims = Array.isArray(snapshot.claims) ? snapshot.claims : [];
+    for (const persisted of persistedClaims) {
+      try {
+        const { iou, issuerPubKey } = persisted;
+        if (iou.holderNodeId !== this.ownerNodeId || !Number.isFinite(iou.amount) || iou.amount <= 0) continue;
+        if (this.claims.has(iou.iouId) || !(await pubKeyBindsNodeId(iou.issuerNodeId, issuerPubKey))) continue;
+        const verify = await ecdsaVerifier(issuerPubKey);
+        const { issuerSig, ...unsigned } = iou;
+        if (!(await verify(depositCanonical(unsigned), issuerSig))) continue;
+        const next = (issuerTotals.get(iou.issuerNodeId) ?? 0) + iou.amount;
+        if (next > this.config.creditLimitPerIssuer) continue;
+        issuerTotals.set(iou.issuerNodeId, next);
+        this.claims.set(iou.iouId, persisted);
+      } catch {
+        // 單筆壞公鑰／形狀不拖垮整本恢復。
+      }
+    }
+
+    const persistedContributions = Array.isArray(snapshot.acceptedContributions)
+      ? snapshot.acceptedContributions : [];
+    for (const contribution of persistedContributions) {
+      try {
+        const transferText = transferCanonical(contribution);
+        if (
+          contribution.toHolderNodeId !== this.ownerNodeId ||
+          this.acceptedContributions.has(contribution.receipt.nonce) ||
+          !(await verifyCoSignedReceipt(contribution.receipt, contribution.holderPubKey, contribution.issuerPubKey))
+        ) continue;
+        const [issuerVerify, holderVerify] = await Promise.all([
+          ecdsaVerifier(contribution.issuerPubKey), ecdsaVerifier(contribution.holderPubKey),
+        ]);
+        if (!(await issuerVerify(transferText, contribution.issuerSig)) ||
+            !(await holderVerify(transferText, contribution.holderSig))) continue;
+        // 沒有 owner 公鑰就無法證明新 holder 曾同意；寧可不恢復防重放狀態，
+        // 不把可被竄改的本機 JSON 當成第三方同意的證據。
+        if (!this.ownerPubKey || !(await pubKeyBindsNodeId(this.ownerNodeId, this.ownerPubKey))) continue;
+        const ownerVerify = await ecdsaVerifier(this.ownerPubKey);
+        if (!(await ownerVerify(transferText, contribution.recipientSig))) continue;
+        this.acceptedContributions.set(contribution.receipt.nonce, contribution);
+      } catch {
+        // 壞資料跳過。
+      }
+    }
+
+    if (Number.isFinite(snapshot.currentStoragePrice) && snapshot.currentStoragePrice > 0) {
+      this.currentStoragePrice = snapshot.currentStoragePrice;
+    }
+    this.lastPriceUpdateAt = typeof snapshot.lastPriceUpdateAt === 'number'
+      ? snapshot.lastPriceUpdateAt : null;
+    this.revision = 1;
+    this.persistedRevision = 0;
+    await this.flush(); // 清除被跳過的損壞／超額資料。
   }
 
   /**
@@ -321,24 +448,32 @@ export class CourierIOUBook {
     if (!issuerConsent || !holderConsent) return { accepted: false, reason: 'invalid-transfer' };
 
     let settledAmount = 0;
-    const claims: DepositIOU[] = [];
+    const claims: PersistedDepositClaim[] = [];
     for (const id of [...new Set(req.depositIouIds)]) {
-      const claim = this.claims.get(id);
+      const persisted = this.claims.get(id);
+      const claim = persisted?.iou;
       if (!claim || claim.issuerNodeId !== req.debtorNodeId) {
         return { accepted: false, reason: 'unknown-iou' };
       }
-      claims.push(claim);
+      claims.push(persisted!);
       settledAmount += claim.amount;
     }
     if (transfer.amount < settledAmount) return { accepted: false, reason: 'amount-too-low' };
 
     const recipientSig = await this.ownerSign(transferText);
-    for (const claim of claims) this.claims.delete(claim.iouId);
+    for (const claim of claims) this.claims.delete(claim.iou.iouId);
     this.acceptedContributions.set(transfer.receipt.nonce, {
       ...transfer,
       recipientSig,
       acceptedAt: this.now(),
     });
+    this.revision++;
+    if (!(await this.flush())) {
+      this.acceptedContributions.delete(transfer.receipt.nonce);
+      for (const claim of claims) this.claims.set(claim.iou.iouId, claim);
+      this.revision++;
+      return { accepted: false, reason: 'persistence-failed' };
+    }
     return { accepted: true, settledAmount, recipientSig };
   }
 }

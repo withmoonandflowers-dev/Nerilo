@@ -16,6 +16,8 @@ import {
   createDepositIOU,
   createContributionTransferDraft,
   createRepaymentRequest,
+  type CourierIOUPersistence,
+  type CourierIOUSnapshot,
   type CourierIOUBookConfig,
 } from '../../src/core/incentive/CourierIOU';
 import { createReceiptDraft, counterSign } from '../../src/core/incentive/CoSignedReceipt';
@@ -81,6 +83,15 @@ function credit(n: Awaited<ReturnType<typeof node>>): CourierCreditConfig {
 
 function member(n: Awaited<ReturnType<typeof node>>): MemberCreditConfig {
   return { nodeId: n.nodeId, pubKey: n.pubKey, sign: n.sign };
+}
+
+function iouPersistence(initial: CourierIOUSnapshot | null = null) {
+  let snapshot = initial ? structuredClone(initial) : null;
+  const persistence: CourierIOUPersistence = {
+    async load() { return snapshot ? structuredClone(snapshot) : null; },
+    async save(next) { snapshot = structuredClone(next); },
+  };
+  return { persistence, snapshot: () => snapshot ? structuredClone(snapshot) : null };
 }
 
 describe('Courier IOU — T3 報價、欠條與拒收', () => {
@@ -256,6 +267,96 @@ describe('Courier IOU — T5 垃圾寄存攻擊模擬', () => {
     expect(rejected).toBe(19);
     expect(store.serveRoom('honest')).toHaveLength(1);
     expect(store.stats().recordCount).toBe(2);
+  });
+});
+
+describe('Courier IOU — 債權簿持久化與重載復原', () => {
+  it('重載後未結欠條與 epsilon 不歸零', async () => {
+    const courier = await node();
+    const issuer = await node();
+    const durable = iouPersistence();
+    const book1 = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 1000, durable.persistence, courier.pubKey);
+    const quote1 = book1.issueQuote(issuer.nodeId, 100, 0);
+    const iou1 = await createDepositIOU(quote1, 1000, issuer.sign, 'persist-1');
+    expect(await book1.acceptDepositIOU(iou1, issuer.pubKey)).toMatchObject({ accepted: true });
+    expect(await book1.flush()).toBe(true);
+
+    const book2 = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 2000, durable.persistence, courier.pubKey);
+    await book2.hydrate();
+    expect(book2.outstanding(issuer.nodeId)).toBe(quote1.amount);
+
+    const quote2 = book2.issueQuote(issuer.nodeId, 1000, 0);
+    const iou2 = await createDepositIOU(quote2, 2000, issuer.sign, 'persist-2');
+    expect(await book2.acceptDepositIOU(iou2, issuer.pubKey))
+      .toEqual({ accepted: false, reason: 'insufficient-credit' });
+  });
+
+  it('hydrate 重驗簽章，損壞的持久欠條會被清除', async () => {
+    const courier = await node();
+    const issuer = await node();
+    const durable = iouPersistence();
+    const book1 = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 1000, durable.persistence, courier.pubKey);
+    const quote = book1.issueQuote(issuer.nodeId, 100, 0);
+    const iou = await createDepositIOU(quote, 1000, issuer.sign, 'valid-before-corruption');
+    await book1.acceptDepositIOU(iou, issuer.pubKey);
+    await book1.flush();
+    const corrupted = durable.snapshot()!;
+    corrupted.claims[0]!.iou.issuerSig = 'corrupted';
+    const damaged = iouPersistence(corrupted);
+
+    const restored = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 2000, damaged.persistence, courier.pubKey);
+    await restored.hydrate();
+    expect(restored.outstanding(issuer.nodeId)).toBe(0);
+    expect(damaged.snapshot()?.claims).toEqual([]);
+  });
+
+  it('欠條快照寫入失敗時拒收並撤回已存紀錄', async () => {
+    const courier = await node();
+    const issuer = await node();
+    const failing: CourierIOUPersistence = {
+      async load() { return null; },
+      async save() { throw new Error('disk full'); },
+    };
+    const book = new CourierIOUBook(courier.nodeId, courier.sign, config(), () => 1000, failing, courier.pubKey);
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    new CourierServer(courierBus, store, 'courier-uid', undefined, credit(courier), book).start();
+    const client = new CourierClient(memberBus, 'member-uid', 3000, member(issuer));
+    client.start();
+
+    expect(await client.deposit(rec())).toEqual({ accepted: false, reason: 'persistence-failed' });
+    expect(store.stats().recordCount).toBe(0);
+    expect(book.outstanding(issuer.nodeId)).toBe(0);
+  });
+
+  it('已接受服務欠條的防重放狀態跨重載保留', async () => {
+    const courier = await node();
+    const debtor = await node();
+    const beneficiary = await node();
+    const durable = iouPersistence();
+    const cfg = config();
+    const book1 = new CourierIOUBook(courier.nodeId, courier.sign, cfg, () => 1000, durable.persistence, courier.pubKey);
+    const quote = book1.issueQuote(debtor.nodeId, 100, 0);
+    const deposit = await createDepositIOU(quote, 1000, debtor.sign, 'deposit-replay');
+    await book1.acceptDepositIOU(deposit, debtor.pubKey);
+    const bytes = Math.round(quote.amount / cfg.contributionPricePerByte);
+    const receipt = await counterSign(
+      await createReceiptDraft(debtor.nodeId, beneficiary.nodeId, bytes, 900, 'durable-service', debtor.sign),
+      beneficiary.sign,
+    );
+    const amount = Math.ceil(bytes * cfg.contributionPricePerByte * 1_000_000) / 1_000_000;
+    const transfer = await createContributionTransferDraft(
+      receipt, beneficiary.pubKey, debtor.pubKey, courier.nodeId, amount,
+      beneficiary.sign, debtor.sign, 'durable-transfer',
+    );
+    const repayment = await createRepaymentRequest(
+      debtor.nodeId, debtor.pubKey, [deposit.iouId], transfer, debtor.sign,
+    );
+    expect(await book1.repay(repayment)).toMatchObject({ accepted: true });
+
+    const book2 = new CourierIOUBook(courier.nodeId, courier.sign, cfg, () => 2000, durable.persistence, courier.pubKey);
+    await book2.hydrate();
+    expect(await book2.repay(repayment)).toEqual({ accepted: false, reason: 'replayed-contribution' });
   });
 });
 

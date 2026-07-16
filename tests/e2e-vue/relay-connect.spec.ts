@@ -261,6 +261,10 @@ test.describe('陌生節點站級連線（P4-B）', () => {
     try {
       const courierUid = await ownerUid(courier.page);
       await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
+      await expect.poll(async () => member.page.evaluate(() => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { myNodeId?: () => string } } };
+        return w.__nerilo_test__?.relay?.myNodeId?.() ?? '';
+      }), { timeout: 20_000 }).not.toBe('');
 
       // 取成員的 mesh 身分（nodeId=senderId），構造一筆「本人貢獻」的紀錄寄存給信使
       // → 信使 store 有此 senderId，房籍驗證才成立。nodeId 由 IdentityManager 非同步導出 → 輪詢。
@@ -295,6 +299,16 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await expect
         .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 20_000, intervals: [500] })
         .toBeGreaterThanOrEqual(1);
+      const issuerNodeId = await member.page.evaluate(() => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { myNodeId?: () => string } } };
+        return w.__nerilo_test__!.relay!.myNodeId!();
+      });
+      await expect.poll(() => courier.page.evaluate(async (id) => {
+        const w = window as unknown as {
+          __nerilo_test__?: { relay?: { iouOutstanding?: (nodeId: string) => Promise<number> } };
+        };
+        return w.__nerilo_test__?.relay?.iouOutstanding?.(id) ?? 0;
+      }, issuerNodeId), { timeout: 20_000 }).toBeGreaterThan(0);
 
       // 成員以房籍身分真簽墓碑 → 送給信使 → 信使盲驗（簽章 + senderId∈store）通過 → 刪整房。
       const freed = await member.page.evaluate(
@@ -366,6 +380,10 @@ test.describe('陌生節點站級連線（P4-B）', () => {
     try {
       const courierUid = await ownerUid(courier.page);
       await expect(member.page.getByTestId('online-node-count')).toBeVisible({ timeout: 40_000 });
+      const issuerNodeId = await member.page.evaluate(() => {
+        const w = window as unknown as { __nerilo_test__?: { relay?: { myNodeId?: () => string } } };
+        return w.__nerilo_test__!.relay!.myNodeId!();
+      });
 
       // 成員寄存一筆到信使 → 信使存進 CourierStore 並鏡像 IndexedDB。
       const record = {
@@ -397,6 +415,12 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       await expect
         .poll(() => courierStats(courier.page).then((s) => s.recordCount), { timeout: 30_000, intervals: [800] })
         .toBeGreaterThanOrEqual(1);
+      await expect.poll(() => courier.page.evaluate(async (id) => {
+        const w = window as unknown as {
+          __nerilo_test__?: { relay?: { iouOutstanding?: (nodeId: string) => Promise<number> } };
+        };
+        return w.__nerilo_test__?.relay?.iouOutstanding?.(id) ?? 0;
+      }, issuerNodeId), { timeout: 30_000, intervals: [800] }).toBeGreaterThan(0);
     } finally {
       await teardown(member, courier);
     }
