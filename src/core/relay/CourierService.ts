@@ -66,7 +66,7 @@ export const CourierMsgType = {
 
 export type CourierDepositResult =
   | DepositResult
-  | { accepted: false; reason: 'identity-required' | 'quote-required' | 'quote-expired' | 'quote-mismatch' | 'invalid-iou' | 'insufficient-credit' | 'duplicate-iou' };
+  | { accepted: false; reason: 'identity-required' | 'quote-required' | 'quote-expired' | 'quote-mismatch' | 'invalid-iou' | 'insufficient-credit' | 'duplicate-iou' | 'persistence-failed' };
 
 /** 成員自報 mesh 身分（供信使起草可驗收據）。 */
 interface IdentifyPayload {
@@ -290,7 +290,19 @@ export class CourierServer {
               break;
             }
             result = this.store.deposit(rec);
-            if (!result.accepted) this.iouBook.rollbackDepositIOU(priced.iou.iouId);
+            if (!result.accepted) {
+              this.iouBook.rollbackDepositIOU(priced.iou.iouId);
+            } else {
+              // 保守提交順序：先讓密文紀錄耐久，再讓債權耐久，最後才 ACK。
+              // 任何失敗都撤回兩邊，避免收債沒服務或重載後出現幽靈債務。
+              const recordDurable = await this.store.flush();
+              if (!recordDurable || !(await this.iouBook.flush())) {
+                this.iouBook.rollbackDepositIOU(priced.iou.iouId);
+                this.store.removeRecord(rec.roomId, rec.senderId, rec.seq);
+                await this.store.flush();
+                result = { accepted: false, reason: 'persistence-failed' };
+              }
+            }
           } else {
             rec = env.payload as GossipMessage;
             result = this.store.deposit(rec);
