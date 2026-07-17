@@ -87,7 +87,7 @@ SignalEnvelope = {
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1：`SignalEnvelope` 純模組（sign+ECDH 加密 / verify+解密）＋單元＋property（任意 SDP 往返一致、異金鑰解不開、竄改必被抓）。
+- [x] T1：`SignalEnvelope` 純模組（sign+ECDH 加密 / verify+解密）。〔2026-07-16：src/core/p2p/SignalEnvelope.ts；HKDF 域分離（signal-relay-v1）；deriveSharedSecret 加可選 domain 參數（預設值向後相容，keyx 47 測試不變）；9 tests 含 property 60 runs：往返/介紹人讀不到/改密文或 metadata 或偽造簽章皆被拒/轉錯對象拒。〕
 - [ ] T2 ⚠：`PeerRelaySignalingTransport`（承載 mesh bus ns=sigrelay，介紹人只轉 `to` 密文）＋記憶體多節點：A↔B 連上，C 經 B 中繼連到 A，斷言 B 讀不到 SDP。
 - [ ] T3 ⚠：傳輸選擇器接進連線流（warm 優先、無介紹人走 Firestore、warm 失敗退回）；受影響連線 e2e 迴歸。
 - [ ] T4：邀請連結帶會合資訊（roomId+金鑰+邀請者身分）＋解析；被邀請者指名邀請者為首個目標。
