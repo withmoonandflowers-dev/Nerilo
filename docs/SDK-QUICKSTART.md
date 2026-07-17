@@ -24,13 +24,13 @@ npm install nerilo
 
 ```ts
 import {
-  createChatClient,
   InMemorySignalingHub,
   InMemorySignalingTransport,
   InMemoryRoomDirectory,
   InMemoryRoomDirectoryHub,
   InMemoryChatStorage,
 } from 'nerilo';
+import { createChatClient } from 'nerilo/firestore'; // turnkey 工廠在 subpath
 
 // 同一顆 hub 給同頁的多個 client 共用，就能在單一 JS context 內互通。
 const sigHub = new InMemorySignalingHub();
@@ -88,7 +88,7 @@ await client.dispose();
 省略三個後端參數，`initialize()` 會載入預設 Firestore/IndexedDB。需要你的環境已初始化 Firebase。
 
 ```ts
-import { createFirestoreChatClient } from 'nerilo';
+import { createFirestoreChatClient } from 'nerilo/firestore';
 
 const client = await createFirestoreChatClient({ roomId: 'r1', userId: 'alice' });
 await client.connect();
@@ -99,7 +99,8 @@ await client.connect();
 實作 `SignalingTransport`（把 publish/subscribe 換成你的 WebSocket 收送即可，形狀照 `InMemorySignalingTransport`），選擇性再換 `IRoomDirectory` 與 `IChatStorage`，注入 `createChatClient`。API 完全不變。
 
 ```ts
-import { createChatClient, type SignalingTransport } from 'nerilo';
+import { createChatClient } from 'nerilo/firestore';
+import type { SignalingTransport } from 'nerilo';
 
 class WsSignaling implements SignalingTransport {
   // subscribe / send / cleanupOlderThan / cleanupOwn
