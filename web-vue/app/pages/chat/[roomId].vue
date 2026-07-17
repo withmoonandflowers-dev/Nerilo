@@ -6,6 +6,7 @@ import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { readIntroducerHint } from '~/lib/introducerHint'
+import { consumeOpenGameFlag } from '~/lib/gameRoomFlag'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
 import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
 import { sendDecisionFor, type EncryptionState } from '@legacy/features/chat/encryptionGate'
@@ -114,6 +115,12 @@ function startReply(msg: ChatMessage) {
 /** 房間成員數（reactive，供模板閘控：遊戲 2+ 人房、mesh 橫幅僅 3+ 人房） */
 const memberCount = ref(0)
 
+// 遊戲室（Spec 006 T3）：建房旗標 → gameBus 就緒且滿 2 人即自動開面板（一次性）
+watchEffect(() => {
+  if (!gameBus.value || memberCount.value < 2 || showGame.value) return
+  if (consumeOpenGameFlag(roomId.value)) showGame.value = true
+})
+
 // ── 遊戲座位（3–5 人房：2 人對戰、其餘觀戰；2 人房非房主自動入座）──
 const { role: seatRole, canSit, releaseSeat, claimSeat } = useGameSeats(
   gameBus,
@@ -129,10 +136,6 @@ const gomokuMark = computed<'B' | 'W' | null>(() =>
   seatRole.value === 'first' ? 'B' : seatRole.value === 'second' ? 'W' : null
 )
 
-const { theme, cycleTheme } = useTheme()
-const themeLabel = computed(
-  () => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value]
-)
 const peerTyping = ref(false)
 const inputValue = ref('')
 const isNearBottom = ref(true)
@@ -581,13 +584,6 @@ async function leaveRoom() {
         <p class="chat__status" :class="`chat__status--${connectionState}`">{{ statusText }}</p>
       </div>
       <div class="chat__head-actions">
-        <button
-          type="button"
-          class="chat__action"
-          :aria-label="`切換主題（目前 ${themeLabel}）`"
-          :title="`主題：${themeLabel}`"
-          @click="cycleTheme"
-        >◐</button>
         <button
           v-if="gameBus && memberCount >= 2"
           type="button"

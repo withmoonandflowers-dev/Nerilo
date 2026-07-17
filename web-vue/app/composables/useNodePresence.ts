@@ -49,6 +49,16 @@ export function useNodePresence() {
     }
     await tick()
     timer = setInterval(() => void tick(), HEARTBEAT_MS)
+
+    // test mode 曝露（Spec 006 T2：dashboard 的節點數顯示已砍，機制照跑）：
+    // e2e 改由此斷言「互相發現」；production 無 __nerilo_test__ → 不暴露。
+    const w = globalThis as unknown as { __nerilo_test__?: { presence?: Record<string, unknown> } }
+    if (w.__nerilo_test__) {
+      w.__nerilo_test__.presence = {
+        peerCount: () => peerCount.value,
+        announcing: () => announcing.value,
+      }
+    }
   }
 
   async function stop() {

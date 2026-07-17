@@ -7,22 +7,21 @@ import { localTimezone, timezoneToLatLng } from '@legacy/utils/geo'
 import type { P2PRoom, RoomMemberState } from '@legacy/types'
 import { featureLog } from '@legacy/utils/featureLog'
 import { gradientFor, initialFor } from '~/lib/avatar'
+import { markOpenGameFlag } from '~/lib/gameRoomFlag'
 
 const { user, loading, logout } = useAuth()
 const { error: toastError, success } = useToast()
-const { balance, relayActive, ensureInit } = useCredits()
-// 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護，並看得到其他在線節點數。
-const { peerCount, announcing, start: startPresence, stop: stopPresence } = useNodePresence()
+// 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護。
+// Spec 006 T2：中繼點數卡與節點數顯示已砍——機制照跑（網路健康度非首頁資訊），
+// e2e 觀測改走 __nerilo_test__.presence。
+const { start: startPresence, stop: stopPresence } = useNodePresence()
 // 盲信使節點（ADR-0023 P4-C）：信使角色 always-on + 成員背景備份；預設參與、可關。
 const {
   start: startCourierNode,
   stop: stopCourierNode,
   tombstoneRoom,
   setRoomAdvertSource,
-  roomDirectory,
 } = useCourierNode()
-const { theme, cycleTheme } = useTheme()
-const themeLabel = computed(() => ({ neo: 'NEO', light: '亮', dark: '暗' })[theme.value])
 
 const myRooms = ref<P2PRoom[]>([])
 const memberStates = ref<Record<string, RoomMemberState>>({})
@@ -80,9 +79,6 @@ const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
 
 let unsubMine: (() => void) | null = null
 let unsubFriends: (() => void) | null = null
-// P2P 房間目錄：其他節點經 relay bus 廣播來的簽章公開房（不經 Firestore 大廳查詢）
-const p2pRooms = shallowRef<import('@legacy/core/relay/RoomDirectoryGossip').RoomAdvert[]>([])
-let unsubRoomDir: (() => void) | null = null
 const friendships = ref<Friendship[]>([])
 /** 待我接受的邀請數（header 徽章） */
 const pendingCount = computed(
@@ -95,10 +91,9 @@ watchEffect(() => {
   if (unsubMine) return
   const uid = user.value.uid
   featureLog('dashboard', 'init', { uid })
-  ensureInit() // 點數餘額載入（中繼狀態指示）
-  void startPresence(uid) // 宣告本節點在線可守護 + 週期查在線節點數
+  void startPresence(uid) // 宣告本節點在線可守護（顯示已砍，機制照跑）
   startCourierNode(uid) // 盲信使：接受寄存 + 背景備份自己房間（預設參與，可關）
-  // P2P 房間目錄：廣播「我的公開房」給連上的節點；收到別人的入 p2pRooms
+  // P2P 房間目錄：繼續廣播「我的公開房」給連上的節點（顯示已砍，網路公民責任照盡）
   setRoomAdvertSource(() =>
     myRooms.value
       .filter((r) => !r.isPrivate && r.status !== 'closed' && r.kind !== 'dm')
@@ -108,9 +103,6 @@ watchEffect(() => {
         participantCount: r.participants.length,
       }))
   )
-  unsubRoomDir = roomDirectory.onChange(() => {
-    p2pRooms.value = roomDirectory.list().filter((ad) => ad.ownerUid !== uid) // 自己的房不用看廣告
-  })
   unsubFriends = FriendService.subscribeFriendships(uid, (list) => {
     friendships.value = list
   })
@@ -129,7 +121,6 @@ watchEffect(() => {
 onUnmounted(() => {
   unsubMine?.()
   unsubFriends?.()
-  unsubRoomDir?.()
   void stopCourierNode() // 盲信使節點清理（關頁即停幫忙）
 })
 
@@ -280,7 +271,12 @@ function openRoom(room: P2PRoom) {
   else navigateTo(`/chat/${room.roomId}`)
 }
 
-async function handleCreate() {
+/**
+ * 建房（Spec 006 T3 雙 CTA）：withGame=true 是「建立遊戲室」——同一建房流程＋
+ * sessionStorage 旗標（同 introducerHint 模式），chat 頁讀旗標自動開遊戲面板。
+ * 不動資料模型（無房型欄位）：遊戲入口＝露出既有的房內面板能力。
+ */
+async function handleCreate(withGame = false) {
   if (!user.value || user.value.isAnonymous) {
     // firestore.rules 限制匿名用戶建房（sign_in_provider != "anonymous"）
     toastError('建立房間需要先登入')
@@ -301,7 +297,8 @@ async function handleCreate() {
       undefined,
       roomName.value.trim() || undefined
     )
-    featureLog('dashboard', 'room_created', { roomId })
+    featureLog('dashboard', 'room_created', { roomId, withGame })
+    if (withGame) markOpenGameFlag(roomId)
     showSheet.value = false
     roomName.value = ''
     navigateTo(`/waiting/${roomId}`)
@@ -358,8 +355,6 @@ function relativeTime(ts?: number): string {
     <header class="dash__header">
       <h1 class="dash__title">聊天</h1>
       <div class="dash__actions">
-        <button type="button" class="dash__icon-btn" :aria-label="`切換主題（目前 ${themeLabel}）`"
-                :title="`主題：${themeLabel}`" @click="cycleTheme">◐</button>
         <button type="button" class="dash__icon-btn dash__icon-btn--friends" aria-label="好友" @click="navigateTo('/friends')">
           👥<span v-if="pendingCount" class="dash__badge">{{ pendingCount }}</span>
         </button>
@@ -368,16 +363,6 @@ function relativeTime(ts?: number): string {
         <button type="button" class="dash__icon-btn dash__icon-btn--primary" aria-label="建立或加入房間" @click="showSheet = true">＋</button>
       </div>
     </header>
-
-    <!-- 中繼狀態 × 點數（誠實顯示：只反映真實連線與真實進帳） -->
-    <section v-if="user" class="card dash__relay" aria-label="中繼狀態與點數">
-      <span class="dash__relay-dot" :class="{ 'dash__relay-dot--active': relayActive || announcing }" aria-hidden="true" />
-      <span class="dash__relay-text">
-        {{ relayActive ? '節點中繼中 · 累積點數' : '節點待命中' }}
-        <template v-if="announcing && peerCount > 0"> · 還有 <span data-testid="online-node-count">{{ peerCount }}</span> 個節點一起守護</template>
-      </span>
-      <span class="dash__relay-balance">✦ {{ balance }}</span>
-    </section>
 
     <section v-if="loading" class="dash__skeleton">
       <div v-for="i in 3" :key="i" class="dash__skeleton-row" />
@@ -436,21 +421,6 @@ function relativeTime(ts?: number): string {
         </button>
       </section>
 
-      <!-- P2P 房間目錄：其他節點經 relay 廣播來的簽章公開房（不經伺服器大廳查詢） -->
-      <section v-if="p2pRooms.length" class="dash__list card" aria-label="P2P 發現的公開房間" data-testid="p2p-room-directory">
-        <p class="dash__p2p-title">附近節點的公開房間<span class="dash__p2p-badge">P2P</span></p>
-        <div v-for="ad in p2pRooms" :key="ad.roomId" class="room-row"
-             :data-testid="`p2p-room-ad-${ad.roomId}`"
-             @click="navigateTo(`/chat/${ad.roomId}`)">
-          <span class="room-row__avatar" :style="{ background: gradientFor(ad.roomId) }">
-            {{ initialFor(ad.roomName) }}
-          </span>
-          <span class="room-row__body">
-            <span class="room-row__name">{{ ad.roomName }}</span>
-            <span class="room-row__meta">{{ ad.participantCount }} 人 · 經節點廣播發現</span>
-          </span>
-        </div>
-      </section>
     </template>
 
     <!-- 建立 / 加入 sheet -->
@@ -463,11 +433,14 @@ function relativeTime(ts?: number): string {
             <button type="button" :class="{ active: sheetTab === 'join' }" @click="sheetTab = 'join'">加入房間</button>
           </div>
 
-          <form v-if="sheetTab === 'create'" class="sheet__form" @submit.prevent="handleCreate">
+          <form v-if="sheetTab === 'create'" class="sheet__form" @submit.prevent="handleCreate(false)">
             <input v-model="roomName" class="field" placeholder="房間名稱（選填）" maxlength="30" />
             <p class="sheet__hint">🔒 端對端加密預設開啟，訊息以點對點傳遞</p>
             <button type="submit" class="btn-primary" :disabled="busy">
-              {{ busy ? '建立中…' : '建立房間' }}
+              {{ busy ? '建立中…' : '建立聊天室' }}
+            </button>
+            <button type="button" class="btn-secondary sheet__game-cta" :disabled="busy" @click="handleCreate(true)">
+              🎮 建立遊戲室
             </button>
           </form>
 
@@ -556,27 +529,6 @@ function relativeTime(ts?: number): string {
 }
 .room-row__name--unread { font-weight: 700; }
 .dash__icon-btn--friends { position: relative; }
-.dash__relay {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  margin-bottom: 14px;
-  font-size: 13px;
-}
-.dash__relay-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-3);
-  flex-shrink: 0;
-}
-.dash__relay-dot--active {
-  background: var(--success);
-  box-shadow: 0 0 8px var(--success);
-}
-.dash__relay-text { flex: 1; color: var(--text-2); }
-.dash__relay-balance { font-weight: 700; color: var(--text); }
 .dash__badge {
   position: absolute;
   top: -3px;
@@ -839,23 +791,4 @@ function relativeTime(ts?: number): string {
 .confirm-leave-to { opacity: 0; }
 .confirm-enter-from .confirm { transform: scale(0.92); }
 
-/* P2P 房間目錄 */
-.dash__p2p-title {
-  margin: 4px 12px 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-secondary, #8a8a8e);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.dash__p2p-badge {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--accent, #6c8cff);
-  color: #fff;
-}
 </style>
