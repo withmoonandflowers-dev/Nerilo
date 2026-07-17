@@ -88,7 +88,7 @@ SignalEnvelope = {
 ## 5. 任務分解（tasks）
 
 - [x] T1：`SignalEnvelope` 純模組（sign+ECDH 加密 / verify+解密）。〔2026-07-16：src/core/p2p/SignalEnvelope.ts；HKDF 域分離（signal-relay-v1）；deriveSharedSecret 加可選 domain 參數（預設值向後相容，keyx 47 測試不變）；9 tests 含 property 60 runs：往返/介紹人讀不到/改密文或 metadata 或偽造簽章皆被拒/轉錯對象拒。〕
-- [ ] T2 ⚠：`PeerRelaySignalingTransport`（承載 mesh bus ns=sigrelay，介紹人只轉 `to` 密文）＋記憶體多節點：A↔B 連上，C 經 B 中繼連到 A，斷言 B 讀不到 SDP。
+- [x] T2 ⚠：`PeerRelaySignalingTransport`（承載換成可注入 `SignalRelayBus`，介紹人只依 `to` 轉密文）＋記憶體多節點 mesh 路由測試。〔2026-07-16：src/core/p2p/PeerRelaySignalingTransport.ts，實作 SignalingTransport 契約（send 封信封交 bus／subscribe 開信封吐 RawSignalDoc，帶 channelLabel 過濾與 remoteNodeId 定址、壞信封丟棄不炸訂閱）；純新增檔、不動既有 signaling 實作與 P2PConnectionManager（無 characterization 風險）；6 tests：C 經 B 中繼連 A 往返還原 SDP、B 在路徑上但轉的是密文（不含 SDP/IP 明文）、B 用自己 ECDH 私鑰解不開、B 竄改 ct→A 驗簽失敗不建連、remoteNodeId 定址過濾、無 to 拋錯。type-check✓／全單元 128 files 1445 綠／lint 0 error。承載接進連線流＋Firestore 退守＝T3。〕
 - [ ] T3 ⚠：傳輸選擇器接進連線流（warm 優先、無介紹人走 Firestore、warm 失敗退回）；受影響連線 e2e 迴歸。
 - [ ] T4：邀請連結帶會合資訊（roomId+金鑰+邀請者身分）＋解析；被邀請者指名邀請者為首個目標。
 - [ ] T5：接 `RoomDirectoryGossip` 供 warm 發現。
