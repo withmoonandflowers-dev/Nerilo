@@ -83,7 +83,7 @@
 
 1. ~~**收乾淨型別表面**（tsconfig.sdk.json 只 emit 公開）——最高槓桿、最低風險，半天工。~~
    **已完成（2026-07-16）**，且比預估難：根因不是 emit 設定，是 barrel 把重型 Firestore 工廠（`createChatClient` 動態載入 MeshChatService）和純公開 API 綁在一起，加上 `SignalingTransport` 介面與 Firestore 實作同檔。修法＝(a) 工廠拆到 subpath `nerilo/firestore`、(b) 介面拆到 `SignalingTransport.types`、(c) tsc emit 後由 `scripts/prune-sdk-types.mjs` 依可達性修剪。**型別檔 186→16、npm 包 192→29 檔（231KB→99KB）**；prune 腳本 `--max=30` 兼作公開表面適應度函數。dts 打包工具（dts-bundle-generator）對本 codebase 的大型別圖會卡（@babel/types），故改用「tsc + 可達性修剪」。
-2. **對死重逐塊拍板**（一則 ADR：每個 0-ref 模組標 DELETE/PARK + 觸發條件），並加死重棘輪 lint。這讓「這是什麼」變清楚。
-3. **公開表面快照 + god-file 棘輪**（適應度函數），鎖住收斂成果。
-4. **MCP server PoC**（包 NeriloClient 成 6 工具 + session 管理）——平台化的實體證據，補助/採用敘事加分。
+2. ~~對死重逐塊拍板~~ **已完成（ADR-0031 + 死重圍籬 lint，驗證會擋）**。
+3. ~~公開表面快照 + god-file 棘輪~~ **已完成（tests/unit/fitness.architecture.spec.ts，驗證會紅）**。
+4. ~~**MCP server PoC**~~ **已完成（2026-07-16，Spec 008）**：六意圖工具＋SessionManager；引擎＝行程內 InProcessChatEngine 接 NeriloClient（「第三方自帶引擎」活證明；Node 無 WebRTC，真網路對接列 follow-up）。真 MCP client 整合測試 5/5。
 5. god-file 拆分留到 React 退役（Spec 006 收斂時一起），不單獨動。
