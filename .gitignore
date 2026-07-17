@@ -71,3 +71,4 @@ reports/
 
 # SDK build 產物（publish 時由 build:sdk 產）
 /dist
+dist-mcp
