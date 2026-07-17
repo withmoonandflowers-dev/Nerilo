@@ -8,10 +8,20 @@
  * - AES-256-GCM for encryption/decryption
  */
 
-/** Derive a shared AES-256-GCM key from ECDH key agreement */
+/**
+ * Derive a shared AES-256-GCM key from ECDH key agreement.
+ *
+ * `domain` 做 HKDF 域分離：不同用途（sender-key 分發 vs signaling 中繼）用同一對 ECDH
+ * 金鑰時，導出的 AES 金鑰互不相同，避免跨用途金鑰重用。預設值＝既有 keyx 用途，
+ * 故既有呼叫者省略即與重構前位元一致（向後相容）。
+ */
 export async function deriveSharedSecret(
   myPrivateKey: CryptoKey,
-  theirPublicKey: CryptoKey
+  theirPublicKey: CryptoKey,
+  domain: { salt: string; info: string } = {
+    salt: 'nerilo-sender-key-v1',
+    info: 'sender-key-encryption',
+  }
 ): Promise<CryptoKey> {
   // ECDH key agreement → raw shared secret
   const sharedBits = await crypto.subtle.deriveBits(
@@ -34,8 +44,8 @@ export async function deriveSharedSecret(
     {
       name: 'HKDF',
       hash: 'SHA-256',
-      salt: new TextEncoder().encode('nerilo-sender-key-v1'),
-      info: new TextEncoder().encode('sender-key-encryption'),
+      salt: new TextEncoder().encode(domain.salt),
+      info: new TextEncoder().encode(domain.info),
     },
     hkdfKey,
     { name: 'AES-GCM', length: 256 },
