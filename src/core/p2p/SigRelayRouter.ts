@@ -105,8 +105,9 @@ export class SigRelayRouter implements SignalRelayBus {
       try {
         await this.sendAndAwaitAck(link, { kind: 'env', env, hops: 0 }, ref);
         return;
-      } catch {
-        // 這位介紹人不通（NACK/逾時），試下一位。
+      } catch (err) {
+        // 這位介紹人不通（NACK/逾時），試下一位。內插字串供 e2e 診斷。
+        logger.debug(`[SigRelayRouter] 介紹人 ${uid} 不通往 ${env.to}：${(err as Error).message}`);
       }
     }
     throw new Error(
@@ -229,6 +230,7 @@ export class SigRelayRouter implements SignalRelayBus {
     }
     const next = this.links.get(env.to);
     if (!next?.link.isOpen()) {
+      logger.debug(`[SigRelayRouter] NACK：未直連 ${env.to}（links=${[...this.links.keys()].join(',')}）`);
       void sender?.link.send({ kind: 'nack', ref, reason: `未直連 ${env.to}` }).catch(() => {});
       return;
     }
@@ -236,7 +238,8 @@ export class SigRelayRouter implements SignalRelayBus {
       await next.link.send({ kind: 'env', env, hops: hops + 1 });
       // 轉上開著的 bus 即視為交付成功（hop-by-hop 語義）；ACK 回發起方。
       void sender?.link.send({ kind: 'ack', ref }).catch(() => {});
-      logger.debug('[SigRelayRouter] 已中繼信封', { from: env.from, to: env.to, room: env.room });
+      // 內插字串：e2e 以 console 文字證明「介紹人有中繼加密信封」（勿改回物件參數）
+      logger.debug(`[SigRelayRouter] 已中繼信封 ${env.from}→${env.to}（room=${env.room}）`);
     } catch (err) {
       void sender?.link.send({ kind: 'nack', ref, reason: '轉發失敗' }).catch(() => {});
       logger.warn('[SigRelayRouter] 轉發失敗', { to: env.to, err });

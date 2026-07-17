@@ -32,6 +32,14 @@ export class MeshTopologyManager {
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   /** 每個 peer 上次觀察到的 joinedAt（session 版本戳），用來偵測「離開再進」 */
   private lastJoinedAt: Map<string, number> = new Map();
+  /** firebaseUid → 該成員的介紹人 uid（名冊 introducedBy；Spec 005 發起方裁決用） */
+  private introducedByMap: Map<string, string> = new Map();
+  /** 被介紹者對非介紹人 pair 的「等介紹人連上」延後次數（每秒一次，有上限保 liveness） */
+  private introducedDeferrals: Map<string, number> = new Map();
+  private deferralTimers: Set<ReturnType<typeof setTimeout>> = new Set();
+  // 12s：warm 收斂殘留未解前，把「邀請流程 warm 失敗時的額外延遲」上界壓小
+  // （worst case +12s 才走 cold），典型握手 5-8s 仍涵蓋。
+  private static readonly MAX_INTRODUCED_DEFERRALS = 12;
 
   constructor(
     private roomId: string,
@@ -108,11 +116,14 @@ export class MeshTopologyManager {
 
       for (const [firebaseUid, identity] of Object.entries(snapshot.meshIdentities)) {
         if (firebaseUid === this.localFirebaseUid) continue;
-        const typedIdentity = identity as { userId: string; pubKey: string; joinedAt: unknown };
+        const typedIdentity = identity as { userId: string; pubKey: string; joinedAt: unknown; introducedBy?: string };
         const userId = typedIdentity.userId;
 
-        // 更新 identity map
+        // 更新 identity map（含介紹人標記，Spec 005 發起方裁決用）
         this.identityMap.set(firebaseUid, userId);
+        if (typeof typedIdentity.introducedBy === 'string') {
+          this.introducedByMap.set(firebaseUid, typedIdentity.introducedBy);
+        }
 
         // ── 偵測「離開再進」（rejoin）──
         // 對方離開再進時仍用同一持久化身分（userId 不變），故 neighbors.has(userId)
@@ -193,7 +204,6 @@ export class MeshTopologyManager {
         await existing.close().catch(() => {});
       }
 
-      const isInitiator = this.localUserId < userId;
       const remoteFirebaseUid = this.getFirebaseUidFromUserId(userId);
       const localFirebaseUid = this.localFirebaseUid;
 
@@ -204,6 +214,38 @@ export class MeshTopologyManager {
         });
         this.scheduleReconnect(userId);
         return;
+      }
+
+      // ── 發起方裁決（Spec 005：介紹加入的 warm 決定性）────────────────────
+      // 預設＝userId 字典序。介紹情境覆寫：**被介紹者發起**其非介紹人 pair——
+      // 只有它確知「自己與介紹人的鏈路」何時就緒（warm offer 此時必可經介紹人
+      // 中繼送達）；對向（看到 remote 有 introducedBy 且介紹人非我）首輪讓位等
+      // offer——收到 warm offer 時回程 warm 路徑必然已通，answer 也走 warm。
+      // 兩側從名冊同一 introducedBy 推導，結論互補、無 glare。liveness：讓位側
+      // 若對方遲未 offer，MeshConnection 逾時→重試輪回歸預設順序（cold 兜底）。
+      let isInitiator = this.localUserId < userId;
+      const remoteIntroducer = this.introducedByMap.get(remoteFirebaseUid);
+      const selfIntroduced = !!this.preferredFirstUid;
+      if (selfIntroduced && remoteFirebaseUid !== this.preferredFirstUid) {
+        isInitiator = true;
+        // 延後發起到介紹人連上（每秒重評，有上限）：發起當下 warm 路徑已可用。
+        const deferrals = this.introducedDeferrals.get(userId) ?? 0;
+        if (!this.isIntroducerConnected() && deferrals < MeshTopologyManager.MAX_INTRODUCED_DEFERRALS) {
+          this.introducedDeferrals.set(userId, deferrals + 1);
+          const t = setTimeout(() => {
+            this.deferralTimers.delete(t);
+            if (this.neighbors.has(userId)) return;
+            void this.connectToSingleNeighbor(userId, readyTimeoutMs);
+          }, 1_000);
+          this.deferralTimers.add(t);
+          return;
+        }
+      } else if (
+        remoteIntroducer &&
+        remoteIntroducer !== localFirebaseUid &&
+        (this.reconnectAttempts.get(userId) ?? 0) === 0
+      ) {
+        isInitiator = false; // 首輪讓位給被介紹者；重試輪回歸預設順序
       }
 
       const connection = new MeshConnection(
@@ -323,6 +365,14 @@ export class MeshTopologyManager {
     return null;
   }
 
+  /** 介紹人（preferredFirstUid）目前是否已連上（DataChannel 可送）。 */
+  private isIntroducerConnected(): boolean {
+    if (!this.preferredFirstUid) return false;
+    const introducerUserId = this.identityMap.get(this.preferredFirstUid);
+    if (!introducerUserId) return false;
+    return this.neighbors.get(introducerUserId)?.getState() === 'connected';
+  }
+
   /**
    * 從 userId 獲取 Firebase UID
    */
@@ -416,6 +466,9 @@ export class MeshTopologyManager {
           if (firebaseUid !== this.localFirebaseUid) {
             discoveredUserIds.add(identity.userId);
             this.identityMap.set(firebaseUid, identity.userId);
+            if (typeof identity.introducedBy === 'string') {
+              this.introducedByMap.set(firebaseUid, identity.introducedBy);
+            }
           }
         }
       } else if (snap.participants.length >= 2) {
@@ -518,12 +571,15 @@ export class MeshTopologyManager {
       this.discoveryUnsubscribe = null;
     }
 
-    // 清除所有重連 timer
+    // 清除所有重連/延後 timer
     for (const timer of this.reconnectTimers.values()) {
       clearTimeout(timer);
     }
     this.reconnectTimers.clear();
     this.reconnectAttempts.clear();
+    for (const timer of this.deferralTimers) clearTimeout(timer);
+    this.deferralTimers.clear();
+    this.introducedDeferrals.clear();
 
     if (this.rotationStartTimeout) {
       clearTimeout(this.rotationStartTimeout);

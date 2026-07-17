@@ -1,5 +1,16 @@
 import { P2PManager } from '../p2p/P2PManager';
 import { P2PChannelBus } from '../p2p/P2PChannelBus';
+
+/** roomdir gossip 的信封形狀（與 P2PEnvelope 同構；RoomDirectoryGossip.RoomDirBus 消費）。 */
+export interface GossipRelayEnvelope {
+  v: number;
+  ns: string;
+  type: string;
+  id: string;
+  ts: number;
+  from: string;
+  payload: unknown;
+}
 import type { SignalingFactory } from '../p2p/SignalingTransport';
 import type { GossipMessage } from '../../types';
 import type { GossipDigest } from './antiEntropy';
@@ -47,6 +58,12 @@ export class MeshConnection {
    */
   private sigRelayBuffer: unknown[] = [];
   private static readonly SIG_RELAY_BUFFER_CAP = 32;
+  /**
+   * 房間目錄 gossip（Spec 005 T5 / ADR-0027）。走 ns:'roomdir'，本類只當啞管道；
+   * 驗簽/快取歸 RoomDirectoryGossip。不需接線前緩衝：協議自帶「初次 announce +
+   * 首聞回播 + 週期重播」，晚接線者下一輪必補上。
+   */
+  private roomDirListeners: Set<(env: GossipRelayEnvelope) => void> = new Set();
   private readyPromise: Promise<void>;
   private meshUserId: string; // 用於 Gossip 的 userId
 
@@ -191,6 +208,17 @@ export class MeshConnection {
       });
     });
 
+    // 房間目錄 gossip（Spec 005 T5）：獨立 ns，啞管道轉交 RoomDirectoryGossip。
+    this.channelBus.subscribe('roomdir', async (envelope) => {
+      this.roomDirListeners.forEach(listener => {
+        try {
+          listener(envelope as GossipRelayEnvelope);
+        } catch (error) {
+          logger.error('[MeshConnection] Error in roomdir listener', { error });
+        }
+      });
+    });
+
     // 暖中繼 signaling（Spec 005）：獨立 ns，啞管道轉交 router；router 未接線時先緩衝。
     this.channelBus.subscribe('sigrelay', async (envelope) => {
       if (this.sigRelayListeners.size === 0) {
@@ -321,6 +349,22 @@ export class MeshConnection {
     return () => {
       this.sigRelayListeners.delete(listener);
     };
+  }
+
+  /** 監聽對方送來的 roomdir gossip 信封。 */
+  onRoomDir(listener: (env: GossipRelayEnvelope) => void): () => void {
+    this.roomDirListeners.add(listener);
+    return () => {
+      this.roomDirListeners.delete(listener);
+    };
+  }
+
+  /** 送 roomdir gossip 信封（信封由協議層組好）。bus 未開即 reject（best-effort，呼叫端自吞）。 */
+  async sendRoomDir(env: GossipRelayEnvelope): Promise<void> {
+    if (this.channelBus?.getReadyState() !== 'open') {
+      throw new Error('MeshConnection: roomdir bus not open');
+    }
+    await this.channelBus.send(env as unknown as Parameters<P2PChannelBus['send']>[0]);
   }
 
   /** 這條連線的對端 signaling uid（router 以此掛 link）。 */

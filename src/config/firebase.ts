@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { logger } from '../utils/logger';
 // firebase/functions 已移除 — 目前未使用 Cloud Functions（ICE servers 改用直連 STUN）
 // 未來若需要 httpsCallable()，再 import { getFunctions } from 'firebase/functions'
@@ -67,7 +67,12 @@ if (IS_DEV && !IS_TEST_MODE) {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Test mode 強制 long-polling：Firestore WebChannel 在自動化瀏覽器（Playwright）
+// 下已知會斷流（'transport errored' → client 轉 offline、收不到 onSnapshot），
+// 多 context E2E 尤其明顯。僅測試模式生效，production 行為不變。
+export const db = IS_TEST_MODE
+  ? initializeFirestore(app, { experimentalForceLongPolling: true })
+  : getFirestore(app);
 
 // Test mode：自動連接 Firebase Emulator（E2E 測試用）
 if (IS_TEST_MODE) {

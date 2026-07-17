@@ -85,32 +85,47 @@ export class WarmColdSignalingTransport implements SignalingTransport {
   }
 
   async send(data: Record<string, unknown>): Promise<void> {
-    if (this.warm && !this.stickCold && this.hasWarmPath()) {
+    if (this.warm && !this.stickCold) {
+      // 第一擊：現在就有暖路徑 → 直接試。
+      if (this.hasWarmPath()) {
+        try {
+          await this.warm.send(data);
+          return;
+        } catch {
+          /* 進耐心窗或退 cold */
+        }
+      }
+      // 介紹加入耐心窗：暖路徑「還沒成形」（自己剛 bootstrap、介紹人還在接對方）
+      // 與「送了被 NACK」都在此等——窗內等路徑出現並重試，窗盡才退 Firestore。
+      // applies() 例外安全：判定失敗（如名冊讀取暫時 offline）＝不等，直接退 cold；
+      // 絕不能讓判定錯誤炸掉 send()——那會連 offer 都送不出（T6 run3 實測事故）。
+      let patient = false;
       try {
-        await this.warm.send(data);
-        return;
-      } catch (err) {
-        // 介紹加入耐心窗：對被介紹的對端，NACK 可能只是介紹人還沒接上他——重試。
-        if (this.patience && (await this.patience.applies())) {
-          const deadline = this.createdAt + this.patience.totalMs;
-          while (Date.now() < deadline) {
-            await sleep(this.patience.retryDelayMs);
-            if (!this.hasWarmPath()) continue;
-            try {
-              await this.warm.send(data);
-              logger.info('[WarmColdSignalingTransport] warm 耐心重試成功', { label: this.label });
-              return;
-            } catch {
-              /* 窗內繼續試 */
-            }
+        patient = !!(this.patience && (await this.patience.applies()));
+      } catch {
+        patient = false;
+      }
+      if (patient && this.patience) {
+        logger.debug(`[WarmColdSignalingTransport] 進入耐心窗（${this.label}）`);
+        const deadline = this.createdAt + this.patience.totalMs;
+        while (Date.now() < deadline) {
+          await sleep(this.patience.retryDelayMs);
+          if (!this.hasWarmPath()) continue;
+          try {
+            await this.warm.send(data);
+            // label 內插進訊息字串：e2e 以 console 文字斷言選路（勿改回物件參數）
+            logger.info(`[WarmColdSignalingTransport] warm 耐心等到路徑（${this.label}）`);
+            return;
+          } catch (err) {
+            logger.debug(`[WarmColdSignalingTransport] 耐心重試失敗（${this.label}）：${(err as Error).message}`);
           }
         }
-        this.stickCold = true;
-        logger.info('[WarmColdSignalingTransport] warm 無路，退回 cold（此 pair 黏住）', {
-          label: this.label,
-          reason: (err as Error).message,
-        });
+      } else {
+        logger.debug(`[WarmColdSignalingTransport] 不等（${this.label}，patient=${String(patient)}）`);
       }
+      this.stickCold = true;
+      // label 內插進訊息字串：e2e 以 console 文字斷言選路（勿改回物件參數）
+      logger.info(`[WarmColdSignalingTransport] warm 無路，退回 cold（${this.label}，此 pair 黏住）`);
     }
     await (await this.ensureCold()).send(data);
   }

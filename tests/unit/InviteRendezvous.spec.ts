@@ -101,6 +101,21 @@ describe('WarmColdSignalingTransport — 介紹加入耐心', () => {
     expect(log.at(-1)).toBe('cold:ice'); // 黏住：第二則不再試 warm
   });
 
+  it('耐心也涵蓋「暖路徑還沒成形」：等路徑出現後走 warm（被介紹者剛 bootstrap 的情境）', async () => {
+    const log: string[] = [];
+    let pathReady = false;
+    setTimeout(() => { pathReady = true; }, 60); // 模擬介紹人連線 60ms 後才開
+    const t = new WarmColdSignalingTransport(
+      transportWithScript(['ok'], log),
+      () => ({ ...transportWithScript(['ok'], log), send: async () => { log.push('cold:send'); } }),
+      () => pathReady,
+      'test',
+      { applies: () => true, totalMs: 2_000, retryDelayMs: 20 }
+    );
+    await t.send({ type: 'offer' }); // 呼叫當下無路徑 → 耐心等 → 路徑出現 → warm
+    expect(log).toEqual(['warm:ok']);
+  });
+
   it('不適用耐心（非介紹加入）→ 一敗即退 cold', async () => {
     const log: string[] = [];
     const t = new WarmColdSignalingTransport(

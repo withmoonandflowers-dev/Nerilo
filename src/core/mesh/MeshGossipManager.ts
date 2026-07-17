@@ -17,6 +17,8 @@ import { PeerRelaySignalingTransport } from '../p2p/PeerRelaySignalingTransport'
 import { WarmColdSignalingTransport } from '../p2p/WarmColdSignalingTransport';
 import { createDirectoryPeerKeyResolver } from '../p2p/DirectoryPeerKeyResolver';
 import { arrayBufferToBase64 } from '../../utils/crypto';
+import { RoomAdvertCache, buildRoomAdvert, type RoomAdvert } from '../relay/RoomDirectoryGossip';
+import { wireRoomDirectoryOnConnection } from './roomDirectoryWiring';
 import type { EncryptionState } from '../../types';
 
 /**
@@ -49,6 +51,20 @@ export class MeshGossipManager {
    * 新 pair 的 signaling 優先經它走加密 peer 中繼（零伺服器），無路退 Firestore。
    */
   private sigRelayRouter: SigRelayRouter | null = null;
+  /**
+   * 房間目錄快取（Spec 005 T5 / ADR-0027）：經暖 mesh gossip 交換的簽章房間廣告。
+   * 供 warm 發現與未來去中心化大廳讀取（getRoomDirectory()）。
+   */
+  private roomAdvertCache = new RoomAdvertCache();
+  /** 每條連線的目錄 gossip 卸載器（連線換代/離場時清 timer）。 */
+  private roomDirDetachers = new Map<MeshConnection, () => void>();
+  /**
+   * 名冊即時快照（watch push 餵入）。warm 選路的 introducedBy 判定與對端公鑰解析
+   * 讀這裡：與「發現新成員」同一條 push 通道 → 不會比發現舊；同步讀 → 不會因
+   * server 讀 offline 而 hang/throw（T6 run2/run3 兩種事故的根治）。
+   */
+  private latestDirectorySnapshot: import('../../ports/IRoomDirectory').RoomSnapshot | null = null;
+  private directoryWatchUnsub: (() => void) | null = null;
 
   constructor(
     private roomId: string,
@@ -97,6 +113,23 @@ export class MeshGossipManager {
       if (!this.directory) {
         const { FirestoreRoomDirectory } = await import('../../services/FirestoreRoomDirectory');
         this.directory = new FirestoreRoomDirectory(this.roomId, firebaseUid);
+      }
+
+      // 名冊即時快照：warm 選路（introducedBy/公鑰）的資料來源（見欄位註解）。
+      // feature-detect：容忍只實作部分介面的注入名冊（測試樁）——缺 watch 時
+      // 快照恆 null，選路自然走快取備援。
+      // best-effort：watch 失敗（受限環境/測試樁）不得擋 mesh 初始化——快照維持
+      // null，選路自然走快取備援。
+      try {
+        if (typeof this.directory.watchIdentities === 'function') {
+          this.directoryWatchUnsub = this.directory.watchIdentities((snapshot) => {
+            this.latestDirectorySnapshot = snapshot;
+          });
+        }
+      } catch (err) {
+        logger.warn('[MeshGossipManager] directory watch unavailable — warm 選路走快取備援', {
+          roomId: this.roomId, err,
+        });
       }
 
       await this.directory.registerIdentity({
@@ -216,6 +249,49 @@ export class MeshGossipManager {
     }
   }
 
+  /** 以本機 ECDSA 身分私鑰簽 canonical 字串（warm 信封與房間廣告共用同一把身分）。 */
+  private identitySign = async (data: string): Promise<string> => {
+    return arrayBufferToBase64(
+      await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        this.identityManager.getPrivateKey(),
+        new TextEncoder().encode(data)
+      )
+    );
+  };
+
+  /**
+   * 本房的簽章廣告（roomdir gossip 的本地供給）。
+   * 誠實邊界：manager 不知房名/房主（那是 UI/RoomService 層資料）——先以空值送出，
+   * 去中心化大廳消費者落地時由上層補真值；目前的用途（成員/房間存在性發現）不受影響。
+   */
+  private async localRoomAdverts(): Promise<RoomAdvert[]> {
+    try {
+      const snap = await this.directory!.getSnapshot(true);
+      return [
+        await buildRoomAdvert(
+          {
+            roomId: this.roomId,
+            roomName: '',
+            ownerUid: '',
+            participantCount: snap.participants.length,
+            issuedAt: Date.now(),
+            nodeId: this.identityManager.getUserId(),
+            pubKey: await this.identityManager.exportPublicKey(),
+          },
+          this.identitySign
+        ),
+      ];
+    } catch {
+      return []; // 金鑰/名冊未就緒：這輪不廣播（協議週期重播會再試）
+    }
+  }
+
+  /** 房間目錄快取（暖 mesh gossip 交換、已驗簽的廣告；供發現/大廳讀取）。 */
+  getRoomDirectory(): RoomAdvert[] {
+    return this.roomAdvertCache.list();
+  }
+
   /**
    * 把注入的 signalingFactory 包成 warm/cold 選擇器（Spec 005 §4.1 三態連線模型）。
    * warm＝加密 peer 中繼（PeerRelaySignalingTransport over SigRelayRouter，零伺服器）；
@@ -235,17 +311,16 @@ export class MeshGossipManager {
 
     this.sigRelayRouter = new SigRelayRouter(firebaseUid);
     const router = this.sigRelayRouter;
+    const sign = this.identitySign;
+    void ecdsaPrivateKey; // 可用性已於上方 try 驗證；實際簽章統一走 identitySign
 
-    const enc = new TextEncoder();
-    const sign = async (data: string) =>
-      arrayBufferToBase64(
-        await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, ecdsaPrivateKey, enc.encode(data))
-      );
-
-    // 對端公鑰從名冊解析（keyx 既有發布管道）；preferCached 免去每則信封一次 server 讀。
+    // 對端公鑰解析：優先讀 watch 即時快照（與發現同管道，必不比發現舊）；
+    // 尚未就緒才退快取讀。不做強制 server 讀——offline 時會 hang/throw 炸掉 send()
+    // （T6 run3 實測事故：連 cold offer 都送不出）。
     const resolver = createDirectoryPeerKeyResolver(async (uid) => {
-      const snap = await this.directory!.getSnapshot(true);
-      const m = snap.meshIdentities[uid];
+      const m =
+        this.latestDirectorySnapshot?.meshIdentities[uid] ??
+        (await this.directory!.getSnapshot(true)).meshIdentities[uid];
       return m ? { pubKey: m.pubKey, ecdhPubKey: m.ecdhPubKey } : undefined;
     });
 
@@ -274,11 +349,18 @@ export class MeshGossipManager {
       // warm NACK 先重試一會兒（介紹人可能還在接他），窗盡才退 Firestore。有界不失活。
       const patience = {
         applies: async () => {
-          if (this.introducerUid && remoteUid !== this.introducerUid) return true;
-          const snap = await this.directory!.getSnapshot(true);
-          return typeof snap.meshIdentities[remoteUid]?.introducedBy === 'string';
+          // 我是被邀請者：對「介紹人以外」的 pair 等 warm；對介紹人本身＝bootstrap 第一跳，立即 cold。
+          if (this.introducerUid) return remoteUid !== this.introducerUid;
+          // 對方是被介紹者：等介紹人把他接進 mesh——但若介紹人就是我，我即會合點，立即 cold。
+          // 讀 watch 即時快照（同步、與發現同管道）：getRoom 快取會落後新成員（run2 誤退
+          // cold），強制 server 讀在 offline 時會 hang（run3 連 offer 都送不出）——都不用。
+          const intro = this.latestDirectorySnapshot?.meshIdentities[remoteUid]?.introducedBy;
+          return typeof intro === 'string' && intro !== firebaseUid;
         },
-        totalMs: 8_000,
+        // 12s：涵蓋典型「介紹人接上被介紹者」（DataChannel 開通＋2s 掃描接線，
+        // 常見 5-8s），同時把 warm 失敗時的額外延遲上界壓小（ready timeout 30s
+        // 內留 18s 給 cold 收尾）。
+        totalMs: 12_000,
         retryDelayMs: 1_000,
       };
       return new WarmColdSignalingTransport(
@@ -325,11 +407,26 @@ export class MeshGossipManager {
           // 暖中繼 signaling（Spec 005）：把這條連線掛進路由器當 link。
           // 同 uid 重連（新實例）會替換舊 link；MeshConnection 內建接線前緩衝，
           // bus 開到這裡的 2s 窗內收到的信封不會掉。
-          this.sigRelayRouter?.attachNeighbor(neighbor.getRemoteUid(), {
-            isOpen: () => neighbor.isBusOpen(),
-            send: (wire) => neighbor.sendSigRelay(wire),
-            onWire: (h) => neighbor.onSigRelay((p) => h(p as SigRelayWire)),
-          });
+          // feature-detect：容忍鴨子型別連線（測試樁/自訂實作）缺這些方法。
+          if (typeof neighbor.onSigRelay === 'function' && typeof neighbor.getRemoteUid === 'function') {
+            this.sigRelayRouter?.attachNeighbor(neighbor.getRemoteUid(), {
+              isOpen: () => neighbor.isBusOpen(),
+              send: (wire) => neighbor.sendSigRelay(wire),
+              onWire: (h) => neighbor.onSigRelay((p) => h(p as SigRelayWire)),
+            });
+          }
+
+          // 房間目錄 gossip（Spec 005 T5）：這條連線上交換簽章房間廣告。
+          if (typeof neighbor.onRoomDir === 'function' && typeof neighbor.sendRoomDir === 'function') {
+            this.roomDirDetachers.set(
+              neighbor,
+              wireRoomDirectoryOnConnection(neighbor, {
+                cache: this.roomAdvertCache,
+                localUid: this.localUid,
+                getLocalAdverts: () => this.localRoomAdverts(),
+              })
+            );
+          }
 
           neighbor.onMessage(async (message: GossipMessage) => {
             // 處理 relay 封包
@@ -378,6 +475,15 @@ export class MeshGossipManager {
         if (!currentIds.has(peerId)) {
           this.relayManager?.unregisterPeer(peerId);
           registeredRelayPeers.delete(peerId);
+        }
+      }
+
+      // 卸除已換代/離場連線的目錄 gossip（清 announce timer）
+      const liveConnections = new Set(neighbors);
+      for (const [conn, detach] of this.roomDirDetachers) {
+        if (!liveConnections.has(conn)) {
+          detach();
+          this.roomDirDetachers.delete(conn);
         }
       }
     }, 2000);
@@ -545,6 +651,13 @@ export class MeshGossipManager {
       this.sigRelayRouter.dispose();
       this.sigRelayRouter = null;
     }
+    for (const detach of this.roomDirDetachers.values()) detach();
+    this.roomDirDetachers.clear();
+    if (this.directoryWatchUnsub) {
+      this.directoryWatchUnsub();
+      this.directoryWatchUnsub = null;
+    }
+    this.latestDirectorySnapshot = null;
     if (this.topologyManager) {
       await this.topologyManager.cleanup();
     }
