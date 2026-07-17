@@ -1,8 +1,8 @@
 # Spec 005：自主連線 — bootstrap-only 的 p2p2p signaling
 
 - 軌別：feature（protocol 成分已拆出：Protocol Spec 007）
-- 狀態：implementing（T1-T5、T7 完成；T6 機制已證、e2e 全綠穩定化殘留）
-- 建立：2026-07-16／最後更新：2026-07-16（T1-T7 實作輪）
+- 狀態：done（T1-T7 全數完成；V1-V4 驗收過，e2e @vue-stable 三連綠）
+- 建立：2026-07-16／最後更新：2026-07-17（T6 收斂：漏 await 根因修復）
 - 關聯：ADR-0002（Firebase signaling）、ADR-0027（房間目錄 gossip）、既有 `RelaySignalingChannel`(P4-B)、`SignalingTransport` 可注入 port
 
 ## 1. 要做什麼、為什麼（specify）
@@ -92,19 +92,20 @@ SignalEnvelope = {
 - [x] T3 ⚠：傳輸選擇器接進連線流（warm 優先、無介紹人走 Firestore、warm 失敗退回）；受影響連線 e2e 迴歸。〔2026-07-16：`SigRelayRouter`（hop-by-hop ACK/NACK、hop 上限 1 防洪泛、回放緩衝鏡像 lookback）＋`WarmColdSignalingTransport`（warm 優先送、敗退 cold 黏住、雙訂閱由 manager signalId 去重）＋`DirectoryPeerKeyResolver`（名冊公鑰→CryptoKey 快取）；接線＝MeshConnection 加 ns='sigrelay' 啞管道（含接線前緩衝）、MeshGossipManager 包 factory＋掃描器掛 link、`SignalingFactory` 加可選第三參數 remoteUid（向後相容）；P2PConnectionManager 零改動。characterization：改前 mesh 單元釘 50 綠；改後 type-check✓／全單元 129 檔 1458 綠／lint 0 err／L3 Vue e2e golden-path+mesh-diagnostic+mesh-rejoin 3/3 綠＋React 護欄 golden-path 綠。誠實紀錄：React mesh-diagnostic 首輪 1 紅，重跑 ×2 全綠且該輪 log 零 warm 活動（全走 cold＝改前行為）、失敗在未觸碰的 gossip 訊息矩陣層 → 判定既有 3 人 flake 非本改動迴歸。〕
 - [x] T4：邀請連結帶會合資訊＋解析；被邀請者指名邀請者為首個目標。〔2026-07-16：`InviteRendezvous` 純模組（nrz1，base64url JSON 放 **fragment** 不上送伺服器；邀請者 uid+公鑰＝頻外信任根，防伺服器換鑰 MITM）；waiting 頁嵌會合入分享連結/QR、解析入站存 sessionStorage，chat 頁讀 hint 傳 MeshChatService；名冊加 `introducedBy`（rules 驗格式、寫入驗須為房內參與者）；`MeshTopologyManager` 首選連介紹人；warm 耐心窗（8s/1s 重試）——對被介紹 pair，NACK 先重試（介紹人還在接他）窗盡才退 Firestore，有界不失活。**誠實偏差**：spec 原文「房金鑰」不放連結——E2EE 金鑰仍由 keyx 成對分發（連結外洩≠金鑰外洩），連結只帶身分。god-file 棘輪：RoomService 抽出 meshIdentityRegistry（1055→988 反向調低）；[roomId].vue +1 行整合面經稽核裁決 1171→1172。驗證：unit 130 檔 1467 綠（InviteRendezvous 7＋耐心 3）、lint 0 err、nuxt typecheck ✓、Vue e2e golden-path+mesh-diagnostic+room-directory 3/3 綠。〕
 - [x] T5：接 `RoomDirectoryGossip` 供 warm 發現。〔2026-07-16：MeshConnection 加 ns='roomdir' 啞管道；`roomDirectoryWiring` 純膠水把 ADR-0027 協議（原掛 relay bus、零消費者）適配上暖 mesh——已連 mesh 本身即目錄傳播網，新 peer 連上介紹人一條線就拿到全目錄快取（轉發鏈 unit 證明：C 只連 B 也拿到 A 的房間廣告，壞簽章不入快取）；MeshGossipManager 掃描器掛/卸（防 timer 洩漏）＋`getRoomDirectory()` 供發現/大廳讀取。誠實邊界：廣告 roomName/ownerUid 先空值（manager 不知 UI 層資料，大廳消費者落地時補真值）。4 unit tests；type-check✓／全單元 1471 綠／lint 0 err／L3 mesh e2e 綠。〕
-- [~] T6 ⚠：Vue e2e 三瀏覽器（tests/e2e-vue/p2p2p-introduction.spec.ts，**未掛 @vue-stable**）。〔2026-07-16 現況：**機制已現場證明**——run2 實錄：C 的 A-pair signaling 全走加密中繼（B console「已中繼信封」×N、C「耐心等到路徑」）、C 僅對介紹人 pair 寫 Firestore（Q7-a 第一跳）、SDP/IP 明文不經 B。過程修掉四個真 bug：①A 側名冊快取落後新成員→冤枉退 cold（改讀 watch 即時快照）②強制 server 讀在 offline 時 hang 死 send()（改同步快照＋例外安全）③Firestore WebChannel 在 Playwright 下斷流（已知相容性問題；測試模式 experimentalForceLongPolling，run8 起 offline 歸零、三 pair 全成形）④非決定性搶跑（改**發起方裁決**：被介紹者對非介紹人 pair 當發起方＋等介紹人連上才發起，對向讓位等 offer，兩側從名冊 introducedBy 推導互補結論，run6/7 log 驗證無 glare）。後續 run10 再抓一個真 bug：⑤發起方首發 offer 時 manager 尚未學到 remoteUid → data.to=null，warm 點對點拒送（Firestore 廣播語義容許 null）→ warm transport 退用建構時綁定的 pair 對端（一行修，unit 覆蓋）。另發現測跑衛生因素：nuxt dev server 連跑多輪三瀏覽器後劣化（wedged 時標準迴歸也會 3 紅；換乾淨 server 後同碼 3/3 綠且 48s 跑完）——重跑本 spec 前先殺 dev server。**殘留**：全修復＋乾淨環境（run12）三瀏覽器仍未收斂到全綠（卡「已連線」狀態窗），需下輪以 per-user log 深挖 C 進場的連線時序；warm 失敗時的額外延遲上界已壓到 ~12s（deferral 12×1s、耐心 12s），邀請流程 liveness 不受殘留影響。標準迴歸套（golden-path/mesh-diagnostic/mesh-rejoin）在全部改動後仍綠。穩定連過 3 次再掛 stable。〕
+- [x] T6 ⚠：Vue e2e 三瀏覽器（tests/e2e-vue/p2p2p-introduction.spec.ts，**@vue-stable**，2026-07-17 三連綠 21.7s/27.2s/18.0s）。最終根因＝⑥ `PeerRelaySignalingTransport.send` 漏 `await bus.relay()`——NACK rejection 漂走、warm 假成功、cold 永不觸發，signaling 憑空消失（15 輪 log 考古定位；已加防迴歸 unit：relay 被拒 send 必 reject）。修復後斷言全過：B 中繼加密信封、A↔C 零 Firestore、B↔C bootstrap 走 cold 對照。〔2026-07-16 現況：**機制已現場證明**——run2 實錄：C 的 A-pair signaling 全走加密中繼（B console「已中繼信封」×N、C「耐心等到路徑」）、C 僅對介紹人 pair 寫 Firestore（Q7-a 第一跳）、SDP/IP 明文不經 B。過程修掉四個真 bug：①A 側名冊快取落後新成員→冤枉退 cold（改讀 watch 即時快照）②強制 server 讀在 offline 時 hang 死 send()（改同步快照＋例外安全）③Firestore WebChannel 在 Playwright 下斷流（已知相容性問題；測試模式 experimentalForceLongPolling，run8 起 offline 歸零、三 pair 全成形）④非決定性搶跑（改**發起方裁決**：被介紹者對非介紹人 pair 當發起方＋等介紹人連上才發起，對向讓位等 offer，兩側從名冊 introducedBy 推導互補結論，run6/7 log 驗證無 glare）。後續 run10 再抓一個真 bug：⑤發起方首發 offer 時 manager 尚未學到 remoteUid → data.to=null，warm 點對點拒送（Firestore 廣播語義容許 null）→ warm transport 退用建構時綁定的 pair 對端（一行修，unit 覆蓋）。另發現測跑衛生因素：nuxt dev server 連跑多輪三瀏覽器後劣化（wedged 時標準迴歸也會 3 紅；換乾淨 server 後同碼 3/3 綠且 48s 跑完）——重跑本 spec 前先殺 dev server。**殘留**：全修復＋乾淨環境（run12）三瀏覽器仍未收斂到全綠（卡「已連線」狀態窗），需下輪以 per-user log 深挖 C 進場的連線時序；warm 失敗時的額外延遲上界已壓到 ~12s（deferral 12×1s、耐心 12s），邀請流程 liveness 不受殘留影響。標準迴歸套（golden-path/mesh-diagnostic/mesh-rejoin）在全部改動後仍綠。穩定連過 3 次再掛 stable。〕
 - [x] T7：Protocol Spec 007（`specs/007-signal-relay-protocol/`：nsig1 線上格式、canonical 簽章、HKDF 域、遞送 ACK/NACK/hop 語義、conformance C1-C8 對映既有測試）＋ADR-0032（三態模型、介紹人不可信、Q7-a 取捨、邀請會合 nrz1、有界耐心）。〔2026-07-16〕
 
 ## 6. 驗收（黃金判準）——2026-07-16 依 Q7-a 物理限制校正 V1/V2 範圍
 
-- [ ] V1（校正）：兩 peer 經 Firestore bootstrap 連上後，第三 peer 由其中一人介紹加入；
+- [x] V1（校正）：兩 peer 經 Firestore bootstrap 連上後，第三 peer 由其中一人介紹加入；
   第三人的 Firestore signaling 寫入**僅限與介紹人的第一跳**（Q7-a 物理必要），
-  對其他所有成員（被介紹的 pair）**零寫入**——SDP 全程經介紹人加密中繼（console
-  選路證據＋介紹人中繼證據）。原文「全程不寫任何」與 Q7-a 衝突（素未謀面的第一
-  個 SDP 需要會合點），據實收斂。
-- [ ] V2（校正範圍）：warm 路徑不依賴 Firestore signaling——被介紹 pair 的全部
+  對其他所有成員（被介紹的 pair）**零寫入**——SDP 全程經介紹人加密中繼。原文
+  「全程不寫任何」與 Q7-a 衝突，據實收斂。〔2026-07-17：p2p2p-introduction e2e
+  三連綠證明——B「已中繼信封」實錄、A↔C 兩側零「退回 cold」、B↔C 有 cold 對照〕
+- [x] V2（校正範圍）：warm 路徑不依賴 Firestore signaling——被介紹 pair 的全部
   signaling 走 peer 中繼可證（V1 的零寫入即此證據）。「服務全掛仍能加入」還需要
   名冊/發現的去中心化替代（房間目錄 gossip 已騎上暖 mesh＝T5，完整替代屬後續 spec）。
+  〔V1 e2e 同時滿足本判準的校正範圍〕
 - [x] V3：惡意介紹人竄改 SDP → 被介紹方驗證失敗、不建立錯誤連線。〔unit：SignalEnvelope
   竄改三態拒＋PeerRelay 竄改 onAdded 不觸發＝連線不建立〕
 - [x] V4（迴歸）：現有 2 人／mesh 連線、rejoin、golden-path 全綠不變。〔T3/T4/T5 各輪

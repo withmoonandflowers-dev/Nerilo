@@ -232,6 +232,11 @@ export class MeshTopologyManager {
         const deferrals = this.introducedDeferrals.get(userId) ?? 0;
         if (!this.isIntroducerConnected() && deferrals < MeshTopologyManager.MAX_INTRODUCED_DEFERRALS) {
           this.introducedDeferrals.set(userId, deferrals + 1);
+          if (deferrals === 0) {
+            logger.info('[MeshTopologyManager] Introduced-defer：等介紹人連上再發起', {
+              roomId: this.roomId, remoteUserId: userId,
+            });
+          }
           const t = setTimeout(() => {
             this.deferralTimers.delete(t);
             if (this.neighbors.has(userId)) return;
