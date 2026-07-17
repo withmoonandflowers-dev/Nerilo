@@ -32,7 +32,12 @@ service cloud.firestore {
         && (!('ecdhPubKey' in identity) || (
              identity.ecdhPubKey is string
              && identity.ecdhPubKey.size() >= 40
-             && identity.ecdhPubKey.size() <= 512));
+             && identity.ecdhPubKey.size() <= 512))
+        // introducedBy 可選（Spec 005 T4 邀請會合）；提供時須為字串（格式同 uid 長度界）。
+        && (!('introducedBy' in identity) || (
+             identity.introducedBy is string
+             && identity.introducedBy.size() >= 1
+             && identity.introducedBy.size() <= 128));
     }
 
     // 任何 update 都只能影響到 meshIdentities[auth.uid] 這個 key。

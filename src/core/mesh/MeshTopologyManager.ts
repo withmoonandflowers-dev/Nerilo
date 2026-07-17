@@ -38,8 +38,21 @@ export class MeshTopologyManager {
     private localUserId: string,
     private localFirebaseUid: string,
     private directory: IRoomDirectory, // 名冊/發現後端（預設 Firestore；SDK 可注入）
-    private signalingFactory?: SignalingFactory // 省略＝Firestore；SDK 注入自架後端
+    private signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端
+    /**
+     * 首選連線對象 uid（Spec 005 T4：邀請連結指名的介紹人）。被邀請者先連介紹人
+     * （bootstrap 第一跳），其餘 pair 才有暖路徑可走。只影響順序，不影響最終拓撲。
+     */
+    private preferredFirstUid?: string
   ) {}
+
+  /** 把首選對象（介紹人）排到最前（若在候選內）；其餘順序不變。 */
+  private prioritize(candidateUserIds: string[]): string[] {
+    if (!this.preferredFirstUid) return candidateUserIds;
+    const preferredUserId = this.identityMap.get(this.preferredFirstUid);
+    if (!preferredUserId || !candidateUserIds.includes(preferredUserId)) return candidateUserIds;
+    return [preferredUserId, ...candidateUserIds.filter((id) => id !== preferredUserId)];
+  }
 
   /**
    * 初始化（建立初始鄰居連線）
@@ -63,7 +76,7 @@ export class MeshTopologyManager {
         count: initialCandidates.length,
       });
       const maxNeighbors = Math.min(this.k, initialCandidates.length);
-      const selected = await this.selectNeighbors(initialCandidates, maxNeighbors);
+      const selected = this.prioritize(await this.selectNeighbors(initialCandidates, maxNeighbors));
       this.connectToNeighbors(selected).catch(error => {
         logger.error('[MeshTopologyManager] Error connecting to initial neighbors', { error });
       });
@@ -141,7 +154,7 @@ export class MeshTopologyManager {
           newCandidates,
           currentNeighbors: this.neighbors.size,
         });
-        const toConnect = newCandidates.slice(0, this.k - this.neighbors.size);
+        const toConnect = this.prioritize(newCandidates).slice(0, this.k - this.neighbors.size);
         this.connectToNeighbors(toConnect).catch(error => {
           logger.error('[MeshTopologyManager] Reactive connect error', { error });
         });

@@ -33,5 +33,13 @@ export interface SignalingTransport {
 /**
  * 依 (roomId, channelLabel) 造一個 SignalingTransport。mesh 每條鄰居連線各造一個
  * （channelLabel 不同）。這是 SDK 的後端注入縫：預設走 Firestore，第三方可換自架。
+ *
+ * remoteUid（可選，Spec 005）：這條連線的對端 signaling id。mesh 呼叫端會帶上，
+ * 讓 warm/cold 選擇器（peer 中繼 signaling）能對「這一位」封加密信封；既有工廠
+ * 忽略此參數即可，向後相容。
  */
-export type SignalingFactory = (roomId: string, channelLabel: string) => SignalingTransport;
+export type SignalingFactory = (
+  roomId: string,
+  channelLabel: string,
+  remoteUid?: string
+) => SignalingTransport;

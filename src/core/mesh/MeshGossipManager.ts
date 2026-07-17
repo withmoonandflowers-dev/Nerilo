@@ -12,6 +12,11 @@ import { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
+import { SigRelayRouter, type SigRelayWire } from '../p2p/SigRelayRouter';
+import { PeerRelaySignalingTransport } from '../p2p/PeerRelaySignalingTransport';
+import { WarmColdSignalingTransport } from '../p2p/WarmColdSignalingTransport';
+import { createDirectoryPeerKeyResolver } from '../p2p/DirectoryPeerKeyResolver';
+import { arrayBufferToBase64 } from '../../utils/crypto';
 import type { EncryptionState } from '../../types';
 
 /**
@@ -39,12 +44,19 @@ export class MeshGossipManager {
    * 對齊星型 ChatService.onTyping 的 {userId,isTyping} 契約，讓 UI 兩路可共用。
    */
   private typingListeners: Set<(data: { userId: string; isTyping: boolean }) => void> = new Set();
+  /**
+   * 暖中繼 signaling 路由器（Spec 005 T3）。每房一顆；鄰居連上後掛 link，
+   * 新 pair 的 signaling 優先經它走加密 peer 中繼（零伺服器），無路退 Firestore。
+   */
+  private sigRelayRouter: SigRelayRouter | null = null;
 
   constructor(
     private roomId: string,
     private localUid: string, // signaling/名冊身分 id（上層注入，取代 auth.currentUser）
     private signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端
-    private directory?: IRoomDirectory // 省略＝initialize() 時動態載入 Firestore（本檔靜態圖無 firebase）
+    private directory?: IRoomDirectory, // 省略＝initialize() 時動態載入 Firestore（本檔靜態圖無 firebase）
+    /** 介紹人 uid（Spec 005 T4 邀請連結會合）：先連他、名冊標注 introducedBy 供他人耐心等 warm。 */
+    private introducerUid?: string
   ) {
     this.identityManager = new IdentityManager();
     this.securityManager = new SecurityManager();
@@ -87,20 +99,28 @@ export class MeshGossipManager {
         this.directory = new FirestoreRoomDirectory(this.roomId, firebaseUid);
       }
 
-      await this.directory.registerIdentity({ userId, pubKey, ecdhPubKey });
+      await this.directory.registerIdentity({
+        userId,
+        pubKey,
+        ecdhPubKey,
+        // 被介紹加入：名冊標注介紹人，其他成員對我會耐心等 warm 中繼（Spec 005 T4）
+        ...(this.introducerUid ? { introducedBy: this.introducerUid } : {}),
+      });
       logger.info('[MeshGossipManager] Identity registered', {
         roomId: this.roomId,
         firebaseUid,
         userId,
       });
 
-      // 3. 初始化拓撲管理器
+      // 3. 初始化拓撲管理器（signaling 經 warm/cold 選擇器包裝，Spec 005 T3：
+      //    新 pair 優先走加密 peer 中繼、無暖路徑退回注入的 factory／Firestore）
       this.topologyManager = new MeshTopologyManager(
         this.roomId,
         userId,
         firebaseUid,
         this.directory!, // 已於上方解析為非 undefined
-        this.signalingFactory
+        this.buildWarmColdFactory(firebaseUid),
+        this.introducerUid // 首選連線對象：先連介紹人，其餘 pair 才有暖路徑
       );
 
       // 4. 初始化 PeerScoring & RelayManager
@@ -197,6 +217,77 @@ export class MeshGossipManager {
   }
 
   /**
+   * 把注入的 signalingFactory 包成 warm/cold 選擇器（Spec 005 §4.1 三態連線模型）。
+   * warm＝加密 peer 中繼（PeerRelaySignalingTransport over SigRelayRouter，零伺服器）；
+   * cold＝注入的 factory（未注入＝動態載入 Firestore adapter，對齊 P2PConnectionManager
+   * 預設——本檔靜態圖仍無 firebase）。本機金鑰不可用（極舊環境）→ 回傳原 factory，
+   * 行為與改動前完全一致。
+   */
+  private buildWarmColdFactory(firebaseUid: string): SignalingFactory | undefined {
+    let ecdhPrivateKey: CryptoKey;
+    let ecdsaPrivateKey: CryptoKey;
+    try {
+      ecdhPrivateKey = this.identityManager.getEcdhPrivateKey();
+      ecdsaPrivateKey = this.identityManager.getPrivateKey();
+    } catch {
+      return this.signalingFactory; // 無金鑰 → 無 warm 語義，維持既有行為
+    }
+
+    this.sigRelayRouter = new SigRelayRouter(firebaseUid);
+    const router = this.sigRelayRouter;
+
+    const enc = new TextEncoder();
+    const sign = async (data: string) =>
+      arrayBufferToBase64(
+        await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, ecdsaPrivateKey, enc.encode(data))
+      );
+
+    // 對端公鑰從名冊解析（keyx 既有發布管道）；preferCached 免去每則信封一次 server 讀。
+    const resolver = createDirectoryPeerKeyResolver(async (uid) => {
+      const snap = await this.directory!.getSnapshot(true);
+      const m = snap.meshIdentities[uid];
+      return m ? { pubKey: m.pubKey, ecdhPubKey: m.ecdhPubKey } : undefined;
+    });
+
+    const base = this.signalingFactory;
+    return (roomId, channelLabel, remoteUid) => {
+      const cold = () =>
+        base
+          ? base(roomId, channelLabel, remoteUid)
+          : import('../p2p/SignalingTransport').then(
+              (m) => new m.RoomSignalingTransport(roomId, channelLabel)
+            );
+      if (!remoteUid) {
+        // 呼叫端沒帶對端 uid → 封不了加密信封，無 warm 語義，純 cold。
+        return new WarmColdSignalingTransport(null, cold, () => false, channelLabel);
+      }
+      const warm = new PeerRelaySignalingTransport(
+        router,
+        { nodeId: firebaseUid, ecdhPrivateKey, epoch: 0, sign },
+        resolver,
+        roomId,
+        channelLabel,
+        { now: () => Date.now(), nonce: () => crypto.randomUUID() },
+        remoteUid
+      );
+      // 介紹加入的耐心（T4）：對「被介紹的對端」或「自己被介紹、對端非介紹人」的 pair，
+      // warm NACK 先重試一會兒（介紹人可能還在接他），窗盡才退 Firestore。有界不失活。
+      const patience = {
+        applies: async () => {
+          if (this.introducerUid && remoteUid !== this.introducerUid) return true;
+          const snap = await this.directory!.getSnapshot(true);
+          return typeof snap.meshIdentities[remoteUid]?.introducedBy === 'string';
+        },
+        totalMs: 8_000,
+        retryDelayMs: 1_000,
+      };
+      return new WarmColdSignalingTransport(
+        warm, cold, () => router.hasOpenNeighbors(), channelLabel, patience
+      );
+    };
+  }
+
+  /**
    * 設置鄰居連線的訊息監聽
    */
   private setupNeighborMessageHandlers(): void {
@@ -230,6 +321,15 @@ export class MeshGossipManager {
 
         if (!wiredConnections.has(neighbor)) {
           wiredConnections.add(neighbor);
+
+          // 暖中繼 signaling（Spec 005）：把這條連線掛進路由器當 link。
+          // 同 uid 重連（新實例）會替換舊 link；MeshConnection 內建接線前緩衝，
+          // bus 開到這裡的 2s 窗內收到的信封不會掉。
+          this.sigRelayRouter?.attachNeighbor(neighbor.getRemoteUid(), {
+            isOpen: () => neighbor.isBusOpen(),
+            send: (wire) => neighbor.sendSigRelay(wire),
+            onWire: (h) => neighbor.onSigRelay((p) => h(p as SigRelayWire)),
+          });
 
           neighbor.onMessage(async (message: GossipMessage) => {
             // 處理 relay 封包
@@ -440,6 +540,10 @@ export class MeshGossipManager {
     if (this.peerScoring) {
       this.peerScoring.destroy();
       this.peerScoring = null;
+    }
+    if (this.sigRelayRouter) {
+      this.sigRelayRouter.dispose();
+      this.sigRelayRouter = null;
     }
     if (this.topologyManager) {
       await this.topologyManager.cleanup();

@@ -5,6 +5,7 @@ import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
 import { MeshChatService } from '@legacy/features/chat/MeshChatService'
+import { readIntroducerHint } from '~/lib/introducerHint'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
 import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
 import { sendDecisionFor, type EncryptionState } from '@legacy/features/chat/encryptionGate'
@@ -214,7 +215,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     connectionState.value = 'connecting'
     isRoomOwner.value = room.ownerUid === uid // 房主＝座 0（first）；遊戲騎 mesh gossip（MeshGameBus）
     roomOwnerId.value = room.ownerUid ?? ''
-    const svc = new MeshChatService(roomId.value, uid)
+    const svc = new MeshChatService(roomId.value, uid, undefined, undefined, undefined, readIntroducerHint(roomId.value, uid))
     await svc.initialize()
     if (disposed) {
       await svc.cleanup()

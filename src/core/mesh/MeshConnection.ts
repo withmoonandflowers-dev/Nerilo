@@ -35,6 +35,18 @@ export class MeshConnection {
    * anti-entropy 對帳——lossy（best-effort、掉了不補），語義同星型的 TYPING。
    */
   private ephemeralListeners: Set<(env: { type: string; from?: string; payload: unknown }) => void> = new Set();
+  /**
+   * 暖中繼 signaling（Spec 005 T3）。走 ns:'sigrelay'，payload 是 SigRelayWire
+   * （加密信封/ACK/NACK）。本類只當啞管道：收送不解讀，路由歸 SigRelayRouter。
+   */
+  private sigRelayListeners: Set<(payload: unknown) => void> = new Set();
+  /**
+   * sigrelay 前置緩衝：bus 一開就會收 wire，但 router 由 MeshGossipManager 的 2s
+   * 掃描器才接線——這個窗內的信封不能丟（丟了發起方要等 ACK 逾時才退 Firestore）。
+   * 首個 listener 掛上時回放。容量小：signaling 握手每 pair 只有數則。
+   */
+  private sigRelayBuffer: unknown[] = [];
+  private static readonly SIG_RELAY_BUFFER_CAP = 32;
   private readyPromise: Promise<void>;
   private meshUserId: string; // 用於 Gossip 的 userId
 
@@ -60,7 +72,9 @@ export class MeshConnection {
       localFirebaseUid,
       symmetricLabel,
       isInitiator,
-      signalingFactory?.(roomId, symmetricLabel)
+      // 第三參數帶對端 uid：warm/cold 選擇器（Spec 005）要對「這一位」封加密信封；
+      // 不解析 label 取 uid（uid 可含任意字元，拆字串脆弱）。既有工廠忽略之，相容。
+      signalingFactory?.(roomId, symmetricLabel, remoteFirebaseUid)
     );
     
     this.readyPromise = this.initialize();
@@ -176,6 +190,23 @@ export class MeshConnection {
         }
       });
     });
+
+    // 暖中繼 signaling（Spec 005）：獨立 ns，啞管道轉交 router；router 未接線時先緩衝。
+    this.channelBus.subscribe('sigrelay', async (envelope) => {
+      if (this.sigRelayListeners.size === 0) {
+        if (this.sigRelayBuffer.length < MeshConnection.SIG_RELAY_BUFFER_CAP) {
+          this.sigRelayBuffer.push(envelope.payload);
+        }
+        return;
+      }
+      this.sigRelayListeners.forEach(listener => {
+        try {
+          listener(envelope.payload);
+        } catch (error) {
+          logger.error('[MeshConnection] Error in sigrelay listener', { error });
+        }
+      });
+    });
   }
 
   /**
@@ -250,6 +281,56 @@ export class MeshConnection {
     return () => {
       this.ephemeralListeners.delete(listener);
     };
+  }
+
+  /**
+   * 送暖中繼 signaling wire（Spec 005）。不 waitForReady：中繼只該走「現在就開著」的
+   * bus，未開直接 reject 讓 router 換介紹人／發起方退 Firestore。
+   */
+  async sendSigRelay(payload: unknown): Promise<void> {
+    if (this.channelBus?.getReadyState() !== 'open') {
+      throw new Error('MeshConnection: sigrelay bus not open');
+    }
+    await this.channelBus.send({
+      v: 1,
+      ns: 'sigrelay',
+      type: 'SIG_RELAY',
+      id: `${Date.now()}-${Math.random()}`,
+      ts: Date.now(),
+      from: this.localFirebaseUid,
+      to: this.remoteFirebaseUid,
+      payload,
+    });
+  }
+
+  /** 監聽對方送來的暖中繼 wire；首個 listener 掛上時回放接線前緩衝的。 */
+  onSigRelay(listener: (payload: unknown) => void): () => void {
+    const isFirst = this.sigRelayListeners.size === 0;
+    this.sigRelayListeners.add(listener);
+    if (isFirst && this.sigRelayBuffer.length > 0) {
+      const buffered = this.sigRelayBuffer;
+      this.sigRelayBuffer = [];
+      for (const payload of buffered) {
+        try {
+          listener(payload);
+        } catch (error) {
+          logger.error('[MeshConnection] Error replaying buffered sigrelay', { error });
+        }
+      }
+    }
+    return () => {
+      this.sigRelayListeners.delete(listener);
+    };
+  }
+
+  /** 這條連線的對端 signaling uid（router 以此掛 link）。 */
+  getRemoteUid(): string {
+    return this.remoteFirebaseUid;
+  }
+
+  /** DataChannel bus 是否開著（router 的 isOpen 依據）。 */
+  isBusOpen(): boolean {
+    return this.channelBus?.getReadyState() === 'open';
   }
 
   /** 監聽對方送來的 digest */
