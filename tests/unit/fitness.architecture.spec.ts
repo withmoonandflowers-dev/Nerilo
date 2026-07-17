@@ -22,8 +22,11 @@ const ROOT = join(__dirname, '../..');
 /** 既有大檔的祖父條款上限（2026-07-16 實測，計法=split('\n').length，較 wc -l 多 1）。只准調低。 */
 const GOD_FILE_BASELINE: Record<string, number> = {
   'src/features/chat/ChatPage.tsx': 1204,
-  'web-vue/app/pages/chat/[roomId].vue': 1171,
-  'src/services/RoomService.ts': 1055,
+  // 1171→1172（2026-07-16 稽核裁決）：Spec 005 T4 介紹人 hint 的最小整合面
+  // ＝1 行 import + 呼叫（邏輯在 web-vue/app/lib/introducerHint.ts，未進本檔）。
+  'web-vue/app/pages/chat/[roomId].vue': 1172,
+  // 1055→988（2026-07-16）：updateMeshIdentity 抽至 meshIdentityRegistry.ts（棘輪反向調低）
+  'src/services/RoomService.ts': 988,
   'web-vue/app/pages/dashboard.vue': 862,
 };
 

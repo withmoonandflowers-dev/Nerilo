@@ -14,8 +14,20 @@ export class FirestoreRoomDirectory implements IRoomDirectory {
     private readonly localUid: string
   ) {}
 
-  async registerIdentity(entry: { userId: string; pubKey: string; ecdhPubKey?: string }): Promise<void> {
-    await RoomService.updateMeshIdentity(this.roomId, this.localUid, entry.userId, entry.pubKey, entry.ecdhPubKey);
+  async registerIdentity(entry: {
+    userId: string;
+    pubKey: string;
+    ecdhPubKey?: string;
+    introducedBy?: string;
+  }): Promise<void> {
+    await RoomService.updateMeshIdentity(
+      this.roomId,
+      this.localUid,
+      entry.userId,
+      entry.pubKey,
+      entry.ecdhPubKey,
+      entry.introducedBy
+    );
   }
 
   watchIdentities(onChange: (snapshot: RoomSnapshot) => void): () => void {

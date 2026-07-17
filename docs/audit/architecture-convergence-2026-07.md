@@ -77,6 +77,9 @@
 - **公開表面快照測試**：對 `sdk/index.ts` 匯出清單與 dist/types 檔數設上限，超過即紅。
 - **死重棘輪**：PARK 的模組加 lint 規則「不得新增對它的 import」，凍結生效。
 - **god-file 行數棘輪**：4 個 god-file 設當前行數為上限，只准變小。
+  - 2026-07-16 裁決：`[roomId].vue` 1171→1172——Spec 005 T4 介紹人 hint 的最小整合面
+    （1 行 import＋呼叫；邏輯在新檔 `lib/introducerHint.ts`）。同輪 `RoomService`
+    1055→988（`updateMeshIdentity` 抽至 `meshIdentityRegistry.ts`），淨值大減。
 - madge --circular 納入 CI，維持 0 環。
 
 ## ⑦ 重排（按「能不能被消費」的槓桿）

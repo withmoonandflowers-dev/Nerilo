@@ -33,9 +33,10 @@ export class MeshChatService {
     private localUid: string,
     chatStorage: IChatStorage = indexedDBService,
     signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端（P2a）
-    directory?: IRoomDirectory // 省略＝Firestore 名冊/發現；SDK 注入自架後端（P2b）
+    directory?: IRoomDirectory, // 省略＝Firestore 名冊/發現；SDK 注入自架後端（P2b）
+    introducerUid?: string // 邀請連結指名的介紹人（Spec 005 T4）：先連他、其餘 pair 走 warm 中繼
   ) {
-    this.meshGossipManager = new MeshGossipManager(roomId, localUid, signalingFactory, directory);
+    this.meshGossipManager = new MeshGossipManager(roomId, localUid, signalingFactory, directory, introducerUid);
     this.chatStorage = chatStorage;
   }
 

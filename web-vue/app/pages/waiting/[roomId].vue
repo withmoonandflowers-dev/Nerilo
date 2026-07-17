@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import QRCode from 'qrcode'
 import { RoomService } from '@legacy/services/RoomService'
+import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
+import { buildInviteUrl, parseInviteRendezvous, introducerStoreKey } from '@legacy/core/p2p/InviteRendezvous'
 import type { P2PRoom } from '@legacy/types'
 import { featureLog } from '@legacy/utils/featureLog'
 
@@ -16,9 +18,14 @@ const qrDataUrl = ref('')
 const busy = ref(false)
 const notFound = ref(false)
 
-const shareUrl = computed(() =>
-  import.meta.client ? `${window.location.origin}/waiting/${roomId.value}` : ''
-)
+// 分享連結：內嵌會合資訊（Spec 005 T4）——邀請者 uid+公鑰放 fragment（不上送伺服器）。
+// 身分金鑰非同步載入，先給素連結、就緒後升級成帶會合的完整版（QR 用完整版）。
+const shareUrl = ref('')
+watchEffect(() => {
+  if (import.meta.client && roomId.value) {
+    shareUrl.value = `${window.location.origin}/waiting/${roomId.value}`
+  }
+})
 const isOwner = computed(() => !!user.value && room.value?.ownerUid === user.value.uid)
 
 let unsubscribe: (() => void) | null = null
@@ -29,6 +36,17 @@ watchEffect(async () => {
   initialized = true
   const uid = user.value.uid
   featureLog('waiting', 'init', { roomId: roomId.value, uid })
+
+  // ── 被邀請側（Spec 005 T4）：解析連結 fragment 的會合資訊 → 暫存供 chat 頁指名介紹人 ──
+  if (import.meta.client) {
+    const rz = parseInviteRendezvous(window.location.hash)
+    if (rz && rz.room === roomId.value && rz.inviter.uid !== uid) {
+      try {
+        sessionStorage.setItem(introducerStoreKey(roomId.value), JSON.stringify(rz.inviter))
+        featureLog('waiting', 'rendezvous-parsed', { roomId: roomId.value, introducer: rz.inviter.uid })
+      } catch { /* sessionStorage 不可用（隱私模式）→ 走一般冷啟動，功能不受阻 */ }
+    }
+  }
 
   const current = await RoomService.getRoom(roomId.value, true)
   if (!current) {
@@ -70,6 +88,23 @@ watchEffect(async () => {
       navigateTo('/dashboard', { replace: true })
     }
   })
+
+  // ── 邀請側（Spec 005 T4）：把自己的身分（uid+公鑰）嵌進分享連結 fragment ──
+  // 被邀請者據此指名我為首個 warm 目標；公鑰作頻外信任根（防伺服器換鑰 MITM）。
+  try {
+    const idm = new IdentityManager()
+    await idm.initialize()
+    shareUrl.value = buildInviteUrl(window.location.origin, {
+      room: roomId.value,
+      inviter: {
+        uid,
+        pubKey: await idm.exportPublicKey(),
+        ecdhPubKey: await idm.exportEcdhPublicKey(),
+      },
+    })
+  } catch {
+    /* 金鑰不可用（極舊環境）→ 素連結照常可用，只是少了會合資訊 */
+  }
 
   qrDataUrl.value = await QRCode.toDataURL(shareUrl.value, {
     width: 480,

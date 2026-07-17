@@ -944,87 +944,20 @@ export class RoomService {
   }
 
   /**
-   * 更新或添加小網狀架構的身分資訊
+   * 更新或添加小網狀架構的身分資訊。
+   * 本體抽至 meshIdentityRegistry（god-file 棘輪：Spec 005 T4 新欄位進新檔）；
+   * 此處保留薄委派維持既有呼叫面。
    */
   static async updateMeshIdentity(
     roomId: string,
     firebaseUid: string,
     userId: string,
     pubKey: string,
-    /** ECDH 公鑰（Base64 SPKI），供 keyx 成對封裝（ADR-0023 P2-②c）。可選（舊 client 不帶）。 */
-    ecdhPubKey?: string
+    ecdhPubKey?: string,
+    introducedBy?: string
   ): Promise<void> {
-    const roomDoc = doc(db, 'p2pRooms', roomId);
-
-    // 驗證 userId 和 pubKey 格式（純輸入檢查，不需重試）
-    if (typeof userId !== 'string' || userId.length < 8 || userId.length > 64) {
-      throw new Error('Invalid userId format: must be 8-64 characters');
-    }
-    if (typeof pubKey !== 'string' || pubKey.length < 40 || pubKey.length > 512) {
-      throw new Error('Invalid pubKey format: must be 40-512 characters');
-    }
-    // 驗證 pubKey 是合法的 Base64
-    if (!/^[A-Za-z0-9+/]+=*$/.test(pubKey)) {
-      throw new Error('Invalid pubKey format: must be valid Base64');
-    }
-    // ecdhPubKey 同格式驗證（若提供）
-    if (ecdhPubKey !== undefined) {
-      if (typeof ecdhPubKey !== 'string' || ecdhPubKey.length < 40 || ecdhPubKey.length > 512) {
-        throw new Error('Invalid ecdhPubKey format: must be 40-512 characters');
-      }
-      if (!/^[A-Za-z0-9+/]+=*$/.test(ecdhPubKey)) {
-        throw new Error('Invalid ecdhPubKey format: must be valid Base64');
-      }
-    }
-
-    // 寫入 meshIdentities[自己]。firestore.rules 以「更新前 doc 的 participants
-    // 含自己」授權；三人幾乎同時進場時，本人的 join(arrayUnion) 可能尚未 server-commit，
-    // 此刻寫入會（getDoc 讀不到自己 → 或 updateDoc 觸發 permission-denied）失敗，
-    // 導致該人 mesh 初始化整場失敗、連不上。以重試等 join 傳播（毫秒級）。
-    const attempt = async (): Promise<void> => {
-      const snap = await getDoc(roomDoc);
-      if (!snap.exists()) throw new Error('房間不存在');
-      const data = snap.data();
-      const participants = data.participants || [];
-      if (!participants.includes(firebaseUid)) {
-        throw new Error('join-not-propagated'); // 可重試：join 尚未生效
-      }
-      const meshIdentities = data.meshIdentities || {};
-      meshIdentities[firebaseUid] = {
-        userId,
-        pubKey,
-        ...(ecdhPubKey ? { ecdhPubKey } : {}),
-        joinedAt: Date.now(),
-      };
-      await updateDoc(roomDoc, {
-        meshIdentities,
-        topology: 'mesh', // 標記為 mesh 拓撲
-      });
-    };
-
-    const MAX_ATTEMPTS = 5;
-    for (let i = 0; i < MAX_ATTEMPTS; i++) {
-      try {
-        await attempt();
-        break;
-      } catch (err) {
-        const code = (err as { code?: string }).code;
-        const msg = (err as Error).message;
-        const retryable = msg === 'join-not-propagated' || code === 'permission-denied';
-        // 「房間不存在」與格式錯誤等不可重試——立即拋出
-        if (msg === '房間不存在') throw err;
-        if (!retryable || i === MAX_ATTEMPTS - 1) throw err;
-        await new Promise((r) => setTimeout(r, 200 * (i + 1))); // 200/400/600/800ms
-      }
-    }
-
-    if (DEBUG_ROOMS) {
-      logger.info('[RoomService] Updated mesh identity', {
-        roomId,
-        firebaseUid,
-        userId,
-      });
-    }
+    const { updateMeshIdentity } = await import('./meshIdentityRegistry');
+    await updateMeshIdentity(roomId, firebaseUid, userId, pubKey, ecdhPubKey, introducedBy);
   }
 
   /**
