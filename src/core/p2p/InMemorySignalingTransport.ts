@@ -1,4 +1,4 @@
-import type { RawSignalDoc, SignalingTransport } from './SignalingTransport';
+import type { RawSignalDoc, SignalingTransport } from './SignalingTransport.types';
 
 /**
  * 純記憶體 signaling（無 Firebase），證明 SignalingTransport 這道注入縫是真的可替換

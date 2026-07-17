@@ -27,35 +27,10 @@ import { db } from '../../config/firebase';
 import { logger } from '../../utils/logger';
 import type { RelaySignalingChannel, RelaySignalType } from '../relay/RelaySignaling';
 
-/** 收到的原始 signal 文件（manager 再做 dedup/過濾/handle） */
-export interface RawSignalDoc {
-  signalId: string;
-  from?: string;
-  to?: string | null;
-  type?: string;
-  payload?: unknown;
-  channelLabel?: string;
-}
-
-export interface SignalingTransport {
-  /**
-   * 訂閱新增的 signal。cutoffMs = 只看此毫秒之後寫入的（lookback 下限）。
-   * onAdded 對每筆「新增」文件呼叫一次（含自己送的——由 manager 過濾）。回傳取消訂閱。
-   */
-  subscribe(cutoffMs: number, onAdded: (raw: RawSignalDoc) => void): () => void;
-  /** 寫一則 signal（manager 已組好 doc，含 from/to/type/payload/createdAt/channelLabel）。 */
-  send(data: Record<string, unknown>): Promise<void>;
-  /** 清理早於 beforeMs 的舊 signal（best-effort；relay 版可 no-op）。 */
-  cleanupOlderThan(beforeMs: number): Promise<void>;
-  /** 離開時清掉自己（localUid）這條 channel 送出的 signals（best-effort；relay 版可 no-op）。 */
-  cleanupOwn(localUid: string): Promise<void>;
-}
-
-/**
- * 依 (roomId, channelLabel) 造一個 SignalingTransport。mesh 每條鄰居連線各造一個
- * （channelLabel 不同）。這是 SDK 的後端注入縫（P2）：預設走 Firestore，第三方可換自架。
- */
-export type SignalingFactory = (roomId: string, channelLabel: string) => SignalingTransport;
+// 契約與實作分家（架構收斂 2026-07）：介面在 .types（零 Firebase），本檔只放實作。
+// 內部消費者沿用從本檔 import 型別（re-export），不必改動。
+export type { RawSignalDoc, SignalingTransport, SignalingFactory } from './SignalingTransport.types';
+import type { RawSignalDoc, SignalingTransport } from './SignalingTransport.types';
 
 /**
  * 房內 signaling：p2pRooms/{roomId}/signals。行為與重構前的 P2PConnectionManager

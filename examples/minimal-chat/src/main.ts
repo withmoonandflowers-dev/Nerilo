@@ -10,7 +10,6 @@
  * 只用公開契約（NeriloClient 門面），不碰任何內部 mesh/crypto 類別。
  */
 import {
-  createChatClient,
   InMemorySignalingHub,
   InMemorySignalingTransport,
   InMemoryRoomDirectory,
@@ -18,6 +17,8 @@ import {
   InMemoryChatStorage,
   type NeriloClient,
 } from 'nerilo';
+// turnkey 工廠在 subpath（架構收斂 2026-07）
+import { createChatClient } from 'nerilo/firestore';
 
 const ROOM = 'demo-room';
 

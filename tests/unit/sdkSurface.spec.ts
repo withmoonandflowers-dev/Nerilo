@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest';
 // 參考 adapter + 型別，全數不需 Firebase（barrel 靜態圖無 firebase，見 ADR-0025 P3）。
 import {
   NeriloClient,
-  createChatClient,
   InMemorySignalingHub,
   InMemorySignalingTransport,
   InMemoryRoomDirectoryHub,
@@ -18,6 +17,8 @@ import {
   type IChatEngine,
   type ChatMessage,
 } from '../../src/sdk';
+// turnkey 工廠在 subpath（架構收斂 2026-07）：主 barrel 保持純契約、型別表面乾淨
+import { createChatClient } from '../../src/sdk/firestore';
 
 describe('SDK 公開表面（P3 publishable surface）', () => {
   it('barrel 匯出門面/純函式/記憶體 adapter/型別，全可用（無 Firebase）', () => {

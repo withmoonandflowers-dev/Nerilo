@@ -7,6 +7,7 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   resolve: {
     alias: {
+      'nerilo/firestore': fileURLToPath(new URL('../../dist/firestore.js', import.meta.url)),
       nerilo: fileURLToPath(new URL('../../dist/index.js', import.meta.url)),
     },
   },
