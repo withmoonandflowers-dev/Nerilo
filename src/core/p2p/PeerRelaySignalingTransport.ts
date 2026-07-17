@@ -116,9 +116,11 @@ export class PeerRelaySignalingTransport implements SignalingTransport {
   }
 
   async send(data: Record<string, unknown>): Promise<void> {
-    const to = (data.to as string | null | undefined) ?? undefined;
+    // manager 發起方首發 offer 時 remoteUid 尚未學到 → data.to 為 null（Firestore
+    // 廣播式語義容許）。warm 是點對點加密：退用建構時綁定的 pair 對端。
+    const to = (data.to as string | null | undefined) ?? this.remoteNodeId;
     if (!to) {
-      // peer-relay 是點對點加密，必須有明確收件對象（無 to 的廣播不適用此傳輸）。
+      // 無 data.to 也無綁定對端（星型單一 transport）＝廣播語義，不適用此傳輸。
       throw new Error('PeerRelaySignalingTransport: peer-relay 需要明確 to（點對點加密）');
     }
     const toEcdhPublic = await this.peers.ecdhPublicOf(to);
