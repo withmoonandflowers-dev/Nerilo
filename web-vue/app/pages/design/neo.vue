@@ -3,8 +3,12 @@
  * neo 主題展示頁（聊天 × 遊戲整合版面，mock 資料、零 Firebase）
  * 用途：設計驗收截圖、對外 demo 開場。真實頁面在 /chat/[roomId]。
  */
-const { theme, setTheme, cycleTheme } = useTheme()
+const { theme, setTheme } = useTheme()
 onMounted(() => setTheme('neo'))
+// 展示頁自帶預覽切換（產品 UI 已無循環鈕，Spec 006 T1）
+const PREVIEW_ORDER = ['neo', 'light', 'dark'] as const
+const previewCycle = () =>
+  setTheme(PREVIEW_ORDER[(PREVIEW_ORDER.indexOf(theme.value as typeof PREVIEW_ORDER[number]) + 1) % PREVIEW_ORDER.length]!)
 
 interface MockMsg {
   id: number
@@ -32,7 +36,7 @@ const showGame = ref(true)
         <p class="chat__status chat__status--connected">已連線 · P2P 直連</p>
       </div>
       <div class="chat__head-actions">
-        <button type="button" class="chat__action" :title="`主題：${theme}`" @click="cycleTheme">◐</button>
+        <button type="button" class="chat__action" :title="`主題：${theme}`" @click="previewCycle">◐</button>
         <button type="button" class="chat__action" :class="{ 'chat__action--on': showGame }" @click="showGame = !showGame">🎮</button>
       </div>
     </header>

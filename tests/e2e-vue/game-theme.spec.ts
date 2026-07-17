@@ -1,5 +1,9 @@
 /**
- * web-vue 整合頁：井字棋雙向對戰 + neo 主題三態切換。
+ * web-vue 整合頁：井字棋雙向對戰 + 主題跟隨系統深淺。
+ *
+ * 主題段 2026-07-17 改寫（Spec 006 T1 拍板：單一乾淨主題＋深淺自動）：
+ * 原「預設 neo + 循環切換」已退役——改斷言 prefers-color-scheme 驅動 light/dark、
+ * 且產品 UI 無切換鈕殘留。
  */
 import { test, expect, type Page } from '@playwright/test';
 import {
@@ -14,16 +18,25 @@ function cell(page: Page, i: number) {
   return page.getByTestId(`ttt-cell-${i}`);
 }
 
+const themeAttr = (page: Page) =>
+  page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+
 test.describe('Vue 版遊戲 × 主題', () => {
-  test('井字棋出招雙向可見、回合輪替；neo 主題預設且可循環切換 @vue-stable', async ({ browser }) => {
+  test('井字棋出招雙向可見、回合輪替；主題跟隨系統深淺 @vue-stable', async ({ browser }) => {
     test.setTimeout(180_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
     try {
-      // 主題：預設 neo
-      await expect
-        .poll(async () => alice.page.evaluate(() => document.documentElement.getAttribute('data-theme')))
-        .toBe('neo');
+      // 主題：跟隨系統——淺色＝基底（無 data-theme）、深色＝dark 覆蓋層，即時跟隨
+      await alice.page.emulateMedia({ colorScheme: 'light' });
+      await expect.poll(async () => themeAttr(alice.page)).toBe(null);
+      await alice.page.emulateMedia({ colorScheme: 'dark' });
+      await expect.poll(async () => themeAttr(alice.page)).toBe('dark');
+      await alice.page.emulateMedia({ colorScheme: 'light' });
+      await expect.poll(async () => themeAttr(alice.page)).toBe(null);
+
+      // 收斂驗收：產品 UI 無主題切換鈕殘留（Spec 006 V3）
+      await expect(alice.page.getByRole('button', { name: /切換主題/ })).toHaveCount(0);
 
       const roomId = await createRoom(alice.page);
       await joinRoom(bob.page, roomId);
@@ -43,21 +56,6 @@ test.describe('Vue 版遊戲 × 主題', () => {
       await cell(bob.page, 4).click();
       await expect(cell(alice.page, 4)).toHaveText('O', { timeout: 10_000 });
       await expect(alice.page.getByTestId('ttt-status')).toHaveText('輪到你（X）');
-
-      // 主題循環：neo → light → dark → neo
-      const themeBtn = alice.page.getByRole('button', { name: /切換主題/ });
-      await themeBtn.click();
-      await expect
-        .poll(async () => alice.page.evaluate(() => document.documentElement.getAttribute('data-theme')))
-        .toBe(null);
-      await themeBtn.click();
-      await expect
-        .poll(async () => alice.page.evaluate(() => document.documentElement.getAttribute('data-theme')))
-        .toBe('dark');
-      await themeBtn.click();
-      await expect
-        .poll(async () => alice.page.evaluate(() => document.documentElement.getAttribute('data-theme')))
-        .toBe('neo');
     } finally {
       await teardown(alice, bob);
     }

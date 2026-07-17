@@ -89,6 +89,7 @@ async function waitConnected(conn: RelayConnLike, timeoutMs = CONNECT_TIMEOUT_MS
 interface TestHook {
   relay?: Record<string, unknown>
   backup?: Record<string, unknown>
+  roomdir?: Record<string, unknown>
 }
 
 export function useCourierNode() {
@@ -299,6 +300,10 @@ export function useCourierNode() {
   function exposeTestHook(uid: string) {
     const w = globalThis as unknown as { __nerilo_test__?: TestHook }
     if (!w.__nerilo_test__) return
+    // 房間目錄（Spec 006 T2：dashboard 顯示已砍，機制照跑）：e2e 改由此斷言傳播結果
+    w.__nerilo_test__.roomdir = {
+      list: () => roomAdvertCache.list(),
+    }
     w.__nerilo_test__.relay = {
       connectToRelayNode: async (courierUid: string) => {
         const conn = await connector!.connectToRelayNode(courierUid)

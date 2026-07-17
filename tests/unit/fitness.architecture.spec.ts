@@ -22,12 +22,12 @@ const ROOT = join(__dirname, '../..');
 /** 既有大檔的祖父條款上限（2026-07-16 實測，計法=split('\n').length，較 wc -l 多 1）。只准調低。 */
 const GOD_FILE_BASELINE: Record<string, number> = {
   'src/features/chat/ChatPage.tsx': 1204,
-  // 1171→1172（2026-07-16 稽核裁決）：Spec 005 T4 介紹人 hint 的最小整合面
-  // ＝1 行 import + 呼叫（邏輯在 web-vue/app/lib/introducerHint.ts，未進本檔）。
-  'web-vue/app/pages/chat/[roomId].vue': 1172,
+  // 1172→1168（2026-07-17 Spec 006：主題循環鈕移除＋遊戲旗標抽 lib/gameRoomFlag，反向調低）
+  'web-vue/app/pages/chat/[roomId].vue': 1168,
   // 1055→988（2026-07-16）：updateMeshIdentity 抽至 meshIdentityRegistry.ts（棘輪反向調低）
   'src/services/RoomService.ts': 988,
-  'web-vue/app/pages/dashboard.vue': 862,
+  // 862→795（2026-07-17 Spec 006：砍中繼卡＋P2P 目錄＋主題鈕，反向調低）
+  'web-vue/app/pages/dashboard.vue': 795,
 };
 
 /** 名單外產品檔的行數上限。超過＝長出新 god-file，先拆再合。 */
