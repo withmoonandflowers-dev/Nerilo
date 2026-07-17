@@ -14,6 +14,7 @@
  *      （誠實對照：不是整場都僥倖 warm，Strangler 三態如設計運作）。
  * 功能面：三人互發訊息各自可見（連線是真的通，不只是握手）。
  */
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
 import { setupUser, createRoom, joinRoom, sendMessage, uniqueMessage, teardown } from './_helpers/users';
 
@@ -47,10 +48,9 @@ const pairLabel = (u1: string, u2: string) => {
 };
 
 test.describe('Spec 005 p2p2p 介紹加入', () => {
-  // 尚未掛 @vue-stable：機制已驗（見 spec 005 §5 T6 紀錄——C 側零 Firestore 寫入與
-  // B 中繼加密信封有實錄），但三瀏覽器在 emulator 下的「全綠」尚未穩定重現
-  // （C 進場時序×keyx×WebRTC 組合窗）。穩定連過 3 次再掛 stable。
-  test('第三人經介紹加入：被介紹 pair 走加密中繼、零 Firestore signaling', async ({ browser }) => {
+  // 2026-07-17 掛 stable：根因（PeerRelaySignalingTransport.send 漏 await bus.relay →
+  // NACK rejection 漂走 → warm 假成功、cold 永不觸發）修復後三連綠（21.7s/27.2s/18.0s）。
+  test('第三人經介紹加入：被介紹 pair 走加密中繼、零 Firestore signaling @vue-stable', async ({ browser }) => {
     test.setTimeout(300_000);
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
@@ -71,6 +71,23 @@ test.describe('Spec 005 p2p2p 介紹加入', () => {
       // ── 第三人 C：開 B 的邀請連結（fragment 會合資訊）──
       const carol = await setupUser(browser);
       const logsC = collectConsole(carol.page);
+      // 診斷證據必跑（finally）：先前多輪在斷言前失敗，證據傾印從未執行 → 盲飛。
+      const dumpEvidence = () => {
+        // 完整 console 寫檔（離線分析用；console 過濾在 ICE 層級不夠用）
+        try {
+          mkdirSync('test-results', { recursive: true });
+          for (const [name, lines] of [['A', logsA], ['B', logsB], ['C', logsC]] as const) {
+            writeFileSync(`test-results/p2p2p-console-${name}.log`, lines.join('\n'));
+          }
+        } catch { /* 寫不進就算了，console 摘要仍在 */ }
+        for (const [name, lines] of [['A', logsA], ['B', logsB], ['C', logsC]] as const) {
+          const hits = lines.filter((l) =>
+            /WarmCold|SigRelay|退回 cold|已中繼|耐心|rendezvous|不等|Introduced-defer/.test(l)
+          );
+          const tail = hits.slice(-40);
+          console.log(`[evidence:${name}]`, tail.length ? `\n${tail.join('\n')}` : '(none)');
+        }
+      };
       try {
         await carol.page.goto(`/waiting/${roomId}#nrz=${encodeRendezvous(roomId, bobUid)}`);
         await expect(carol.page).toHaveURL(/\/chat\/.+/, { timeout: 30_000 });
@@ -102,12 +119,6 @@ test.describe('Spec 005 p2p2p 介紹加入', () => {
         const labelAC = pairLabel(aliceUid, carolUid);
         const labelBC = pairLabel(bobUid, carolUid);
 
-        // 失敗診斷證據：選路/中繼相關 console 全文傾印到測試輸出
-        for (const [name, lines] of [['A', logsA], ['B', logsB], ['C', logsC]] as const) {
-          const hits = lines.filter((l) => /WarmCold|SigRelay|退回 cold|已中繼|耐心|rendezvous/.test(l));
-          console.log(`[evidence:${name}]`, hits.length ? `\n${hits.join('\n')}` : '(none)');
-        }
-
         // 1. 介紹人 B 真的中繼過加密信封
         expect(
           logsB.some((l) => l.includes('已中繼信封')),
@@ -129,6 +140,7 @@ test.describe('Spec 005 p2p2p 介紹加入', () => {
           'B↔C（bootstrap 第一跳）應退回 Firestore——素未謀面的物理限制'
         ).toBe(true);
       } finally {
+        dumpEvidence();
         await teardown(carol);
       }
     } finally {

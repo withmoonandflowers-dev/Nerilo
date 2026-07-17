@@ -28,8 +28,12 @@ import { logger } from '../../utils/logger';
  * 中繼一律只依 `to` 轉密文，不解讀內容。
  */
 export interface SignalRelayBus {
-  /** 交一則已封信封給 mesh 遞送（依 env.to 找暖路徑，可能經中繼）。 */
-  relay(env: SignalEnvelope): void;
+  /**
+   * 交一則已封信封給 mesh 遞送（依 env.to 找暖路徑，可能經中繼）。
+   * 回傳 Promise 的實作（如 SigRelayRouter 的 ACK/NACK）其 rejection＝「無暖路徑」，
+   * 是上層退回 Firestore 的觸發訊號——send 必須 await 它。
+   */
+  relay(env: SignalEnvelope): void | Promise<void>;
   /** 訂閱 `to === 本機` 的入站信封（handler 可為 async，承載層可據回傳的 promise 排程）；回傳取消訂閱。 */
   onInbound(handler: (env: SignalEnvelope) => void | Promise<void>): () => void;
 }
@@ -139,7 +143,9 @@ export class PeerRelaySignalingTransport implements SignalingTransport {
       toEcdhPublic,
       this.local.sign,
     );
-    this.bus.relay(env);
+    // 必須 await：relay 的 NACK/無路 rejection 是「退回 Firestore」的觸發訊號，
+    // 漂走會讓 send 假成功 → 上層永不退 cold → signaling 憑空消失（T6 run15 破案）。
+    await this.bus.relay(env);
   }
 
   async cleanupOlderThan(): Promise<void> {

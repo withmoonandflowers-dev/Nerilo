@@ -245,11 +245,34 @@ describe('PeerRelaySignalingTransport — 定址與契約', () => {
     expect(got).toHaveLength(0); // from=B 不等於綁定的 remote=C → 忽略
   });
 
-  it('send 無 to → 拋錯（peer-relay 需點對點對象）', async () => {
+  it('send 無 to 且無綁定對端 → 拋錯；無 to 但有綁定對端 → 退用綁定對端', async () => {
     freshMesh();
     const t = new PeerRelaySignalingTransport(mesh.busFor('C'), identityFor(C), resolver, 'room1', 'c', clock);
     await expect(
       t.send({ from: 'C', to: null, type: 'offer', payload: OFFER }),
     ).rejects.toThrow(/需要明確 to/);
+
+    // manager 發起方首發 offer 時 to=null（尚未學到對端）：綁定 remoteNodeId 的
+    // pair transport 必須退用它（否則 warm 首發全滅，T6 run10 實測抓到）。
+    const bound = new PeerRelaySignalingTransport(mesh.busFor('C'), identityFor(C), resolver, 'room1', 'mesh-A-C', clock, 'A');
+    const got: RawSignalDoc[] = [];
+    new PeerRelaySignalingTransport(mesh.busFor('A'), identityFor(A), resolver, 'room1', 'mesh-A-C', clock, 'C')
+      .subscribe(0, (raw) => got.push(raw));
+    await bound.send({ from: 'C', to: null, type: 'offer', payload: OFFER });
+    await mesh.flush();
+    expect(got).toHaveLength(1); // 經綁定對端 A 收到
+  });
+
+  it('relay 被拒（NACK/無路）→ send 必須 reject（退 Firestore 的觸發訊號，不得漂走）', async () => {
+    // T6 run15 破案的迴歸釘：bus.relay 回 rejected promise，send 若不 await 會假成功
+    // → 上層永不退 cold → signaling 憑空消失。
+    const rejectingBus: SignalRelayBus = {
+      relay: () => Promise.reject(new Error('SigRelayRouter: 無暖路徑可達 A')),
+      onInbound: () => () => {},
+    };
+    const t = new PeerRelaySignalingTransport(rejectingBus, identityFor(C), resolver, 'room1', 'mesh-A-C', clock, 'A');
+    await expect(
+      t.send({ from: 'C', to: 'A', type: 'offer', payload: OFFER }),
+    ).rejects.toThrow(/無暖路徑/);
   });
 });
