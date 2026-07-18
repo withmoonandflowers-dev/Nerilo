@@ -52,7 +52,7 @@ src/core/
 ├── p2p/            # WebRTC connections, signaling, channel bus
 ├── mesh/           # Gossip protocol, topology, heartbeat, identity
 ├── relay/          # Dual-layer relay infrastructure (see below)
-├── crypto/         # SenderKeyManager (E2EE), ECDH, TreeKEM + GroupKeyManager
+├── crypto/         # SenderKeyManager (E2EE), ECDH（TreeKEM/GroupKeyManager 已退役，ADR-0033）
 ├── incentive/      # Relay credit system (LocalCreditProvider)
 ├── chain/          # Append-only log sync & merge
 ├── clock/          # Hybrid Logical Clock (HLC)
@@ -65,7 +65,7 @@ src/core/
 └── adapters/       # Browser/Node runtime abstraction
 ```
 
-Note: `game/`, `community/`, `adapters/`, TreeKEM, and DHT storage are **dormant
+Note: `game/`, `community/`, `adapters/`, and DHT storage are **dormant
 modules** — fully tested but not yet wired into app flows (mined from PR #5).
 
 ### Relay Infrastructure (`src/core/relay/`)

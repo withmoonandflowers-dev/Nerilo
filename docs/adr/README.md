@@ -23,3 +23,4 @@
 | [0016](0016-ui-theming-not-framework-swap.md) | 視覺升級用多主題設計系統，不換前端框架 | Accepted |
 | [0029](0029-courier-iou-claims.md) | 信使經濟採有對象、可同意交換的欠條 | Accepted |
 | [0030](0030-courier-iou-durability.md) | 信使欠條簿採本機耐久快照與重載重驗 | Accepted |
+| [0033](0033-retire-treekem-groupkeymanager.md) | 退役 TreeKEM 與 GroupKeyManager（ADR-0031 續篇） | Accepted |
