@@ -480,13 +480,7 @@ const ChatPage: React.FC = () => {
           // → 仍恰好一次。人數以「房間文件」為真相來源（join 即入列），
           // 不用 mesh 鄰居發現數（對方 mesh init 卡住時會少算）。
           const coverage = meshTopology.getState().meshChatService?.getMeshCoverage();
-          // Spec 011 Q4(b)：期望值取 min(n-1, 拓撲目標鄰居數 k)。partial mesh
-          // （7+ 人）下 k < n-1 是設計常態，仍用 n-1 會每訊息觸發備援雙寫；
-          // ≤6 人房 k ≥ n-1，行為與先前一致（React 凍結線的最小非破壞修正）。
-          const expectedPeers = Math.min(
-            participantCountRef.current - 1,
-            coverage?.targetNeighbors ?? Infinity
-          );
+          const expectedPeers = Math.min(participantCountRef.current - 1, coverage?.targetNeighbors ?? Infinity); // Spec 011 Q4(b)：見 getMeshCoverage 註解
           if (coverage && expectedPeers > 0 && coverage.connected < expectedPeers) {
             await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
             featureLog('chat', 'message_sent', { roomId, channel: 'firestore_bridge' });
