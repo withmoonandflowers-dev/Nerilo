@@ -493,7 +493,7 @@ const ChatPage: React.FC = () => {
           // 不用 mesh 鄰居發現數（對方 mesh init 卡住時會少算）。
           const meshChatService = meshTopology.getState().meshChatService;
           const coverage = meshChatService?.getMeshCoverage();
-          const expectedPeers = participantCountRef.current - 1;
+          const expectedPeers = Math.min(participantCountRef.current - 1, coverage?.targetNeighbors ?? Infinity); // Spec 011 Q4(b)：見 getMeshCoverage 註解
           if (coverage && expectedPeers > 0 && coverage.connected < expectedPeers) {
             // Spec 012 P4 止血：橋接一律房間金鑰密文；無金鑰不送明文
             // （掉隊者由 mesh anti-entropy 補齊），不再明文洩漏到 Firestore。

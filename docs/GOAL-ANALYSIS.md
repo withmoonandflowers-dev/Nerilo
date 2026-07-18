@@ -161,8 +161,8 @@ MessageAssembler 去重（洪泛 mesh 必備）都是異質傳輸的直接載體
 | 路徑 | 機制 | 理論特性 |
 |---|---|---|
 | 星型（2 人） | WebRTC DataChannel 直連，64KB backpressure 佇列（P2PChannelBus.ts:23） | 延遲即網路 RTT（區域內數十 ms）；聊天負載遠低於瓶頸；大負載會先撞 JSON+Base64 編碼與主執行緒，不是撞頻寬 |
-| mesh 3 至 5 人 | full mesh，fanout=n-1、ttl=1（AdaptiveTopologyManager.ts:61） | 單跳，延遲與星型同級 |
-| mesh 6 至 20 人 | partial mesh，fanout=3、ttl=3 至 4 | 延遲 = 跳數 × RTT；洪泛放大由去重抑制 |
+| mesh 3 至 6 人 | full mesh，fanout=n-1、ttl=1（AdaptiveTopologyManager.ts:61） | 單跳，延遲與星型同級 |
+| mesh 7 至 20 人 | partial mesh，k=max(3,⌈√n⌉)、fanout=3、ttl=3 至 4 | 延遲 = 跳數 × RTT；洪泛放大由去重抑制；已接線（Spec 011／ADR-0035，房間上限 10、只升不降） |
 | 20 人以上 | fanout=4、ttl=5 加 super-node 選舉 | 已有程式碼，未接線（ADR-0007 凍結類） |
 | Firestore fallback | 每則一次寫入 + listener | 延遲數百 ms；上限是費用不是技術 |
 

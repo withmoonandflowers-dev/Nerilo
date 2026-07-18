@@ -25,3 +25,4 @@
 | [0030](0030-courier-iou-durability.md) | 信使欠條簿採本機耐久快照與重載重驗 | Accepted |
 | [0033](0033-session-epoch-replay-closure.md) | session epoch 入簽章，現行代門檻收斂跨會話重放（R1 閉環） | Accepted |
 | [0034](0034-retire-treekem-groupkeymanager.md) | 退役 TreeKEM 與 GroupKeyManager（ADR-0031 續篇） | Accepted |
+| [0035](0035-partial-mesh-wiring.md) | 接線 partial mesh（只升不降）＋房間容量分層 Free 5／Pro 10 | Accepted |

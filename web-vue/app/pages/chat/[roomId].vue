@@ -149,20 +149,8 @@ let typingDebounce: ReturnType<typeof setTimeout> | null = null
 let initialized = false
 let disposed = false
 
-const statusText = computed(() => {
-  switch (connectionState.value) {
-    case 'connected':
-      return '已連線'
-    case 'connecting':
-      return '連線中…'
-    case 'failed':
-      return '連線失敗'
-    case 'closed':
-      return '連線已中斷'
-    default:
-      return '準備中…'
-  }
-})
+// mesh 覆蓋率顯示與健康燈（Spec 011 Q4/Q5；語義見 composables/useMeshHealth）
+const { meshHealth, statusText, updateCoverage } = useMeshHealth(connectionState, memberCount)
 
 // 在房內收到訊息即已讀（節流 5s，metadata 寫入）
 let lastReadWriteAt = 0
@@ -238,6 +226,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
       if (mapped !== connectionState.value) connectionState.value = mapped
       const enc = meshChat.getEncryptionState()
       if (enc !== encryptionState.value) encryptionState.value = enc
+      updateCoverage(meshChat.getMeshCoverage(), participantCount) // Spec 011 Q5
     }, 2000)
   } catch (e) {
     console.error('[chat] initializeP2P failed', e)
@@ -375,7 +364,7 @@ async function sendMessage(content: string, existingMessageId?: string, allowDeg
     // 用房間金鑰（keyx）加密；無金鑰則「不送明文」——靠 mesh anti-entropy 補齊，
     // 不再明文洩漏到 Firestore（P2-③ 收尾；星型舊路徑的密文備援等價）。
     const coverage = meshChat.getMeshCoverage()
-    const expectedPeers = participantCount - 1
+    const expectedPeers = bridgeExpectedPeers(participantCount, coverage) // Spec 011 Q4(b)
     if (expectedPeers > 0 && coverage.connected < expectedPeers) {
       const encrypted = await meshChat.encryptForFallback(content)
       if (encrypted) {
@@ -566,7 +555,11 @@ async function leaveRoom() {
             :data-testid="`e2ee-${encryptionState}`"
           >{{ encryptionState === 'encrypted' ? '🔒' : encryptionState === 'exchanging' ? '🔑' : '⚠️' }}</span>
         </h1>
-        <p class="chat__status" :class="`chat__status--${connectionState}`">{{ statusText }}</p>
+        <p class="chat__status" :class="`chat__status--${connectionState}`">
+          <span v-if="memberCount > 2" class="chat__health" :class="`chat__health--${meshHealth}`"
+                :data-testid="`mesh-health-${meshHealth}`" />
+          {{ statusText }}
+        </p>
       </div>
       <div class="chat__head-actions">
         <button
@@ -862,6 +855,11 @@ async function leaveRoom() {
 .chat__status { margin: 1px 0 0; font-size: 12px; color: var(--text-2); }
 .chat__status--connected { color: var(--success); }
 .chat__status--failed { color: var(--danger); }
+/* mesh 健康燈（Spec 011 Q5c）：三態 = 健全/部分/斷線 */
+.chat__health { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: baseline; }
+.chat__health--healthy { background: var(--success); }
+.chat__health--partial { background: var(--warning, #f5a623); }
+.chat__health--down { background: var(--danger); }
 
 .chat__banner {
   display: flex;
