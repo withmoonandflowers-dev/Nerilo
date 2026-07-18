@@ -25,6 +25,11 @@ export interface P2PRoom {
   createdAt: number;
   /** 房間種類：一般群聊（缺省）或好友雙人 DM */
   kind?: 'dm';
+  /**
+   * 房間容量（Spec 011 Q7）：建房時依房主方案寫入（Free 5／Pro 至 10）。
+   * legacy 房無此欄位＝5。join 對此欄位強制，加入者方案不影響。
+   */
+  maxParticipants?: number;
   waitingTimeout?: number; // 等待超時時間（毫秒），預設 5 分鐘
   waitingStartedAt?: number; // 開始等待的時間戳
 

@@ -115,17 +115,6 @@ function startReply(msg: ChatMessage) {
 /** 房間成員數（reactive，供模板閘控：遊戲 2+ 人房、mesh 橫幅僅 3+ 人房） */
 const memberCount = ref(0)
 
-// ── mesh 覆蓋率（Spec 011 Q5）────────────────────────────────────────────────
-// connected/target 顯示與三態健康燈。target = min(n-1, 拓撲目標鄰居數 k)：
-// partial mesh（7+ 人）下 k < n-1 是設計，顯示 n-1 會永遠「未連滿」誤導使用者。
-const meshConnected = ref(0)
-const meshTarget = ref(0)
-const meshHealth = computed<'healthy' | 'partial' | 'down'>(() => {
-  if (meshTarget.value <= 0) return 'partial' // 尚無其他成員/初始化中：中性顯示
-  if (meshConnected.value >= meshTarget.value) return 'healthy'
-  return meshConnected.value > 0 ? 'partial' : 'down'
-})
-
 // 遊戲室（Spec 006 T3）：建房旗標 → gameBus 就緒且滿 2 人即自動開面板（一次性）
 watchEffect(() => {
   if (!gameBus.value || memberCount.value < 2 || showGame.value) return
@@ -169,23 +158,8 @@ let typingDebounce: ReturnType<typeof setTimeout> | null = null
 let initialized = false
 let disposed = false
 
-const statusText = computed(() => {
-  switch (connectionState.value) {
-    case 'connected':
-      // 3+ 人 mesh 房顯示 connected/target（Spec 011 Q5a）；2 人房維持純文字
-      return memberCount.value > 2 && meshTarget.value > 0
-        ? `已連線 ${meshConnected.value}/${meshTarget.value}`
-        : '已連線'
-    case 'connecting':
-      return '連線中…'
-    case 'failed':
-      return '連線失敗'
-    case 'closed':
-      return '連線已中斷'
-    default:
-      return '準備中…'
-  }
-})
+// mesh 覆蓋率顯示與健康燈（Spec 011 Q4/Q5；語義見 composables/useMeshHealth）
+const { meshHealth, statusText, updateCoverage } = useMeshHealth(connectionState, memberCount)
 
 // 在房內收到訊息即已讀（節流 5s，metadata 寫入）
 let lastReadWriteAt = 0
@@ -259,13 +233,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
       if (mapped !== connectionState.value) connectionState.value = mapped
       const enc = meshChat.getEncryptionState()
       if (enc !== encryptionState.value) encryptionState.value = enc
-      // mesh 覆蓋率（Spec 011 Q5）：connected/target 與健康燈的資料源
-      const cov = meshChat.getMeshCoverage()
-      meshConnected.value = cov.connected
-      meshTarget.value = Math.min(
-        Math.max(participantCount - 1, 0),
-        cov.targetNeighbors ?? Infinity
-      )
+      updateCoverage(meshChat.getMeshCoverage(), participantCount) // Spec 011 Q5
     }, 2000)
   } catch (e) {
     console.error('[chat] initializeP2P failed', e)
@@ -400,10 +368,7 @@ async function sendMessage(content: string, existingMessageId?: string) {
     // 用房間金鑰（keyx）加密；無金鑰則「不送明文」——靠 mesh anti-entropy 補齊，
     // 不再明文洩漏到 Firestore（P2-③ 收尾；星型舊路徑的密文備援等價）。
     const coverage = meshChat.getMeshCoverage()
-    // Spec 011 Q4(b)：期望值取 min(n-1, 目標鄰居數 k)。partial mesh（7+ 人）下
-    // k < n-1 是設計常態，仍用 n-1 會每訊息觸發備援雙寫；≤6 人房 k=6 ≥ n-1，
-    // min 取 n-1，行為與先前完全一致。
-    const expectedPeers = Math.min(participantCount - 1, coverage.targetNeighbors ?? Infinity)
+    const expectedPeers = bridgeExpectedPeers(participantCount, coverage) // Spec 011 Q4(b)
     if (expectedPeers > 0 && coverage.connected < expectedPeers) {
       const encrypted = await meshChat.encryptForFallback(content)
       if (encrypted) {
@@ -606,12 +571,8 @@ async function leaveRoom() {
           >{{ encryptionState === 'encrypted' ? '🔒' : encryptionState === 'exchanging' ? '🔑' : '⚠️' }}</span>
         </h1>
         <p class="chat__status" :class="`chat__status--${connectionState}`">
-          <span
-            v-if="memberCount > 2"
-            class="chat__health"
-            :class="`chat__health--${meshHealth}`"
-            :data-testid="`mesh-health-${meshHealth}`"
-          />
+          <span v-if="memberCount > 2" class="chat__health" :class="`chat__health--${meshHealth}`"
+                :data-testid="`mesh-health-${meshHealth}`" />
           {{ statusText }}
         </p>
       </div>

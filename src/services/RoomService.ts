@@ -3,6 +3,7 @@ import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
 import { logger } from '../utils/logger';
 import type { P2PRoom, RoomStatus, RoomCapability, RoomMemberState } from '../types';
+import { normalizeMaxParticipants, roomCapacity } from './roomCapacity';
 
 /** Firestore meshIdentity 文件的原始欄位型別（joinedAt 可能為 Timestamp） */
 interface FirestoreMeshIdentity {
@@ -41,7 +42,8 @@ export class RoomService {
     participants: string[] = [],
     waitingTimeout: number = 5 * 60 * 1000, // 預設 5 分鐘
     requireAuth: boolean = true, // 是否要求已登入（非匿名）
-    roomName?: string // 使用者自訂房間名稱（選填）
+    roomName?: string, // 使用者自訂房間名稱（選填）
+    maxParticipants?: number // 房間容量（Spec 011 Q7：缺省 5；>5 需房主 Pro，rules 強制）
   ): Promise<string> {
     // 驗證 ownerUid
     if (!ownerUid || ownerUid.trim() === '') {
@@ -73,14 +75,7 @@ export class RoomService {
     const now = Date.now();
 
     if (DEBUG_ROOMS) {
-      logger.info('[RoomService] createRoom', {
-        roomId,
-        ownerUid,
-        ownerName,
-        isPrivate,
-        participants,
-        waitingTimeout,
-      });
+      logger.info('[RoomService] createRoom', { roomId, ownerUid, ownerName, isPrivate, participants, waitingTimeout });
     }
     // TTL: waiting rooms expire in 5 min, open rooms in 30 min
     const WAITING_TTL_MS = 5 * 60 * 1000;
@@ -100,6 +95,7 @@ export class RoomService {
       lastActiveAt: now,
       ttlExpireAt: now + WAITING_TTL_MS,
       ...(cleanRoomName ? { roomName: cleanRoomName } : {}),
+      maxParticipants: normalizeMaxParticipants(maxParticipants), // Spec 011 Q7（rules 驗證 >5 需 Pro）
     };
 
     const firestoreData: Record<string, unknown> = {
@@ -226,6 +222,7 @@ export class RoomService {
       createdAt: data.createdAt?.toMillis() || Date.now(),
       waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
       waitingStartedAt: data.waitingStartedAt?.toMillis(),
+      ...(typeof data.maxParticipants === 'number' ? { maxParticipants: data.maxParticipants } : {}),
       meshIdentities: data.meshIdentities ? Object.fromEntries(
         (Object.entries(data.meshIdentities) as [string, FirestoreMeshIdentity][]).map(([key, value]) => [
           key,
@@ -334,13 +331,12 @@ export class RoomService {
         return;
       }
 
-      // 人數上限（與 firestore.rules 的 participantsWithinCap 同值）：
-      // 先在 client 端給清晰錯誤，rules 是最終防線
-      const MAX_PARTICIPANTS = 5;
-      if (participants.length >= MAX_PARTICIPANTS) {
-        logger.warn('[RoomService] joinRoom failed: Room is full', { roomId, uid });
+      // 人數上限＝房間文件容量（Spec 011 Q7；legacy 無欄位＝5；rules 是最終防線）
+      const capacity = roomCapacity(roomData);
+      if (participants.length >= capacity) {
+        logger.warn('[RoomService] joinRoom failed: Room is full', { roomId, uid, capacity });
         throw Object.assign(
-          new Error(`房間已滿（上限 ${MAX_PARTICIPANTS} 人）`),
+          new Error(`房間已滿（上限 ${capacity} 人）`),
           { code: 'room-full', roomStatus: roomData.status }
         );
       }
