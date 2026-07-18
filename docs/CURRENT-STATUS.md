@@ -73,14 +73,16 @@
 ## 已知風險與誠實邊界
 
 - 四線合併驗證（2026-07-18 本機）：`npm run ci` 137 檔/1544 tests 全綠；React
-  mesh-diagnostic 5/5；vue e2e @vue-stable 11 條中 8 綠。3 紅逐項誠實記錄：
-  - `migration-window`：Spec 010×012 語義衝突——012 出口閘關閉形成期明文窗後，
-    「C 應收到與加入並發送出的訊息」撞上 012 已鎖語義「新人開不了加入前歷史」
-    （`MeshKeyxIntegration.spec` 階段 3）。該測試先前轉綠靠的正是已被關閉的明文窗。
-    需產品層裁決：改 keyx 分發（入群補封舊 epoch，動 012 語義）或改測試斷言範圍。
+  mesh-diagnostic 5/5；vue e2e @vue-stable 11 條中 8 綠；兩項裁決落地後 migration-window 與 relay-connect 轉綠
+  （rejoin 既有 flake 仍偶發）。原 3 紅逐項記錄：
+  - `migration-window`：Spec 010×012 語義衝突——**已裁決收斂（2026-07-18 使用者拍板）**：
+    縮小測試斷言（既有成員間恆恰好一次、C 加入後訊息全員恰好一次；C×並發格可見與否
+    不斷言、收到即不得重複），012 語義與回歸鎖不動。已連 3 次轉綠；Spec 010 V1 同步修訂。
   - `rejoin`：合併前後皆偶發紅（pre-merge 分支實測亦紅），既有 flake，金鑰時序家族。
   - `relay-connect` 後四條：依賴的 `online-node-count` testid 已於 Spec 006（合併前的
-    master）砍中繼卡時移除——分叉點即壞，非合併引入；待決定補 UI 掛鉤或改測試。
+    master）砍中繼卡時移除——分叉點即壞，非合併引入。**已裁決收斂（2026-07-18 使用者
+    拍板）**：以 `PresenceFooter` 元件補回在線節點數頁尾（presence 機制本就照跑，只補
+    UI 掛鉤；誠實條款不做假在線）。relay-connect 全套 7/7 綠。
   - `mesh-diagnostic-7p`：單機 7 瀏覽器負載下連線成形失敗（8 次 ICE restart），
     維持 Spec 011 既記錄的殘留（待低負載機器/CI 重跑）。
 
