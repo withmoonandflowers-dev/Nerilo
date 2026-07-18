@@ -15,7 +15,7 @@
 
 | 層級 | 2026-07-18 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；137 test files／1543 tests 全綠（既有 7 warnings；四線合併後實測 2026-07-18） |
+| Core quality | TypeScript、ESLint gate 通過；137 test files／1544 tests 全綠（既有 7 warnings；四線合併後實測 2026-07-18） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
@@ -72,7 +72,7 @@
 
 ## 已知風險與誠實邊界
 
-- 四線合併驗證（2026-07-18 本機）：`npm run ci` 137 檔/1543→1544 tests 全綠；React
+- 四線合併驗證（2026-07-18 本機）：`npm run ci` 137 檔/1544 tests 全綠；React
   mesh-diagnostic 5/5；vue e2e @vue-stable 11 條中 8 綠。3 紅逐項誠實記錄：
   - `migration-window`：Spec 010×012 語義衝突——012 出口閘關閉形成期明文窗後，
     「C 應收到與加入並發送出的訊息」撞上 012 已鎖語義「新人開不了加入前歷史」
