@@ -6,7 +6,7 @@ import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallb
 import type { ReactionEvent, ReactionOp } from './reactions';
 import type { ReadEvent } from './readReceipts';
 import { PlaintextConfirmRequiredError, type EncryptionState } from './encryptionGate';
-import { sendGateDecision, type SecurityLevel } from '../../core/transport/securityLabel';
+import { sendGateDecision, type SecurityLevel } from '../../core/security/securityLabel';
 import type { SignalingFactory } from '../../core/p2p/SignalingTransport';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { logger } from '../../utils/logger';

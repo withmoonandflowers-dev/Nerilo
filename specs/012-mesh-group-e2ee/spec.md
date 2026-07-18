@@ -91,7 +91,7 @@ ADR-0010 Decision 1-2 已定原則：每個 transport adapter 宣告安全等級
 
 ### P1 安全標籤原語（Q6，protocol 軌：契約定義）
 
-新模組 `src/core/transport/securityLabel.ts`（core 層、零框架依賴；SDK 表面暫不匯出，M4 平台抽取時再上——避免 0.x 提前鎖 API）：
+新模組 `src/core/security/securityLabel.ts`（core 層、零框架依賴；SDK 表面暫不匯出，M4 平台抽取時再上——避免 0.x 提前鎖 API）：
 
 - `SecurityLevel = 'e2ee' | 'sign-only' | 'plaintext'`，全序 e2ee > sign-only > plaintext；`meetsMinimum(actual, min)`。
 - `channelSecurityLevel(kind, ctx)`：通道→等級判定。定義（實作無關，以內容層機密性／完整性為準，傳輸層加密如 DTLS/TLS 不計入等級）：
