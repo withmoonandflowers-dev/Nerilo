@@ -8,7 +8,8 @@ import { MeshChatService } from '@legacy/features/chat/MeshChatService'
 import { readIntroducerHint } from '~/lib/introducerHint'
 import { consumeOpenGameFlag } from '~/lib/gameRoomFlag'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
-import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
+import { applyRead, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
+import { reactionChipsFor, readReceiptTextFor, e2eeLabelFor } from '~/lib/chatDerive'
 import { sendDecisionFor, type EncryptionState } from '@legacy/features/chat/encryptionGate'
 import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
 import { MeshGameBus } from '~/lib/meshGameBus'
@@ -49,22 +50,14 @@ function toggleReaction(messageId: string, emoji: string) {
   void meshChat.sendReaction(messageId, emoji, op)
   pickerFor.value = null
 }
-function reactionChips(messageId: string): Array<{ emoji: string; count: number; mine: boolean }> {
-  const byEmoji = reactions.value[messageId]
-  if (!byEmoji) return []
-  return Object.entries(byEmoji).map(([emoji, froms]) => ({
-    emoji, count: froms.length, mine: froms.includes(myMeshId.value),
-  }))
-}
+const reactionChips = (messageId: string) => reactionChipsFor(reactions.value, messageId, myMeshId.value)
 // ── 加密狀態（ADR-0026 R2 明文降級 fail-visible）──
 const encryptionState = ref<EncryptionState>('exchanging')
+// Spec 009：gossip 協議版本不合（房內有 v1 舊版節點）→ 常駐提示，不靜默降級
+const protocolMismatch = ref(false)
 /** 明文房送訊確認：暫存待送內容；非 null 時顯示阻斷式警告，使用者確認才真送。 */
 const plaintextPending = ref<string | null>(null)
-const e2eeLabel = computed(() =>
-  encryptionState.value === 'encrypted' ? '端對端加密'
-    : encryptionState.value === 'exchanging' ? '金鑰交換中…'
-    : '未加密（此房無法端對端加密）'
-)
+const e2eeLabel = computed(() => e2eeLabelFor(encryptionState.value))
 // ── 已讀人數（per-member 水位；聚合見 readReceipts.ts）──
 const readState = ref<ReadState>({})
 let myWatermark = '' // 上次送出的自身水位（僅前進才再送，天然限流）
@@ -81,13 +74,7 @@ function advanceMyRead() {
   readState.value = applyRead(readState.value, { from: myMeshId.value, watermark: top }) // 樂觀（自身不計入顯示）
   void meshChat.sendRead(top)
 }
-/** 只在自己訊息下顯示：已讀人數（3+ 人房「已讀 N」；2 人房對方讀過即「已讀」）。 */
-function readReceiptText(msg: ChatMessage): string {
-  if (!myMeshId.value) return ''
-  const n = readCount(readState.value, orderKeyOf(msg), myMeshId.value) // author=我 → 自動排除自己
-  if (n <= 0) return ''
-  return Math.max(0, memberCount.value - 1) > 1 ? `已讀 ${n}` : '已讀'
-}
+const readReceiptText = (msg: ChatMessage) => readReceiptTextFor(readState.value, msg, myMeshId.value, memberCount.value)
 // ── 訊息回覆 ──
 const replyingTo = ref<{ messageId: string; text: string; mine: boolean } | null>(null)
 const messageById = computed(() => {
@@ -234,6 +221,8 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     svc.onRead((ev) => { readState.value = applyRead(readState.value, ev) })
     // typing：mesh 只收到 peer 的信號（不回吐自送），直接反映到「輸入中…」
     typingUnsub = svc.onTyping(({ isTyping }) => { peerTyping.value = isTyping })
+    // Spec 009 §4.7：協議版本不合 → fail-visible 常駐提示（v1↔v2 本質不互通）
+    svc.onProtocolMismatch(() => { protocolMismatch.value = true })
     svc.loadHistory()
       .then((history) => { history.forEach((m) => addMessage(m)); advanceMyRead() })
       .catch(() => {})
@@ -749,6 +738,11 @@ async function leaveRoom() {
         <span class="chat__reply-text">{{ replyingTo.text }}</span>
       </div>
       <button type="button" class="chat__reply-cancel" data-testid="reply-cancel" aria-label="取消回覆" @click="replyingTo = null">✕</button>
+    </div>
+
+    <!-- Spec 009：gossip 協議版本不合的常駐提示（訊息無法互通，請雙方更新）。 -->
+    <div v-if="protocolMismatch" class="chat__e2ee-warn" data-testid="protocol-mismatch-notice">
+      ⚠️ 房內有版本不相容的成員，訊息無法互通。請雙方更新到最新版後重新整理。
     </div>
 
     <!-- ADR-0026 R2：明文降級的常駐提示（此房永久無法加密，讓使用者「知情」）。 -->
