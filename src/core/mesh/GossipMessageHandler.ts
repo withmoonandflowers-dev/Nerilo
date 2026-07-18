@@ -149,8 +149,22 @@ export class GossipMessageHandler {
       // 自己的 seq 水位以 reserveSeq 為真相；此處僅對齊記憶體值供無持久化路徑参考
       const own = this.store.get(this.userId);
       if (own) for (const s of own.keys()) if (s > this.seq) this.seq = s;
+
+      // 重放 keyx（Spec 012 P2）：重載後金鑰環是空的，而 keyx 紀錄已在自己 store 內
+      // （anti-entropy 不會重送給自己、名冊未變時產生方也不重發）→ 不重放則明文窗重開，
+      // 且產生方重載後 getMaxKnownEpoch()=-1 會重發 epoch 0 與既有代碰撞。
+      // 皆為當初驗簽通過才入庫的紀錄，重放即重建金鑰環（setContentKey 自取最高 epoch 送出）。
+      let keyxReplayed = 0;
+      for (const seqs of this.store.values()) {
+        for (const msg of seqs.values()) {
+          if (msg.channel === 'keyx') {
+            await this.consumeKeyx(msg);
+            keyxReplayed++;
+          }
+        }
+      }
       logger.info('[GossipMessageHandler] hydrated from replica', {
-        roomId: this.roomId, records: loaded, floors: this.floors.size,
+        roomId: this.roomId, records: loaded, floors: this.floors.size, keyxReplayed,
       });
     } catch (err) {
       logger.warn('[GossipMessageHandler] hydrate failed — memory-only mode', {
