@@ -23,3 +23,16 @@ export function sendDecisionFor(state: EncryptionState): SendDecision {
 export function isEncryptedState(state: EncryptionState): boolean {
   return state === 'encrypted';
 }
+
+/**
+ * 送出閘攔下（Spec 012 Q2）：房間未達最低安全等級且已定局（真明文房，或交換逾時），
+ * 需要使用者顯式確認才可降級送出。UI 收到此錯誤 → 走阻斷式確認流（allowDegraded 重送）；
+ * 無確認 UI 的線（React 止血姿態）→ 標記失敗，不得默默明文出手。
+ */
+export class PlaintextConfirmRequiredError extends Error {
+  readonly code = 'plaintext-confirm-required';
+  constructor(message = '房間尚未加密：需使用者確認才可明文送出') {
+    super(message);
+    this.name = 'PlaintextConfirmRequiredError';
+  }
+}

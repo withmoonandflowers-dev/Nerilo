@@ -5,7 +5,8 @@ import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
 import type { FallbackEncryptedContent } from '../../services/FirestoreChatFallback';
 import type { ReactionEvent, ReactionOp } from './reactions';
 import type { ReadEvent } from './readReceipts';
-import type { EncryptionState } from './encryptionGate';
+import { PlaintextConfirmRequiredError, type EncryptionState } from './encryptionGate';
+import { sendGateDecision, type SecurityLevel } from '../../core/transport/securityLabel';
 import type { SignalingFactory } from '../../core/p2p/SignalingTransport';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { logger } from '../../utils/logger';
@@ -138,9 +139,39 @@ export class MeshChatService {
   }
 
   /**
-   * 發送訊息
+   * Nerilo 聊天資料流宣告的最低安全等級（ADR-0010 Decision 2：預設 e2ee，降級必須顯式）。
+   * 送出閘以此對照通道現況（Spec 012 Q2/Q6 收斂原語，見 securityLabel.sendGateDecision）。
    */
-  async sendMessage(content: string, providedMessageId?: string): Promise<string> {
+  private static readonly MIN_SECURITY_LEVEL: SecurityLevel = 'e2ee';
+
+  /**
+   * 出口閘（Spec 012 Q2-a）：金鑰未就緒不送明文。
+   *  - allow（encrypted）→ 放行。
+   *  - hold（exchanging）→ 暫扣等 keyx（至交換逾時線）；就緒即自動補送（原 promise 續走），
+   *    逾時拋 PlaintextConfirmRequiredError（fail-visible）。
+   *  - confirm-degrade（plaintext：真明文房或已逾時）→ 直接拋；唯使用者顯式確認後
+   *    （allowDegraded=true，R2 阻斷式確認）才放行明文。
+   */
+  private async gateOutbound(allowDegraded = false): Promise<void> {
+    if (allowDegraded) return; // 使用者已於 UI 明確確認降級（R2 語義）
+    const decision = sendGateDecision(this.getEncryptionState(), MeshChatService.MIN_SECURITY_LEVEL);
+    if (decision === 'allow') return;
+    if (decision === 'hold') {
+      if (await this.meshGossipManager.waitForSendKey()) return; // 就緒 → 自動補送
+    }
+    throw new PlaintextConfirmRequiredError();
+  }
+
+  /**
+   * 發送訊息
+   * @param opts.allowDegraded 使用者已顯式確認以明文送出（僅 R2 確認流使用）
+   */
+  async sendMessage(
+    content: string,
+    providedMessageId?: string,
+    opts?: { allowDegraded?: boolean }
+  ): Promise<string> {
+    await this.gateOutbound(opts?.allowDegraded);
     // 呼叫端可傳入 id，讓樂觀顯示與本機自我 emit 共用同一 id（去重收斂）。
     // 未傳入時自生：自增 counter 避免同一毫秒內多則訊息 ID 碰撞。
     const messageId = providedMessageId ?? `${this.localUid}-${Date.now()}-${++this.messageCounter}`;
@@ -188,6 +219,9 @@ export class MeshChatService {
    * envelope.id 作 messageId 貫穿去重。供 MeshGameBus 轉接 TicTacToe 用。
    */
   async sendGameEnvelope(env: P2PEnvelope): Promise<void> {
+    // 與 chat 同閘（Spec 012 Q2）：遊戲事件同屬內容紀錄，明文窗一律暫扣；
+    // 逾時拋錯由遊戲層呈現失敗（遊戲無明文確認流——降級房不開局）。
+    await this.gateOutbound();
     await this.meshGossipManager.sendMessage(JSON.stringify(env), env.id, 'game');
   }
 
@@ -204,6 +238,12 @@ export class MeshChatService {
    * 對某訊息加/移除某表情；聚合冪等（見 reactions.ts），亂序到達仍收斂。
    */
   async sendReaction(messageId: string, emoji: string, op: ReactionOp): Promise<void> {
+    // 未達最低等級即靜默略過（Spec 012 Q2）：reaction 是冪等聚合、可重按；
+    // 明文窗內聊天本體被暫扣，reaction 無明文可洩、不值得 hold 阻塞 UI。
+    if (sendGateDecision(this.getEncryptionState(), MeshChatService.MIN_SECURITY_LEVEL) !== 'allow') {
+      logger.info('[MeshChatService] reaction skipped — room not at e2ee yet', { roomId: this.roomId });
+      return;
+    }
     const payload = JSON.stringify({ messageId, emoji, op });
     // reaction id 綁 (訊息,表情,人,op)：同一 toggle 動作跨傳輸路徑去重
     const id = `rx-${messageId}-${emoji}-${this.meshUserId ?? this.localUid}-${op}`;
@@ -225,6 +265,11 @@ export class MeshChatService {
    * readReceipts.ts），亂序/重送安全。呼叫端請只在水位「前進」時送並節流。
    */
   async sendRead(watermark: string): Promise<void> {
+    // 未達最低等級即靜默略過（同 sendReaction 理由；水位單調，下次前進自然重送）
+    if (sendGateDecision(this.getEncryptionState(), MeshChatService.MIN_SECURITY_LEVEL) !== 'allow') {
+      logger.info('[MeshChatService] read watermark skipped — room not at e2ee yet', { roomId: this.roomId });
+      return;
+    }
     const payload = JSON.stringify({ watermark });
     const id = `rd-${this.meshUserId ?? this.localUid}`;
     await this.meshGossipManager.sendMessage(payload, id, 'read');
