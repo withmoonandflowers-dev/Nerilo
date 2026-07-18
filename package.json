@@ -118,7 +118,7 @@
     "firebase-tools": "^15.18.0",
     "jsdom": "^27.4.0",
     "rollup": "^4.24.0",
-    "typescript": "^5.2.2",
+    "typescript": "^7.0.2",
     "vite": "^5.0.8",
     "vitest": "^4.1.8",
     "zod": "^4.4.3"
