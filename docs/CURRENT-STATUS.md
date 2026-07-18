@@ -72,6 +72,18 @@
 
 ## 已知風險與誠實邊界
 
+- 四線合併驗證（2026-07-18 本機）：`npm run ci` 137 檔/1543→1544 tests 全綠；React
+  mesh-diagnostic 5/5；vue e2e @vue-stable 11 條中 8 綠。3 紅逐項誠實記錄：
+  - `migration-window`：Spec 010×012 語義衝突——012 出口閘關閉形成期明文窗後，
+    「C 應收到與加入並發送出的訊息」撞上 012 已鎖語義「新人開不了加入前歷史」
+    （`MeshKeyxIntegration.spec` 階段 3）。該測試先前轉綠靠的正是已被關閉的明文窗。
+    需產品層裁決：改 keyx 分發（入群補封舊 epoch，動 012 語義）或改測試斷言範圍。
+  - `rejoin`：合併前後皆偶發紅（pre-merge 分支實測亦紅），既有 flake，金鑰時序家族。
+  - `relay-connect` 後四條：依賴的 `online-node-count` testid 已於 Spec 006（合併前的
+    master）砍中繼卡時移除——分叉點即壞，非合併引入；待決定補 UI 掛鉤或改測試。
+  - `mesh-diagnostic-7p`：單機 7 瀏覽器負載下連線成形失敗（8 次 ICE restart），
+    維持 Spec 011 既記錄的殘留（待低負載機器/CI 重跑）。
+
 - CI 中 React stable E2E 與 Vue stable E2E 目前仍是 soft gate；Vue 觀察截止日為 2026-07-30，React 既定檢查日為 2026-07-27。
 - Nuxt 最大 bundle chunk 約 568 kB；不擋 correctness，但切 production 前應評估載入成本。
 - SDP offer/answer 尚未升級為平台級簽章身分；Firebase auth/rules 是現階段信令完整性邊界。
