@@ -13,8 +13,10 @@
  * 補償不 gating：發送前只等兩個「模式訊號」，不等 full mesh 連滿——
  * - `.e2ee-indicator-dtls`：頁面已切到 mesh 拓撲。房主的頁面在第 2 人加入時
  *   會先以 2 人星型啟動、第 3 人加入才切 mesh；星型時代送出的訊息屬於另一個
- *   傳輸棧，mesh 對帳管不到（實測會在切換重載時重複或遺失——那是架構切換層
- *   的既有問題，獨立於本輪目標，記錄於 QA 報告）。本診斷驗的是 mesh 的保證。
+ *   傳輸棧，mesh 對帳管不到（實測會在切換重載時重複或遺失——遷移窗問題，
+ *   Spec 010 拍板：React 線不修、記誠實邊界，由 Vue 切 production 退役星型棧
+ *   收斂；Vue 線的回歸鎖在 tests/e2e-vue/migration-window.spec.ts，該測試把
+ *   這裡刻意繞開的時窗直接納入斷言）。本診斷驗的是 mesh 的保證，gating 保留。
  * - banner 已連線：mesh 下代表「連上至少 1 個鄰居」，不是全部。
  * 因此發送當下 pairwise DataChannel 常常尚未全就緒（例如 A–C 未通），訊息
  * 必須靠 seq-based anti-entropy 對帳（digest 交換 → 缺哪則補哪則）走任何
