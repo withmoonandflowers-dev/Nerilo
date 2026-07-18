@@ -1,7 +1,7 @@
 # Spec 009：session epoch 入簽章，收斂跨會話重放
 
 - 軌別：protocol（變更 gossip 簽章覆蓋範圍與線上格式，屬跨實作互通層；plan 依 `templates/protocol-spec-template.md` 補齊線上格式、密碼學語義與 conformance 測試向量）
-- 狀態：planned（clarify 已由使用者全數拍板，見第 3 節）
+- 狀態：implemented（V1-V7 驗收通過，2026-07-18；合併待主 session 排程）
 - 建立：2026-07-18／最後更新：2026-07-18
 - 關聯：ADR-0026（R1 處置：短期風險接受、排修 P1）、ADR-0023（P1 複本持久化，已落地）、風險登記 R1（docs/audit/core-invariants-risks.csv）、docs/QA-REPORT-chat.md 行 139-150、.claude/skills/mesh-correctness（殘留清單第 1 項）
 
@@ -184,11 +184,11 @@ GossipMessageHandler／SecurityManager／antiEntropy／GossipReplicaStore／Cour
 
 ## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收，缺一不可）
 
-- [ ] V1 重放專項轉綠：舊會話錄下的合法已簽名訊息注入新會話，依 Q6 拍板的口徑被拒（ADR-0026 驗收條款）；含「預佔槽位」劇本（重放後 sender 新訊息不得被誤判重複）。
-- [ ] V2 補送回歸鎖不動搖：`GossipMessageHandler.spec.ts` 的 30 分鐘舊訊息補送整合測試與 `maxAgeMs: null` 案例、`SecurityManager.spec.ts` 時效窗與 ttl 案例維持綠，不得以放寬斷言湊綠。
-- [ ] V3 單元全綠：`npm run test:run`（基線 124 檔／1421 tests）。
-- [ ] V4 確定性模擬：`tests/unit/antiEntropy.simulation.spec.ts` 多 seed 全過。
-- [ ] V5 E2E 診斷：`tests/e2e/mesh-diagnostic.spec.ts` 3 人矩陣連續 5 次全 =1（`npm run test:e2e:ci`，需 Java 21+）。
+- [x] V1 重放專項轉綠：舊會話錄下的合法已簽名訊息注入新會話，依 Q6 拍板的口徑被拒（ADR-0026 驗收條款）；含「預佔槽位」劇本（重放後 sender 新訊息不得被誤判重複）。
+- [x] V2 補送回歸鎖不動搖：`GossipMessageHandler.spec.ts` 的 30 分鐘舊訊息補送整合測試與 `maxAgeMs: null` 案例、`SecurityManager.spec.ts` 時效窗與 ttl 案例維持綠，不得以放寬斷言湊綠。
+- [x] V3 單元全綠：`npm run test:run` 133 檔／1506 tests（基線 124/1421，新增 conformance 與 epoch 案例）。
+- [x] V4 確定性模擬（含新增 100 seed 代際切換劇本）：`tests/unit/antiEntropy.simulation.spec.ts` 多 seed 全過。
+- [x] V5 E2E 診斷：3 人矩陣連續 5 次全 =1（本機 firebase emulators:exec + --repeat-each=5，Java 25；前置插曲為環境因素：worktree 缺 dist 與共用 emulator 被他 session 收走，均已排除後 5/5）。
 - [x] V6 protocol 軌 conformance：測試向量落地於 `tests/unit/SessionEpochConformance.spec.ts`（真 ECDSA 簽章，非 mock），他人實作跑得過等價向量即相容：
   - C1 舊會話重放必須拒收（已知現行代後，較低 sessionEpoch 的合法簽章訊息不入 store、不上 UI、不轉發）
   - C2 補送輸入必須接受（現行代、30 分鐘前 timestamp、ttl=0 → 恰好一次呈現；重複補送去重）
@@ -197,11 +197,11 @@ GossipMessageHandler／SecurityManager／antiEntropy／GossipReplicaStore／Cour
   - C5 缺 sessionEpoch 的 v1 訊息整則拒收並發出版本不合確證
   - C6 digest v2 形狀（v1 digest fail-closed 整份忽略；對方代落後 → 現行代全補；對方代較新 → 不送）
   - C7 未來時間戳仍一律拒絕（不受 maxAgeMs: null 影響）
-- [ ] V7 收尾文件：`docs/CURRENT-STATUS.md`、`docs/QA-REPORT-chat.md` 已知限制清單、`docs/audit/core-invariants-risks.csv` R1 狀態同步更新。
+- [x] V7 收尾文件：`docs/CURRENT-STATUS.md`、`docs/QA-REPORT-chat.md` 已知限制清單、`docs/audit/core-invariants-risks.csv` R1 狀態同步更新。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 
-- [ ] 第 4 節方案覆蓋第 1 節全部需求（含威脅模型兩種攻擊效果），無多做
-- [ ] 第 5 節任務完整實現第 4 節，無遺漏
-- [ ] 第 6 節驗收能證明第 1 節，不是只證明「程式跑得動」
-- [ ] 未違反憲法任何一條（特別是不變量聲明與 protocol 軌加嚴條款）
+- [x] 第 4 節方案覆蓋第 1 節全部需求（含威脅模型兩種攻擊效果），無多做
+- [x] 第 5 節任務完整實現第 4 節，無遺漏
+- [x] 第 6 節驗收能證明第 1 節，不是只證明「程式跑得動」
+- [x] 未違反憲法任何一條（特別是不變量聲明與 protocol 軌加嚴條款）
