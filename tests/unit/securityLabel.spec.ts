@@ -9,7 +9,7 @@ import {
   sendGateDecision,
   deriveEncryptionState,
   type SecurityLevel,
-} from '../../src/core/transport/securityLabel';
+} from '../../src/core/security/securityLabel';
 
 describe('securityLabel', () => {
   describe('meetsMinimum（e2ee > sign-only > plaintext 全序）', () => {

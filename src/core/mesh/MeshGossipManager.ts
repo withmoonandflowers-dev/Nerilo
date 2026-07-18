@@ -20,7 +20,7 @@ import { arrayBufferToBase64 } from '../../utils/crypto';
 import { RoomAdvertCache, buildRoomAdvert, type RoomAdvert } from '../relay/RoomDirectoryGossip';
 import { wireRoomDirectoryOnConnection } from './roomDirectoryWiring';
 import type { EncryptionState } from '../../types';
-import { deriveEncryptionState } from '../transport/securityLabel';
+import { deriveEncryptionState } from '../security/securityLabel';
 
 /**
  * Mesh Gossip 管理器
