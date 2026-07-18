@@ -141,15 +141,15 @@ ADR-0010 Decision 1-2 已定原則：每個 transport adapter 宣告安全等級
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1 ⚠ characterization：受影響單元基線綠（GossipKeyx／GossipContentCrypto／RoomKeyCoordinator／Courier*／encryptionGate／antiEntropy.simulation）後才動手。
-- [ ] T2 P1 securityLabel 模組＋單元測試。
-- [ ] T3 ⚠ P2 hydrate keyx 重放＋單元（重載重生金鑰環、產生方 epoch 不歸零）。
-- [ ] T4 P2 MeshGossipManager 衍生狀態＋逾時＋waitForSendKey＋單元。
-- [ ] T5 ⚠ P2 MeshChatService 出口閘＋`PlaintextConfirmRequiredError`＋單元（hold 自動補送／逾時確認／reaction-read 略過）。
-- [ ] T6 P2 Vue 頁整合（confirm 流接 allowDegraded）＋`@vue-stable` 指示器回歸。
-- [ ] T7 P3 信使過濾推收兩側＋conformance 向量＋revive 清洗。
-- [ ] T8 ⚠ P4 React 止血（橋接／備援密文、訂閱分流、指示器三態文案）。
-- [ ] T9 P5 TreeKEM／GroupKeyManager 退役＋ADR-0033。
+- [x] T1 ⚠ characterization：受影響單元基線綠（GossipKeyx／GossipContentCrypto／RoomKeyCoordinator／Courier*／encryptionGate／antiEntropy.simulation）後才動手。
+- [x] T2 P1 securityLabel 模組＋單元測試。
+- [x] T3 ⚠ P2 hydrate keyx 重放＋單元（重載重生金鑰環、產生方 epoch 不歸零）。
+- [x] T4 P2 MeshGossipManager 衍生狀態＋逾時＋waitForSendKey＋單元。
+- [x] T5 ⚠ P2 MeshChatService 出口閘＋`PlaintextConfirmRequiredError`＋單元（hold 自動補送／逾時確認／reaction-read 略過）。
+- [x] T6 P2 Vue 頁整合（confirm 流接 allowDegraded）＋`@vue-stable` 指示器回歸。
+- [x] T7 P3 信使過濾推收兩側＋conformance 向量＋revive 清洗。
+- [x] T8 ⚠ P4 React 止血（橋接／備援密文、訂閱分流、指示器三態文案）。
+- [x] T9 P5 TreeKEM／GroupKeyManager 退役＋ADR-0033。
 - [ ] T10 P6 文件收尾＋第 6 節驗收全跑（四出口斷言：複本＝mesh-e2ee.spec 既有、Firestore＝新 E2E fallback 密文專項、信使＝T7 單元、明文窗＝T5 單元）。
 
 ## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收；最終形狀依 Q7 拍板）

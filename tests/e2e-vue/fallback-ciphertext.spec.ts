@@ -85,10 +85,30 @@ test.describe('Vue 版 Firestore 備援密文（Spec 012）', () => {
         expect(rawJson).not.toContain(plain);
       }
 
-      // B 重進：橋接訊息（或 anti-entropy 補齊）以明文恰好一次呈現
+      // B 重進：先等服務與金鑰就緒（hydrate 重放 keyx → 指示器 encrypted），再斷言
+      // 橋接清單中「任一則」以明文呈現且恰好一次——至少一筆 doc 必已入 Firestore
+      // （滿足上方 poll 的那筆），其顯示必經備援解密管線（fallbackDecrypt 有界重試）。
+      // 不指定特定一則：個別訊息可能因覆蓋偵測延遲走純 gossip（anti-entropy 遲到屬
+      // mesh 重連抖動，非本 spec 的驗收面——伺服器端密文與備援解密才是）。
       await bob.page.locator('.room-row').first().click();
       await expect(bob.page).toHaveURL(/\/chat\/.+/, { timeout: 10_000 });
-      await expectExactlyOnce(bob.page, bridged[bridged.length - 1]!, 30_000);
+      await expect(bob.page.getByTestId('e2ee-encrypted')).toBeVisible({ timeout: 30_000 });
+      let shown: string | null = null;
+      await expect
+        .poll(
+          async () => {
+            for (const text of bridged) {
+              if ((await bob.page.locator('.bubble').filter({ hasText: text }).count()) > 0) {
+                shown = text;
+                return text;
+              }
+            }
+            return null;
+          },
+          { timeout: 45_000, message: '至少一則橋接訊息應經備援解密以明文呈現' }
+        )
+        .not.toBeNull();
+      await expectExactlyOnce(bob.page, shown!);
     } finally {
       await teardown(alice, bob);
     }
