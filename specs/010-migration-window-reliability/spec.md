@@ -1,8 +1,8 @@
 # Spec 010：收斂星型→mesh 遷移窗訊息可靠性
 
-- 軌別：feature（單一實作內的可靠性缺口；不預期改 gossip 線上格式。若 plan 階段發現須動 wire（如星史注入需新紀錄型別），依憲法第 15 條升級 protocol 軌並重走 clarify）
-- 狀態：clarifying
-- 建立：2026-07-18／最後更新：2026-07-18
+- 軌別：feature（單一實作內的可靠性缺口；拍板路線不動 gossip 線上格式，維持 feature 軌）
+- 狀態：implementing
+- 建立：2026-07-18／最後更新：2026-07-18（clarify 全數拍板，路線 b）
 - 關聯：ADR-0023（room-as-replicated-log；修訂五 P2-③ star 退役＝Vue 線已消滅本問題類）、ADR-0017（Vue 切 production 門檻）、ADR-0004（星型 E2EE）、docs/QA-REPORT-chat.md 行 151-153（已知限制原始記載）、docs/mesh-correctness.md（殘留清單第 2 項）、Spec 009（殘留第 1 項，同族但獨立）
 
 ## 1. 要做什麼、為什麼（specify）
@@ -50,52 +50,54 @@ React 產線的房間拓撲是分層的：2 人星型（`P2PManager` 直連）�
 - 不做跨裝置歷史備份與多副本合併（CURRENT-STATUS 既列獨立優先項）；Q2 若拍板「歷史」入範圍，也僅指同房間內遲到者經 mesh 補齊，不含跨裝置。
 - 不提前 Vue 切 production、不縮短 ADR-0017 觀察期（若 Q1 拍板路線 b，本 spec 的交付掛在切換門檻上，而非改門檻時程）。
 
-## 3. 待釐清（clarify，逐條由使用者拍板；全部清空才進 plan）
+## 3. 待釐清（clarify）——2026-07-18 使用者全數拍板
 
-- [ ] **Q1 修復路線**（互斥，決定整個 spec 的形狀）：
-  - (a) **把 star 退役移植回 React 產線**：對齊 ADR-0023 P2-③，2 人房 mesh 起步，問題類同構消滅。施工圖已有（Vue 三階段），但這是對「唯一 production 線」的大改，違反 React 凍結新功能的既定決策，且該線最早兩週後就被 Vue 取代——高風險低殘值。
-  - (b) **React 不動刀，靠 Vue 切 production 收斂本項**：把殘留項重新定性為「React 線限定的架構債，由切換退役」。本 spec 交付改為：(1) Vue 線的遷移窗回歸鎖 E2E（證明「第三人加入的同時送訊」不掉不重，把 Vue 的免疫從設計主張變成測試事實）；(2) 文件重分類（QA 已知限制、mesh-correctness 殘留清單、CURRENT-STATUS 標明 scope=React-only 與收斂路徑）；(3) 依 Q5 決定是否掛進切換門檻。代價：切換完成前 production 使用者持續暴露在 W1-W4，且切換若延期，暴露期跟著延長。
-  - (c) **React 窗內最小緩解**：不退役 star，只補窗——例如切換期間（decide 翻旗標起至 mesh connected 止）強制同 id 雙寫 Firestore 備援、星型 cleanup 前 drain 未送完佇列。只緩解 W2/W3，W1（遲到者歷史）不解；等於在將死的程式碼上蓋新的可靠性機制，仍需完整回歸成本。
-  - (d) **星史注入 mesh store**：把星型時代本機歷史轉造為 gossip 紀錄供 anti-entropy 補齊遲到者。正面解 W1，但撞上身分域對映（uid vs mesh userId）、簽章歸屬（星型訊息無 gossip 簽章，代簽等於偽造他人紀錄）、加密域轉換三座硬牆；傾向排除，列出供否決。
-- [ ] **Q2 「可靠性」的需求範圍**（與 Q1 交叉）：
-  - (a) 只保「遷移窗內送出的訊息不無聲遺失、不重複」（W2/W3/W4）。
-  - (b) 連「星型時代歷史對遲到者可補齊」（W1）一併保。路線 (a) 下 W1 自動消失（沒有星型時代）；路線 (b) 下 Vue 線本來就保；路線 (c) 下要做到 (b) 等於引入 Q1(d) 的所有硬牆。
-  - (c) W1 明確劃出範圍、記為誠實邊界（React 線遲到者看不到切換前歷史，直到 Vue 切換）。
-- [ ] **Q3 驗收口徑與回歸鎖形式**：
-  - (a) 新增 Vue E2E：三人房「第三人加入的同時」三方連發訊息（不等任何 mesh 就緒訊號），矩陣全 =1——把目前診斷測試刻意繞開的時窗直接納入斷言。
-  - (b) React `mesh-diagnostic.spec.ts` 移除「等 `.e2ee-indicator-dtls` 才發送」的 gating（只有路線 a/c 才可能轉綠；路線 b 下保留 gating 但檔頭註解改指向本 spec 與收斂路徑）。
-  - (c) 兩者。
-- [ ] **Q4 「已送達」誠實化（W5）是否入範圍**：模擬 delivered 讓掉信不可見，與本 spec 的「無聲」直接相關，但機制上獨立（兩線皆有）。
-  - (a) 入範圍：delivered 改實據（例如以已讀水位／gossip 回執為準）或改顯示語義（僅顯示「已送出」）。
-  - (b) 不入，另開獨立工作項（建議連同 React/Vue 一起處理才不製造 parity 分歧）。
-- [ ] **Q5 若 Q1 拍板 (b)：收斂承諾掛在哪**：
-  - (a) 掛進 ADR-0017 切換門檻清單——「Vue 遷移窗回歸鎖綠」成為切 production 的必要條件之一（動門檻清單需使用者同意，故列此請示）。
-  - (b) 只記錄於 QA／CURRENT-STATUS／mesh-correctness，不動門檻清單。
+- [x] **Q1 修復路線**（互斥，決定整個 spec 的形狀）：**拍板 (b)**——React 不動刀，靠 Vue 切 production 收斂。理由：Vue 線已由設計消滅問題類，對凍結中且即將退役的 React 線動刀是高風險低殘值；本 spec 交付改為 Vue 遷移窗回歸鎖 E2E＋文件重分類＋門檻掛鉤（Q5）。
+  - (a) **把 star 退役移植回 React 產線**：對齊 ADR-0023 P2-③，2 人房 mesh 起步，問題類同構消滅。施工圖已有（Vue 三階段），但這是對「唯一 production 線」的大改，違反 React 凍結新功能的既定決策，且該線最早兩週後就被 Vue 取代——高風險低殘值。〔未採〕
+  - **(b) React 不動刀，靠 Vue 切 production 收斂本項**〔採用〕：把殘留項重新定性為「React 線限定的架構債，由切換退役」。本 spec 交付：(1) Vue 線的遷移窗回歸鎖 E2E（證明「第三人加入的同時送訊」不掉不重，把 Vue 的免疫從設計主張變成測試事實）；(2) 文件重分類（QA 已知限制、mesh-correctness 殘留清單、CURRENT-STATUS、CROSS-MACHINE-HANDOFF 標明 scope=React-only 與收斂路徑）；(3) 掛進切換門檻（Q5a）。代價（誠實記錄）：切換完成前 production 使用者持續暴露在 W1-W4，切換若延期，暴露期跟著延長。
+  - (c) **React 窗內最小緩解**：只緩解 W2/W3，W1 不解；在將死的程式碼上蓋新機制，仍需完整回歸成本。〔未採〕
+  - (d) **星史注入 mesh store**：撞身分域對映、簽章歸屬、加密域轉換三座硬牆。〔否決〕
+- [x] **Q2 需求範圍**：**拍板 (c)**——W1（React 線遲到者看不到切換前歷史）明確劃出範圍、記為誠實邊界，直到 Vue 切換退役整個星型棧。遷移窗訊息（W2/W3/W4）由 Vue 線設計保證＋本 spec 回歸鎖固定。
+- [x] **Q3 驗收口徑與回歸鎖形式**：**拍板 (a)**——新增 Vue E2E：三人房「第三人加入的同時」三方連發訊息（不等 mesh 就緒訊號），矩陣全 =1，把 React 診斷測試刻意繞開的時窗直接納入斷言。React `mesh-diagnostic.spec.ts` 保留 gating，但檔頭註解改指向本 spec 與收斂路徑。
+- [x] **Q4 「已送達」誠實化（W5）**：**拍板 (b)**——不入本 spec，另開獨立工作項（React/Vue 一起處理避免 parity 分歧；主 session 已立待辦）。
+- [x] **Q5 收斂承諾掛在哪**：**拍板 (a)**——「Vue 遷移窗回歸鎖綠」掛進 ADR-0017 切換門檻清單，成為切 production 必要條件之一（使用者已同意動門檻清單）。
 
 ## 4. 技術計畫（plan）
 
-〔clarify 未清空，不進 plan。預告影響面（依 Q1 路線而定）：路線 (a) 涵蓋 `useP2PArchitecture`、`ChatPage`、`useStarTopology`（退役）、`useMeshTopology`、React E2E 全套與 React 護欄；路線 (b) 涵蓋 `tests/e2e-vue/` 新 spec、`docs/QA-REPORT-chat.md`、`docs/CURRENT-STATUS.md`、`docs/mesh-correctness.md`、（Q5a 時）`docs/adr/0017`；路線 (c) 涵蓋 `ChatPage` 送訊路由與遷移區塊。重大取捨完成後回填 ADR。〕
+路線 (b) 的方案：不動任何 `src/` 運作中程式碼，交付「測試事實＋文件真相」兩塊。
+
+1. **Vue 遷移窗回歸鎖**（新檔 `tests/e2e-vue/migration-window.spec.ts`，標 `@vue-stable`）：
+   - 劇本：A 建房、B 加入成 2 人房並互送訊息確立基線（React 線此階段＝星型時代）；接著 C 加入，**與 C 的加入並發**，A、B 立即連發訊息（不等 C 就緒、不等 mesh 橫幅、不等「已連線」狀態——這正是 React 線的 W2/W3 掉信窗），C 進房後在頁面允許的第一時間送訊（送失敗按重送——fail-visible 是 Vue 線的明訂行為，重送不破恰好一次因 id 貫穿）。
+   - 斷言：窗內三則訊息 × 3 個畫面矩陣全 =1（count==1 同抓漏與重）；2 人時代基線訊息在 A、B 畫面各恰好 1。C 對 2 人時代歷史的可見性另行紀錄不入斷言（屬新成員歷史補齊語義，與遷移窗獨立；Vue 線由 anti-entropy 覆蓋、rejoin.spec 已鎖回歸類似路徑）。
+   - 誠實條款：送達 deadline 需涵蓋 C 的 WebRTC/ICE 成形（模擬器下合法 30-60s，既有套件同語義），不是放寬對帳時限；重複沉澱 5s 後才斷言 count。
+   - 跑法沿用既有：`firebase emulators:exec --only auth,firestore --project nerilo "playwright test --config playwright.vue.config.ts ..."`。
+2. **React 診斷測試註解改向**：`tests/e2e/mesh-diagnostic.spec.ts` 檔頭「獨立於本輪目標，記錄於 QA 報告」改指向 Spec 010 與收斂路徑（gating 保留，行為零改動）。
+3. **文件重分類**（把「遷移窗」從全案已知限制改為 React-only 誠實邊界）：`docs/QA-REPORT-chat.md` 已知限制該項、`docs/CURRENT-STATUS.md` 已知風險節、`docs/CROSS-MACHINE-HANDOFF.md` 相關記載、`docs/mesh-correctness.md` 殘留清單第 2 項。
+4. **ADR-0017 門檻清單**：切換門檻加一條「Vue 遷移窗回歸鎖（migration-window.spec）綠」。
+5. **回填 ADR-0033**（migration-window disposition）：記「為何不修 React、靠接班線收斂」的取捨與門檻掛鉤——這是看 diff 看不出來的決策理由。
+
+取捨（為何 A 不 B）：修 React（路線 a/c）花在兩週後退役的程式碼上且風險最高；本方案的風險是「暴露期＝切換前」，以掛門檻（第 4 點）確保收斂承諾不淪為口頭。
 
 ## 5. 任務分解（tasks）
 
-〔plan 定案後填。預告：凡動 `ChatPage.tsx` 送訊路由或遷移區塊皆為運作中 production 路徑，一律標 ⚠ 並走 harden-tests（characterization-first、分層閘門、誠實條款）。〕
+- [ ] T1：新增 `tests/e2e-vue/migration-window.spec.ts`（依 plan 第 1 點劇本與斷言），本機連跑 3 次穩定（house style）。
+- [ ] T2：`tests/e2e/mesh-diagnostic.spec.ts` 檔頭註解改指向 Spec 010（不動測試行為）。
+- [ ] T3：文件重分類——QA-REPORT、CURRENT-STATUS、CROSS-MACHINE-HANDOFF、mesh-correctness skill。
+- [ ] T4：ADR-0017 門檻清單加一條；回填 ADR-0033。
+- [ ] T5：驗收——`npm run ci` 全綠＋新 E2E 綠；spec 狀態改 done。
 
-- [ ] T1：
-- [ ] T2：
+（無任務動運作中 production 路徑，故無 ⚠；T1 是純新增測試檔。）
 
-## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收）
+## 6. 驗收（黃金判準）
 
-- [ ] V1 遷移窗專項回歸鎖轉綠：依 Q1/Q3 拍板的形式——「拓撲切換的同時送訊」不無聲遺失、不重複（矩陣 =1 口徑），劇本至少涵蓋 W2（非對稱切換）與 W3（本機切換中）。
-- [ ] V2 既有回歸鎖不動搖：`mesh-diagnostic`（React 與 Vue 兩套）、`rejoin.spec.ts`、五根因回歸鎖（`SecurityManager.spec`、`GossipMessageHandler.spec`）維持綠，不得以放寬斷言或加長 timeout 湊綠。
-- [ ] V3 單元全綠：`npm run test:run`（基線 124 檔／1421 tests）。
-- [ ] V4 確定性模擬：`tests/unit/antiEntropy.simulation.spec.ts` 多 seed 全過。
-- [ ] V5 E2E：`npm run test:e2e:ci` 既有套件全綠（路線 a/c 時含 React 全套重驗；路線 b 時含新增 Vue spec）。
-- [ ] V6 消歧義劇本未破：房主易主（`RoomServiceHostMigration.spec.ts`）與遊戲會話不受影響。
-- [ ] V7 收尾文件：`docs/CURRENT-STATUS.md`、`docs/QA-REPORT-chat.md` 已知限制清單（行 151-153 該項）、`docs/mesh-correctness.md` 殘留清單同步更新；Q5a 拍板時含 ADR-0017 門檻清單。
+- [ ] V1 遷移窗回歸鎖轉綠：`tests/e2e-vue/migration-window.spec.ts` 三人並發窗內矩陣全 =1，連跑 3 次穩定。
+- [ ] V2 既有回歸鎖不動搖：單元全綠 `npm run ci`（含 type-check、lint、124 檔／1421 tests 基線，內含 antiEntropy 模擬、五根因回歸鎖、`RoomServiceHostMigration.spec`）。
+- [ ] V3 React 診斷測試零行為改動（只動註解），Vue 既有 `@vue-stable` 不受新檔影響。
+- [ ] V4 收尾文件落地：QA-REPORT、CURRENT-STATUS、CROSS-MACHINE-HANDOFF、mesh-correctness skill、ADR-0017、ADR-0033 全數更新且相互一致（皆指向 Spec 010）。
 
-## 7. 一致性自查（analyze，implement 前跑一次）
+## 7. 一致性自查（analyze，2026-07-18 implement 前跑過）
 
-- [ ] 第 4 節方案覆蓋第 1 節全部需求（含 W1-W5 中拍板入範圍者），無多做
-- [ ] 第 5 節任務完整實現第 4 節，無遺漏
-- [ ] 第 6 節驗收能證明第 1 節，不是只證明「程式跑得動」
-- [ ] 未違反憲法任何一條（特別是不變量聲明、誠實條款與 React 凍結決策的一致性）
+- [x] 第 4 節方案覆蓋第 1 節全部需求（W2/W3/W4→回歸鎖；W1→誠實邊界文件化（Q2c）；W5→範圍外另立項（Q4b）），無多做
+- [x] 第 5 節任務完整實現第 4 節（T1↔plan1、T2↔plan2、T3↔plan3、T4↔plan4+5），無遺漏
+- [x] 第 6 節驗收能證明第 1 節：V1 直接斷言 React 線繞開的時窗在存續線上不掉不重；V4 證明文件與真相一致，不是只證明「程式跑得動」
+- [x] 未違反憲法任何一條：不動運作中路徑（第 6 條不觸發）、React 凍結決策維持、誠實條款（deadline 語義聲明於 plan）、切換門檻變更已獲使用者同意（Q5a）
