@@ -683,3 +683,64 @@ describe(
     });
   })
 );
+
+// ── 房間容量分層（Spec 011 Q7：Free 5／Pro 10，token.plan 由 firebase-admin 寫入）──
+
+describe(
+  'Firestore Rules: p2pRooms 容量分層（token.plan）',
+  withEmulator(() => {
+    beforeEach(clearEmulatorData);
+
+    function roomDoc(uid: string, maxParticipants?: number) {
+      return {
+        ownerUid: uid,
+        participants: [uid],
+        isPrivate: false,
+        status: 'waiting',
+        createdAt: Date.now(),
+        ...(maxParticipants !== undefined ? { maxParticipants } : {}),
+      };
+    }
+
+    it('Free 使用者可建缺省房（無 maxParticipants 欄位＝5）', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db, uid } = await signInWithToken('cap-free-default', token);
+      await setDoc(doc(db, 'p2pRooms', 'cap-free-default'), roomDoc(uid));
+    });
+
+    it('Free 使用者可建 5 人房、不可建 6 人房', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db, uid } = await signInWithToken('cap-free', token);
+      await setDoc(doc(db, 'p2pRooms', 'cap-free-5'), roomDoc(uid, 5));
+      await assertDenied(() =>
+        setDoc(doc(db, 'p2pRooms', 'cap-free-6'), roomDoc(uid, 6))
+      );
+    });
+
+    it('⚠ Pro 使用者可建 10 人房（關鍵權益）、仍不可超過 10', async () => {
+      const token = await createTestUser(UID_OWNER, { plan: 'pro' });
+      const { db, uid } = await signInWithToken('cap-pro', token);
+      await setDoc(doc(db, 'p2pRooms', 'cap-pro-10'), roomDoc(uid, 10));
+      await assertDenied(() =>
+        setDoc(doc(db, 'p2pRooms', 'cap-pro-11'), roomDoc(uid, 11))
+      );
+    });
+
+    it('plan=free 的 claim 值不解鎖大房（只認 pro）', async () => {
+      const token = await createTestUser(UID_OWNER, { plan: 'free' });
+      const { db, uid } = await signInWithToken('cap-claimfree', token);
+      await assertDenied(() =>
+        setDoc(doc(db, 'p2pRooms', 'cap-claimfree-8'), roomDoc(uid, 8))
+      );
+    });
+
+    it('容量建後不可變（房主 Pro 也不行）', async () => {
+      const token = await createTestUser(UID_OWNER, { plan: 'pro' });
+      const { db, uid } = await signInWithToken('cap-immutable', token);
+      await setDoc(doc(db, 'p2pRooms', 'cap-imm'), roomDoc(uid, 10));
+      await assertDenied(() =>
+        updateDoc(doc(db, 'p2pRooms', 'cap-imm'), { maxParticipants: 5 })
+      );
+    });
+  })
+);

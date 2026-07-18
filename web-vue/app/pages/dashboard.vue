@@ -418,7 +418,6 @@ function relativeTime(ts?: number): string {
         </button>
       </section>
 
-      <!-- 在線節點數頁尾（presence 宣告生命週期在元件內，見 PresenceFooter） -->
       <PresenceFooter v-if="user" :uid="user.uid" />
 
     </template>
@@ -435,6 +434,7 @@ function relativeTime(ts?: number): string {
 
           <form v-if="sheetTab === 'create'" class="sheet__form" @submit.prevent="handleCreate(false)">
             <input v-model="roomName" class="field" placeholder="房間名稱（選填）" maxlength="30" />
+            <PlanCapacityLine />
             <p class="sheet__hint">🔒 端對端加密預設開啟，訊息以點對點傳遞</p>
             <button type="submit" class="btn-primary" :disabled="busy">
               {{ busy ? '建立中…' : '建立聊天室' }}

@@ -26,6 +26,8 @@ export default defineNuxtConfig({
       // VITE_* 不保證進 import.meta.env——曾因此讓 E2E 打到正式 Firebase。
       // 在 config 時間點顯式注入，杜絕環境歧義（見 src/config/firebase.ts）。
       'import.meta.env.VITE_USE_EMULATOR': JSON.stringify(process.env.VITE_USE_EMULATOR ?? 'false'),
+      // LS 結帳連結（同 React 線 VITE_LS_CHECKOUT_URL）：未設定的環境升級鈕不顯示。
+      'import.meta.env.VITE_LS_CHECKOUT_URL': JSON.stringify(process.env.VITE_LS_CHECKOUT_URL ?? ''),
     },
     resolve: {
       // ../src 的複用模組會就近解析到 Nerilo/node_modules 的 firebase 副本，
