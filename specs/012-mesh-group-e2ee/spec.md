@@ -1,7 +1,7 @@
 # Spec 012：收斂 mesh 群組 E2EE 第二階段——關明文窗、堵盲信使明文外洩、立每通道安全分級
 
 - 軌別：feature＋protocol 局部加嚴（Q3 拍板收側拒收規則、Q6 拍板安全標籤契約，兩者屬跨實作互通層：規則以實作無關形式定義於第 4 節並附 conformance 測試向量）。
-- 狀態：implementing（clarify 已於 2026-07-18 全數拍板）
+- 狀態：done（2026-07-18 驗收完成；殘留與合併注意事項見第 6 節執行紀錄）
 - 建立：2026-07-18／最後更新：2026-07-18
 - 關聯：ADR-0004（星型 E2EE 接線；mesh 群組金鑰當時列第二階段）、ADR-0023（P2 紀錄密文化＋keyx 分發，已完成上線）、ADR-0024（盲信使儲存經濟學；盲性前提）、ADR-0026（R2 明文降級 fail-visible，已落地）、ADR-0010（異質傳輸分級契約，Proposed）、ADR-0031（TreeKEM/GroupKeyManager 處置懸置）、docs/GOAL-ANALYSIS.md GS1/GS4/GX3、.claude/skills/mesh-correctness（殘留清單第 4 項）
 - 排程協調（非阻塞依賴）：Spec 009（session epoch 入簽章）另線進行中，動的是簽章覆蓋範圍與 gossip wire；本 spec 全部方案落在內容層（RecordCrypto 信封在簽章之前）與應用層閘門，不碰簽章語義。兩 spec 若同期實作，courier 相容性與 `GossipMessageHandler` 的改動需協調合併順序。
@@ -150,22 +150,24 @@ ADR-0010 Decision 1-2 已定原則：每個 transport adapter 宣告安全等級
 - [x] T7 P3 信使過濾推收兩側＋conformance 向量＋revive 清洗。
 - [x] T8 ⚠ P4 React 止血（橋接／備援密文、訂閱分流、指示器三態文案）。
 - [x] T9 P5 TreeKEM／GroupKeyManager 退役＋ADR-0033。
-- [ ] T10 P6 文件收尾＋第 6 節驗收全跑（四出口斷言：複本＝mesh-e2ee.spec 既有、Firestore＝新 E2E fallback 密文專項、信使＝T7 單元、明文窗＝T5 單元）。
+- [x] T10 P6 文件收尾＋第 6 節驗收全跑（四出口斷言：複本＝mesh-e2ee.spec 既有、Firestore＝新 E2E fallback 密文專項、信使＝T7 單元、明文窗＝T5 單元）。
 
 ## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收；最終形狀依 Q7 拍板）
 
-- [ ] V1 明文窗專項（Q2 拍板口徑）：金鑰未就緒期間送訊，依拍板行為斷言（不出手／確認後出手）；keyx 就緒後訊息如常送達且複本為密文；「成員不發 ecdh」劇本不造成無提示的永久明文。
-- [ ] V2 信使明文過濾專項（Q3）：含明文紀錄的房執行 courier 備份，信使側不得出現明文 content；keyx 紀錄照常寄存；被過濾紀錄仍可經成員間 anti-entropy 補齊（恰好一次不破壞）。
-- [ ] V3 React 出口密文（Q1 拍板範圍）：mesh 房橋接／備援寫入 Firestore 的訊息文件不含明文 content。
-- [ ] V4 標籤模型（Q6 拍板深度）：通道→標籤判定與最低等級閘門的單元測試；`EncryptionState` 衍生後 Vue 三態指示器與 R2 阻斷確認行為不變（`e2ee-indicator.spec.ts` 回歸綠）。
-- [ ] V5 回歸鎖不動搖：`GossipMessageHandler.spec.ts` 補送與 `maxAgeMs: null` 案例、`SecurityManager.spec.ts` 全數、`antiEntropy.simulation.spec.ts` 多 seed、`mesh-e2ee.spec.ts`、mesh-diagnostic 3 人矩陣連續 5 次全 =1。
-- [ ] V6 單元全綠：`npm run test:run`（基線 124 檔／1421 tests）。
-- [ ] V7 收尾文件：`docs/CURRENT-STATUS.md`、`docs/THREAT_MODEL.md`（Q4 口徑）、`docs/QA-REPORT-chat.md` 已知限制、mesh-correctness skill 殘留清單第 4 項改寫（現行描述已過時）、ADR 回填（Q5、必要時 GX3）。
+- [x] V1 明文窗專項（Q2-a）：**綠（單元）**。出口閘 8 例（`MeshChatServiceGate.spec.ts`：encrypted 放行／exchanging 暫扣自動補送／逾時與明文房拋 `PlaintextConfirmRequiredError` 不出手／allowDegraded 顯式放行／reaction-read 略過）；逾時衍生 4 例（`MeshGossipManager.spec.ts`）；hydrate 重放 2 例（`GossipKeyx.spec.ts`）。「成員不發 ecdh」→ 60s 逾時衍生 'plaintext' → R2 阻斷確認流（單元＋`e2ee-indicator.spec.ts` E2E 綠 3/3 次）。
+- [x] V2 信使明文過濾專項（Q3-c）：**綠**。`CourierPlaintextFilter.spec.ts` 18 例：conformance 向量 13、收側拒收＋hydrate 清洗、推側 reconcile／runCourierBackup 過濾（信使側最終只有密文與 keyx）。明文紀錄補齊路徑＝成員間 anti-entropy（`antiEntropy.simulation.spec.ts` 多 seed 綠，未動演算法）。
+- [x] V3 React 出口密文（Q1-a）：**止血完成；位元組級 E2E 驗證在 Vue 線**。React 橋接／備援與 Vue 走同一 core API（`encryptForFallback`，null 即不送），該 API 的伺服器端密文由 `fallback-ciphertext.spec.ts` 以 emulator REST 逐 doc 斷言（無 content 欄位、無明文子字串）。React 線本身：type-check／lint／全單元綠；誠實記載——React E2E 未於本輪執行，留給 React stable CI 檢查點（2026-07-27）覆蓋。
+- [x] V4 標籤模型（Q6-a+b）：**綠**。`securityLabel.spec.ts` 23 例（全序／通道判定／閘門／衍生含逾時升級）；`EncryptionState` 改衍生後 `e2ee-indicator.spec.ts`（@vue-stable）回歸綠。
+- [x] V5 回歸鎖不動搖：**綠**。`SecurityManager.spec.ts`＋`GossipMessageHandler.spec.ts`（含 `maxAgeMs: null` 與 30 分鐘補送）＋`antiEntropy.simulation.spec.ts` 多 seed＝55 例全綠；`mesh-e2ee.spec.ts` 本輪 3/3 綠（UI 明文、複本密文）；mesh-diagnostic 連續 5 次全綠（見執行紀錄）。
+- [x] V6 單元全綠：**134 檔／1492 tests 全綠**（原基線 124／1421；Spec 012 退役 −46、新增 +117）。
+- [x] V7 收尾文件：**完成**。CURRENT-STATUS、THREAT_MODEL（Q4 口徑＋mesh 房間金鑰節）、QA-REPORT 已知限制、mesh-correctness skill 第 4 項改寫（收養進 repo）、ADR-0033 回填＋索引。
 
-## 7. 一致性自查（analyze，implement 前跑一次）
+執行紀錄（2026-07-18，本機 emulator）：e2ee-indicator 3/3 綠；mesh-e2ee 3/3 綠；rejoin 修復後綠（修復前 3/3 紅＝實作期修訂三的回歸，base 對照組綠證實）；fallback-ciphertext 加固版 2/3 綠（1 次敗於首訊息 mesh 形成期投遞，與本 spec 斷言無關——同型 flake 於本環境的既有 spec 亦出現，ICE/TURN 清單不可用＋ChannelBus 逾時噪音）；mesh-diagnostic ×5＝**5/5 全綠**（3 人矩陣每則訊息每畫面恰好一次；16-27s/次）——投遞正確性穩固，佐證 fallback spec 的單次 flake 屬形成期噪音而非投遞回歸。
 
-- [ ] 第 4 節方案覆蓋第 1 節六個缺口（含每個缺口的攻擊面），無多做
-- [ ] 第 5 節任務完整實現第 4 節，無遺漏
-- [ ] 第 6 節驗收能證明第 1 節，不是只證明「程式跑得動」
-- [ ] 未違反憲法任何一條（特別是不變量聲明；Q3/Q6 若觸發 protocol 軌，加嚴條款已滿足）
-- [ ] 硬邊界複查：diff 未觸及 SecurityManager 簽章覆蓋範圍與 SenderKeyManager seq 重放檢查
+## 7. 一致性自查（analyze，2026-07-18 執行）
+
+- [x] 第 4 節方案覆蓋第 1 節六個缺口（含每個缺口的攻擊面），無多做（缺口四／五為口徑拍板＋退役，非新機制）
+- [x] 第 5 節任務完整實現第 4 節，無遺漏（實作期修訂一至三均已落任務與測試）
+- [x] 第 6 節驗收能證明第 1 節：明文窗（V1）、信使外洩（V2）、React 出口（V3）、標籤（V4）各自對應缺口，非「跑得動」級
+- [x] 未違反憲法：protocol 軌加嚴已滿足（資格規則實作無關定義＋conformance 向量；wire 格式零變更故無版本欄位需求，Spec 003 相容聲明在 P3）；恰好一次回歸鎖（V5）與誠實條款（flake 誠實記錄、未放寬斷言湊綠——rejoin 紅燈停線查根因後修復）均守住
+- [x] 硬邊界複查：`git diff master -- src/core/mesh/SecurityManager.ts src/core/crypto/SenderKeyManager.ts` ＝ 0 行
