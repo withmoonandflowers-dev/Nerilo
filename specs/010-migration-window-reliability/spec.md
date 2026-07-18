@@ -1,8 +1,8 @@
 # Spec 010：收斂星型→mesh 遷移窗訊息可靠性
 
 - 軌別：feature（單一實作內的可靠性缺口；拍板路線不動 gossip 線上格式，維持 feature 軌）
-- 狀態：implementing
-- 建立：2026-07-18／最後更新：2026-07-18（clarify 全數拍板，路線 b）
+- 狀態：done
+- 建立：2026-07-18／最後更新：2026-07-18（同日拍板、實作、驗收全綠收尾）
 - 關聯：ADR-0023（room-as-replicated-log；修訂五 P2-③ star 退役＝Vue 線已消滅本問題類）、ADR-0017（Vue 切 production 門檻）、ADR-0004（星型 E2EE）、docs/QA-REPORT-chat.md 行 151-153（已知限制原始記載）、docs/mesh-correctness.md（殘留清單第 2 項）、Spec 009（殘留第 1 項，同族但獨立）
 
 ## 1. 要做什麼、為什麼（specify）
@@ -80,20 +80,20 @@ React 產線的房間拓撲是分層的：2 人星型（`P2PManager` 直連）�
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1：新增 `tests/e2e-vue/migration-window.spec.ts`（依 plan 第 1 點劇本與斷言），本機連跑 3 次穩定（house style）。
-- [ ] T2：`tests/e2e/mesh-diagnostic.spec.ts` 檔頭註解改指向 Spec 010（不動測試行為）。
-- [ ] T3：文件重分類——QA-REPORT、CURRENT-STATUS、CROSS-MACHINE-HANDOFF、mesh-correctness skill。
-- [ ] T4：ADR-0017 門檻清單加一條；回填 ADR-0033。
-- [ ] T5：驗收——`npm run ci` 全綠＋新 E2E 綠；spec 狀態改 done。
+- [x] T1：新增 `tests/e2e-vue/migration-window.spec.ts`（依 plan 第 1 點劇本與斷言），本機連跑 3 次穩定（house style）。
+- [x] T2：`tests/e2e/mesh-diagnostic.spec.ts` 檔頭註解改指向 Spec 010（不動測試行為）。
+- [x] T3：文件重分類——QA-REPORT、CURRENT-STATUS。〔實作期修訂〕CROSS-MACHINE-HANDOFF 逐字核對後**無**遷移窗記載（該文件為 2026-07-03/04 時點的操作交接，早於 QA 第三輪），無可改之處；mesh-correctness skill 檔只存在主 checkout 未追蹤區（worktree 隔離下不可觸碰），殘留清單第 2 項的更新交回主 session 收尾。
+- [x] T4：ADR-0017 門檻清單加第 6 點；回填 ADR-0033（含 ADR README 索引）。
+- [x] T5：驗收——`npm run ci` 全綠＋新 E2E 綠；spec 狀態改 done。
 
 （無任務動運作中 production 路徑，故無 ⚠；T1 是純新增測試檔。）
 
-## 6. 驗收（黃金判準）
+## 6. 驗收（黃金判準）——2026-07-18 全綠
 
-- [ ] V1 遷移窗回歸鎖轉綠：`tests/e2e-vue/migration-window.spec.ts` 三人並發窗內矩陣全 =1，連跑 3 次穩定。
-- [ ] V2 既有回歸鎖不動搖：單元全綠 `npm run ci`（含 type-check、lint、124 檔／1421 tests 基線，內含 antiEntropy 模擬、五根因回歸鎖、`RoomServiceHostMigration.spec`）。
-- [ ] V3 React 診斷測試零行為改動（只動註解），Vue 既有 `@vue-stable` 不受新檔影響。
-- [ ] V4 收尾文件落地：QA-REPORT、CURRENT-STATUS、CROSS-MACHINE-HANDOFF、mesh-correctness skill、ADR-0017、ADR-0033 全數更新且相互一致（皆指向 Spec 010）。
+- [x] V1 遷移窗回歸鎖轉綠：`tests/e2e-vue/migration-window.spec.ts` 三人並發窗內矩陣全 =1，連跑 3 次穩定（29.0s／32.9s／25.1s；C 對 2 人時代歷史的可見性三次皆為 1 1，僅記錄不斷言；第 2、3 次實測觸發 C 的 fail-visible 重送路徑仍恰好一次）。
+- [x] V2 既有回歸鎖不動搖：`npm run ci` 全綠（type-check、lint、單元 132 檔／1477 tests——基線因平行線新增測試已高於 spec 撰寫時的 124／1421，全數通過；內含 antiEntropy 模擬、五根因回歸鎖、`RoomServiceHostMigration.spec`）。
+- [x] V3 React 診斷測試零行為改動（只動註解），Vue 既有 `@vue-stable` 不受新檔影響（新檔為獨立 spec 檔、獨立房間）。
+- [x] V4 收尾文件落地：QA-REPORT、CURRENT-STATUS、ADR-0017、ADR-0033、ADR README 全數更新且相互一致（皆指向 Spec 010）；CROSS-MACHINE-HANDOFF 與 mesh-correctness skill 見 T3 實作期修訂。
 
 ## 7. 一致性自查（analyze，2026-07-18 implement 前跑過）
 
