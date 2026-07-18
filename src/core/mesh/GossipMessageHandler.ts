@@ -7,6 +7,7 @@ import { computeDigest, normalizeDigest, peerLacks } from './antiEntropy';
 import type { NormalizedDigest } from './antiEntropy';
 import type { IGossipPersistence } from './GossipPersistence';
 import { RoomContentKeyRing } from './RoomContentKeys';
+import { isEncryptedContent, contentEpoch } from './RecordCrypto';
 import type { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 
@@ -60,6 +61,31 @@ export class GossipMessageHandler {
     private persistence: IGossipPersistence | null = null
   ) {
     this.contentKeys = new RoomContentKeyRing(roomId, userId);
+    // 金鑰晚到補顯示（Spec 009×012 合流修復）：跨連結亂序下，密文可能先於 keyx 到達，
+    // 已用佔位呈現；金鑰安裝後把該 epoch 的密文重派解密內容（UI 以同 messageId upsert）。
+    this.contentKeys.setOnKeyInstalled((epoch) => {
+      void this.redisplayForKeyEpoch(epoch);
+    });
+  }
+
+  /** 重派某房間金鑰 epoch 的既存密文訊息（非阻塞；佔位 → 解密內容）。 */
+  private async redisplayForKeyEpoch(keyEpoch: number): Promise<void> {
+    for (const epochs of this.store.values()) {
+      for (const seqs of epochs.values()) {
+        for (const msg of seqs.values()) {
+          if (msg.channel === 'keyx') continue;
+          if (msg.senderId === this.userId) continue; // 自己的訊息由應用層樂觀顯示
+          if (!isEncryptedContent(msg.content) || contentEpoch(msg.content) !== keyEpoch) continue;
+          try {
+            this.notifyMessageListeners(await this.contentKeys.toDisplayMessage(msg));
+          } catch (err) {
+            logger.warn('[GossipMessageHandler] redisplay failed', {
+              roomId: this.roomId, senderId: msg.senderId, seq: msg.seq, err,
+            });
+          }
+        }
+      }
+    }
   }
 
   // ── 內容金鑰（ADR-0023 P2-②；實作在 RoomContentKeys.ts，此處薄委派保持公開 API）──

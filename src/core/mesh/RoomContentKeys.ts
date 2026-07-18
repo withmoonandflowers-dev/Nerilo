@@ -24,8 +24,18 @@ export class RoomContentKeyRing {
   private sendEpoch: number | null = null;
   /** 本機 ECDH 私鑰（開出封給自己的 keyx）。null = 不參與密文化（無鑰退明文）。 */
   private ecdhPrivateKey: CryptoKey | null = null;
+  /**
+   * 金鑰安裝回呼（Spec 009×012 合流修復）：晚到的金鑰安裝後，呼叫端據此把先前
+   * 以佔位呈現的該 epoch 密文「補顯示」（重派解密內容，UI 以同 id upsert）。
+   */
+  private onKeyInstalled: ((epoch: number) => void) | null = null;
 
   constructor(private roomId: string, private userId: string) {}
+
+  /** 設定金鑰安裝回呼（epoch＝房間金鑰代）。 */
+  setOnKeyInstalled(cb: ((epoch: number) => void) | null): void {
+    this.onKeyInstalled = cb;
+  }
 
   /**
    * 加入/設定一把房間內容金鑰到金鑰環。key=null 清空整個環（退明文）。
@@ -37,9 +47,19 @@ export class RoomContentKeyRing {
       this.sendEpoch = null;
       return;
     }
+    const isNew = !this.keyRing.has(epoch);
     this.keyRing.set(epoch, key);
     if (this.sendEpoch === null || epoch >= this.sendEpoch) {
       this.sendEpoch = epoch;
+    }
+    if (isNew && this.onKeyInstalled) {
+      try {
+        this.onKeyInstalled(epoch);
+      } catch (err) {
+        logger.error('[RoomContentKeyRing] onKeyInstalled callback error', {
+          roomId: this.roomId, epoch, err,
+        });
+      }
     }
   }
 
