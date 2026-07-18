@@ -186,14 +186,27 @@ export class MeshGossipManager {
         this.peerScoring,
         getGossipReplicaStore()
       );
-      // 連線建立前先從複本重生（seq 水位、紀錄、floors）
-      await this.messageHandler.hydrate();
-
       // keyx 消費啟用（ADR-0023 P2-②c）：注入本機 ECDH 私鑰，讓 handler 能開出封給
-      // 自己的房間金鑰。ECDH 不可用（持久失敗且無 webcrypto）時退明文相容。
+      // 自己的房間金鑰。**必須在 hydrate 之前**（Spec 012 P2）：hydrate 會重放複本內的
+      // keyx 紀錄重建金鑰環，無私鑰時重放是 no-op、重載明文窗照舊重開。
+      // ECDH 不可用（持久失敗且無 webcrypto）時退明文相容。
+      let keyxReady = false;
       if (ecdhPubKey) {
         try {
           this.messageHandler.setKeyxPrivateKey(this.identityManager.getEcdhPrivateKey());
+          keyxReady = true;
+        } catch (err) {
+          logger.warn('[MeshGossipManager] keyx private key unavailable — plaintext room', {
+            roomId: this.roomId, err,
+          });
+        }
+      }
+
+      // 連線建立前先從複本重生（seq 水位、紀錄、floors；含 keyx 重放 → 金鑰環）
+      await this.messageHandler.hydrate();
+
+      if (keyxReady) {
+        try {
           this.keyCoordinator = new RoomKeyCoordinator({
             localUserId: userId,
             getEcdhPrivateKey: () => this.identityManager.getEcdhPrivateKey(),

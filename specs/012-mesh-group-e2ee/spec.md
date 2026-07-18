@@ -105,6 +105,7 @@ ADR-0010 Decision 1-2 已定原則：每個 transport adapter 宣告安全等級
 ### P2 exchanging 明文窗（Q2-a；⚠ 運作中路徑）
 
 - **hydrate 重放 keyx**（缺口一實作期修訂）：`GossipMessageHandler.hydrate` 載入紀錄後，將 store 中 `channel:'keyx'` 紀錄逐筆過 `consumeKeyx`（皆為當初驗簽後才入庫的紀錄）。重載後金鑰環重生、`getMaxKnownEpoch` 正確、產生方重載不再 epoch 歸零碰撞。這是本 spec 對 GossipMessageHandler 僅有的兩處改動之一（另一處為零：送出路徑不動——閘門放在 MeshChatService 層），Spec 009 rebase 面最小。
+  〔實作期修訂二〕接線順序陷阱：`MeshGossipManager.initialize` 原先在 `hydrate()` **之後**才 `setKeyxPrivateKey`——無私鑰時 keyx 重放是 no-op，重載明文窗照舊重開（單元測試先注鑰遮住了此點）。已改為私鑰先注、hydrate 在後；教訓＝重放類修復必須核對「依賴注入時序」，不能只測重放函數本體。
 - **逾時**：`MeshGossipManager` 記 `keyxStartedAt`（startKeyxCoordination 時），`KEYX_EXCHANGE_TIMEOUT_MS = 60_000`。理由：健康房 keyx 於 10 秒內完成（tick 4s＋穩定窗 1 tick＋傳播）；60s 與 mesh-diagnostic 現行拓撲等待同級，CI 慢環境不誤觸；DoS 窗上限 1 分鐘，期間指示器誠實顯示 🔑 且訊息一律暫扣不外洩。逾時後 `deriveEncryptionState` 回 'plaintext' → 既有 R2 阻斷式確認流接手；金鑰若遲到，狀態自動回 encrypted。
 - **等待原語**：`MeshGossipManager.waitForSendKey(deadline)` 以 250ms 輪詢 `hasSendKey()`（零 GossipMessageHandler 改動）。
 - **出口閘（MeshChatService）**：`sendMessage`／`sendGameEnvelope` 進入前過 `sendGateDecision(getEncryptionState(), 'e2ee')`：allow→送；hold→`waitForSendKey` 至房間逾時線，就緒即自動補送（原 promise 續走，UI 維持 sending 態），逾時拋 `PlaintextConfirmRequiredError`；confirm-degrade→直接拋。新增 `allowDegraded` 參數：使用者於 UI 明確確認後的明文送出走此參數（R2 語義）。`sendReaction`／`sendRead` 未達 allow 時靜默略過（皆為冪等聚合，之後可重送；明文窗內聊天本體被扣住，兩者實際無事可送）。typing 豁免（presence 通道，等級已於 P1 誠實宣告）。
