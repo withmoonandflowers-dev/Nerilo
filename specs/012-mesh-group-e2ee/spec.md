@@ -1,7 +1,7 @@
 # Spec 012：收斂 mesh 群組 E2EE 第二階段——關明文窗、堵盲信使明文外洩、立每通道安全分級
 
-- 軌別：feature（起手）。若 clarify 拍板含「信使拒收明文的協議規則」（Q3-b/c）或「transport adapter 安全標籤契約」（Q6），該部分屬跨實作互通層，plan 階段須依 `templates/protocol-spec-template.md` 補齊格式定義與 conformance 測試向量。
-- 狀態：clarifying
+- 軌別：feature＋protocol 局部加嚴（Q3 拍板收側拒收規則、Q6 拍板安全標籤契約，兩者屬跨實作互通層：規則以實作無關形式定義於第 4 節並附 conformance 測試向量）。
+- 狀態：implementing（clarify 已於 2026-07-18 全數拍板）
 - 建立：2026-07-18／最後更新：2026-07-18
 - 關聯：ADR-0004（星型 E2EE 接線；mesh 群組金鑰當時列第二階段）、ADR-0023（P2 紀錄密文化＋keyx 分發，已完成上線）、ADR-0024（盲信使儲存經濟學；盲性前提）、ADR-0026（R2 明文降級 fail-visible，已落地）、ADR-0010（異質傳輸分級契約，Proposed）、ADR-0031（TreeKEM/GroupKeyManager 處置懸置）、docs/GOAL-ANALYSIS.md GS1/GS4/GX3、docs/mesh-correctness.md（殘留清單第 4 項）
 - 排程協調（非阻塞依賴）：Spec 009（session epoch 入簽章）另線進行中，動的是簽章覆蓋範圍與 gossip wire；本 spec 全部方案落在內容層（RecordCrypto 信封在簽章之前）與應用層閘門，不碰簽章語義。兩 spec 若同期實作，courier 相容性與 `GossipMessageHandler` 的改動需協調合併順序。
@@ -28,6 +28,8 @@ ADR-0004 當年把「mesh（3 人以上）群組金鑰分發」列為第二階�
 
 **缺口一：exchanging 明文窗，且可被誘導成永久明文而不觸發 R2 閘門。**
 `GossipMessageHandler.sendMessage` 在金鑰未就緒時送明文（行 197-213 的「明文相容」分支）；keyx 需全員 ecdh 就緒＋名冊穩定（約 4-8 秒起跳），形成期送出的訊息以明文進入永久 gossip 日誌，事後不回溯加密。`encryptionGate.sendDecisionFor` 只擋 'plaintext'（keyCoordinator=null），'exchanging' 放行不確認。攻擊面：成員（或故障的舊版 client）加入後不發布 ecdhPubKey，`RoomKeyCoordinator.tick` 閘門一永不滿足（行 95-103），房間永遠停在 'exchanging'——訊息持續明文、UI 只有一顆 🔑 指示、R2 的阻斷式確認永不觸發。這是 ADR-0026 R2「降級可被誘導」的殘餘變體。E2E `mesh-e2ee.spec.ts` 自己也註明「等 keyx 傳播……避免形成期空窗誤判」——測試繞開了這個窗，而不是證明它不存在。
+
+〔實作期修訂 2026-07-18〕缺口一有一個隱藏成員：**重載後明文窗重開**。`GossipMessageHandler.hydrate` 只把持久紀錄回灌 store，不重放 keyx 紀錄進 `consumeKeyx`——重載後金鑰環是空的，而 keyx 紀錄已在自己 store 內（anti-entropy 不會重送給自己），名冊未變時產生方也不重發。結果：純重載（非重進）的成員停在 'exchanging'、送訊回到明文；若重載者恰是產生方，`getMaxKnownEpoch()` 因金鑰環空而回 -1，重發 epoch 0 與日誌中既有 epoch 0 碰撞（同代不同鑰）。修復（hydrate 重放 keyx）列入第 4 節 P2。
 
 **缺口二：盲信使備份不過濾明文紀錄，明文外洩給非成員。**
 `src/core/relay/CourierService.ts:592-646` `runCourierBackup` 把持久層每一房的全部紀錄推給信使（reconcile 推「信使缺的」），無任何 `isEncryptedContent` 過濾；信使收側（CourierServer/CourierStore）亦不驗 content 是否為密文信封。缺口一的明文窗紀錄、明文相容房（混版、無 ECDH 環境）的全部紀錄，都會以明文寄存到非成員信使。這直接違反 ADR-0023 修訂二寫死的硬前提：「紀錄仍為明文前，任何『給非成員存』＝洩露」，也讓 ADR-0024 的「盲」名不符實。注意豁免細節：keyx 紀錄（channel:'keyx'）的 content 是 `keyx1` JSON、不是 `nrec1` 信封，`isEncryptedContent` 會判 false，但 keyx 必須被信使保存（ADR-0023 修訂三：金鑰韌性＝資料韌性）——過濾規則必須 channel-aware，不能一刀切。
@@ -75,50 +77,78 @@ ADR-0010 Decision 1-2 已定原則：每個 transport adapter 宣告安全等級
 - 不動 nuxt 版本（釘 4.4.2）、不動 Vue 切換門檻與觀察期節奏（ADR-0017）。
 - presence 暫態通道（typing）維持 DTLS-only：暫態信號不進日誌、洩漏面是「誰在打字」的 metadata，升級為 E2EE 的收益與複雜度不成比例；在標籤模型中誠實標示其等級即可（若 Q6 拍板含 UI，另議呈現方式）。
 
-## 3. 待釐清（clarify，逐條由使用者拍板；全部清空才進 plan）
+## 3. 待釐清（clarify）——2026-07-18 使用者全數拍板
 
-- [ ] **Q1 React 產線的處置範圍**（缺口三）：React 受 ADR-0017 凍結、Vue 切換觀察期至 2026-07-30。選項：
-  - (a) 僅止血：React mesh 橋接／備援改「有金鑰才密文送、無金鑰不送」（對齊 Vue 語義，core API 已備妥 `encryptForFallback`），指示器文案同步修正；不補 plaintext 態與阻斷確認。
-  - (b) 完整 parity：止血＋三態指示器＋阻斷確認（R2 已知邊界一併關閉）。
-  - (c) 不動 React：接受明文洩漏至切換日，文件記錄。
-  - 影響：(c) 意味 production 使用者的 mesh 訊息在覆蓋不足時持續明文入 Firestore。
-- [ ] **Q2 exchanging 明文窗策略**（缺口一）：
-  - (a) 送出閘：金鑰未就緒時 chat/game/reaction/read 通道不送（訊息標記待送，keyx 就緒後自動送出），比照 ADR-0004 星型「金鑰未就緒等待、不得默默降級明文」語義。子題：需配超時轉真降級——'exchanging' 逾時（如 30-60 秒）仍未就緒即轉入 fail-visible 流程（視同 plaintext 房，阻斷式確認後才可明文送），否則不發 ecdh 的成員可把房間變成永久拒送（DoS）。
-  - (b) fail-visible 擴大：exchanging 也走阻斷式確認（每次或首次），不擋自動化路徑。
-  - (c) 現狀接受：明文窗記入威脅模型與 UI 說明，不改行為。
-  - 拍板重點：明文窗是「絕不明文出手」（a）還是「知情同意即可」（b）。(a) 動運作中送出路徑，風險最高但語義最乾淨。
-- [ ] **Q3 盲信使明文過濾的位置與規則**（缺口二）：
-  - (a) 推送側過濾：`runCourierBackup`／deposit 側跳過非密文紀錄（channel-aware：keyx 放行、其餘須 `nrec1` 信封）。
-  - (b) 收側驗證：CourierServer/CourierStore 拒收非密文紀錄（同樣 channel-aware），拒收理由入 DepositResult。
-  - (c) 兩側都做：推送側是洩漏的實際關口（必須），收側是防禦縱深＋協議承諾（「盲信使只存密文」成為可驗證的協議規則）。
-  - 連動：(b)/(c) 改變寄存協議接受面 → protocol 軌加嚴（conformance 向量）＋ Spec 003 相容聲明。另須拍板：被過濾的明文紀錄的補齊路徑聲明（僅成員間 anti-entropy，信使不代管——寫進文件即可，或要 UI 提示）。
-- [ ] **Q4 房間金鑰輪替節奏與前向保密口徑**（缺口四）：
-  - (a) 維持現狀：僅名冊變動輪替；把「keyx 永存日誌、在籍成員可解全部歷史、無對在籍者的前向保密」明文寫進威脅模型與 README 安全節（誠實條款）。
-  - (b) 加週期輪替（時間或訊息數）：縮小單一金鑰本體外洩的暴露面；代價是 keyx 紀錄線性增長、金鑰環變大、且如 1.2 所析**不提供**對在籍成員的前向保密（不得在文件上宣稱）。
-  - (c) 真前向保密（ratchet＋刪舊鑰）：與補歷史產品語義正面衝突，需要「歷史可解性」的產品級重新定義；傾向排除，列出供否決。
-  - 建議拍板順序：先決定威脅模型口徑（防什麼），再決定機制。
-- [ ] **Q5 TreeKEM 與 GroupKeyManager 的處置**（缺口五，ADR-0031 續篇）：
-  - (a) 退役：兩者移出（或隔離到 attic），26＋20 個測試隨遷；理由是與 live 世界觀（亂序 gossip、keyx-as-record）不合、keyx O(N) 到 20 人尺度都夠用。
-  - (b) 續眠：留待 6+ 人拓撲實測（殘留 3）與 50+ 人需求出現再議；維持 ADR-0031 的「不動」現狀，本 spec 只補上懸置的分析結論。
-  - (c) 採用 TreeKEM 作為金鑰分發 v2：傾向排除（有序送達假設與 gossip 相悖，需大改），列出供否決。
-  - 完成後回填 ADR。
-- [ ] **Q6 GX3 安全標籤模型的交付深度**（缺口六）：
-  - (a) 型別契約：transport adapter 的安全等級宣告型別（e2ee／sign-only／plaintext）＋通道→標籤的判定函數；`EncryptionState` 改由標籤推導（房級狀態成為衍生值）。零行為變更。
-  - (b) (a)＋最低等級閘門：應用（SDK 使用者）可宣告資料流最低安全等級，路由原語拒送低於宣告等級的通道；Nerilo 聊天預設宣告 e2ee（與 Q2 的送出閘同一原語收斂）。
-  - (c) (b)＋UI 每通道標示（訊息或房間層顯示實際走的通道等級）。
-  - 拍板重點：M4 平台抽取前最少需要 (a)；(b) 是 ADR-0010 Decision 2 的完整語義；(c) 是 GP2 誠實原則的 UI 面。
-- [ ] **Q7 「密文出口一致」的驗收面**：驗收要斷言到哪些出口的位元組——(i) IndexedDB 複本（已有 mesh-e2ee.spec 先例）、(ii) Firestore 訊息文件（橋接／備援）、(iii) 信使 CourierStore 內容、(iv) exchanging 窗行為專項。全選或子集，決定第 6 節 V 條款的最終形狀與 E2E 成本。
+- [x] **Q1 React 產線的處置範圍**：拍板 **(a) 僅止血**。橋接／備援明文洩漏修掉（有金鑰才密文送、無金鑰不送）＋過時指示器文案修正；不做完整 parity（plaintext 態與阻斷確認留待切換決策）。
+- [x] **Q2 exchanging 明文窗**：拍板 **(a) 送出閘**。金鑰未就緒不送、keyx 就緒自動補送、逾時轉 fail-visible（視同明文房走阻斷式確認）。逾時參數與 UX 於第 4 節 P2 定並記錄理由。
+- [x] **Q3 盲信使明文過濾**：拍板 **(c) 推收兩側都做**。keyx 紀錄豁免、過濾 channel-aware；收側拒收規則走 protocol 軌加嚴（conformance 向量見第 4 節 P3）。被過濾明文紀錄的補齊路徑＝僅成員間 anti-entropy，信使不代管（文件記載，見 V7）。
+- [x] **Q4 金鑰輪替口徑**：拍板 **(a) 維持名冊變動觸發**；威脅模型誠實記載「keyx 永存日誌、在籍成員可解全部歷史、無對在籍者的前向保密」。
+- [x] **Q5 TreeKEM 與 GroupKeyManager**：拍板 **(a) 退役刪碼**，回填 ADR-0031 續篇（ADR-0033）。
+- [x] **Q6 GX3 安全標籤**：拍板 **(a)+(b)**。型別契約＋`EncryptionState` 改衍生＋最低等級路由閘（與 Q2 送出閘收斂成同一原語）；不做 UI 每通道標示、不實作任何 RF 通道。
+- [x] **Q7 驗收面**：拍板**四出口全做**——IndexedDB 複本、Firestore 訊息文件、信使儲存、exchanging 明文窗專項。
 
 ## 4. 技術計畫（plan）
 
-〔clarify 未清空，不進 plan。填寫時須：per-缺口列出動到的模組與檔案；Q3 若含收側驗證、Q6 若含 adapter 契約，依 protocol-spec-template 補齊格式與 conformance 向量；聲明對 Spec 003（信使寄存）與 Spec 009（session epoch，同期在動 GossipMessageHandler）的相容與合併順序；重大取捨完成後回填 ADR（至少：ADR-0031 續篇 TreeKEM 處置、GX3 標籤契約若定形亦應落 ADR）。影響面預估：GossipMessageHandler、encryptionGate、CourierService/CourierStore、ChatPage.tsx（React，依 Q1）、chat/[roomId].vue、types（EncryptionState 泛化）、docs/THREAT_MODEL.md。〕
+### P1 安全標籤原語（Q6，protocol 軌：契約定義）
+
+新模組 `src/core/transport/securityLabel.ts`（core 層、零框架依賴；SDK 表面暫不匯出，M4 平台抽取時再上——避免 0.x 提前鎖 API）：
+
+- `SecurityLevel = 'e2ee' | 'sign-only' | 'plaintext'`，全序 e2ee > sign-only > plaintext；`meetsMinimum(actual, min)`。
+- `channelSecurityLevel(kind, ctx)`：通道→等級判定。定義（實作無關，以內容層機密性／完整性為準，傳輸層加密如 DTLS/TLS 不計入等級）：
+  - `gossip`：房間金鑰就緒 → `e2ee`；未就緒 → `sign-only`（gossip 紀錄恆有 ECDSA 簽章，內容可讀）。
+  - `firestore-fallback`：密文信封 → `e2ee`；明文 body → `plaintext`（無簽章）。
+  - `presence`（typing 暫態）：`plaintext`（DTLS-only、無簽章、不進日誌）。
+  - `courier`：`e2ee`（僅代管密文＋簽章；P3 的拒收規則使此宣告可驗證）。
+- `sendGateDecision(state: EncryptionState, min: SecurityLevel) → 'allow' | 'hold' | 'confirm-degrade'`：達最低等級→allow；未達且可望改善（exchanging）→hold；未達且已定局（plaintext，含逾時衍生）→confirm-degrade。這就是 ADR-0010 Decision 2 的「路由不得降級、降級必須顯式」原語，與 Q2 送出閘同一實體。
+- `deriveEncryptionState({initialized, coordinatorActive, roomKeyReady, exchangeTimedOut})`：R2 三態改為衍生值；新增規則「exchanging 逾時 → 'plaintext'」（fail-visible 升級；金鑰事後到位則衍生值自動回到 encrypted）。`MeshGossipManager.getEncryptionState` 改為委派此函數。
+
+### P2 exchanging 明文窗（Q2-a；⚠ 運作中路徑）
+
+- **hydrate 重放 keyx**（缺口一實作期修訂）：`GossipMessageHandler.hydrate` 載入紀錄後，將 store 中 `channel:'keyx'` 紀錄逐筆過 `consumeKeyx`（皆為當初驗簽後才入庫的紀錄）。重載後金鑰環重生、`getMaxKnownEpoch` 正確、產生方重載不再 epoch 歸零碰撞。這是本 spec 對 GossipMessageHandler 僅有的兩處改動之一（另一處為零：送出路徑不動——閘門放在 MeshChatService 層），Spec 009 rebase 面最小。
+- **逾時**：`MeshGossipManager` 記 `keyxStartedAt`（startKeyxCoordination 時），`KEYX_EXCHANGE_TIMEOUT_MS = 60_000`。理由：健康房 keyx 於 10 秒內完成（tick 4s＋穩定窗 1 tick＋傳播）；60s 與 mesh-diagnostic 現行拓撲等待同級，CI 慢環境不誤觸；DoS 窗上限 1 分鐘，期間指示器誠實顯示 🔑 且訊息一律暫扣不外洩。逾時後 `deriveEncryptionState` 回 'plaintext' → 既有 R2 阻斷式確認流接手；金鑰若遲到，狀態自動回 encrypted。
+- **等待原語**：`MeshGossipManager.waitForSendKey(deadline)` 以 250ms 輪詢 `hasSendKey()`（零 GossipMessageHandler 改動）。
+- **出口閘（MeshChatService）**：`sendMessage`／`sendGameEnvelope` 進入前過 `sendGateDecision(getEncryptionState(), 'e2ee')`：allow→送；hold→`waitForSendKey` 至房間逾時線，就緒即自動補送（原 promise 續走，UI 維持 sending 態），逾時拋 `PlaintextConfirmRequiredError`；confirm-degrade→直接拋。新增 `allowDegraded` 參數：使用者於 UI 明確確認後的明文送出走此參數（R2 語義）。`sendReaction`／`sendRead` 未達 allow 時靜默略過（皆為冪等聚合，之後可重送；明文窗內聊天本體被扣住，兩者實際無事可送）。typing 豁免（presence 通道，等級已於 P1 誠實宣告）。
+- **Vue 頁**：送前 pre-check 沿用（逾時後狀態衍生為 'plaintext'，走既有 `plaintextPending` 確認 bar）；catch `PlaintextConfirmRequiredError` → 內容回填 `plaintextPending`（樂觀訊息標 failed 移除重複）；`confirmPlaintextSend` 改走 `allowDegraded`。
+- **React 頁**：無確認 bar（Q1-a 不做 parity），catch 後標 failed——React 上「明文房送不出」是刻意的更嚴格止血姿態，記錄於文件。
+
+### P3 盲信使明文過濾（Q3-c；protocol 軌：接受規則＋conformance）
+
+**規則（實作無關定義）**：紀錄 r 為「信使合格」若且唯若——
+1. `r.channel === 'keyx'` 且 content 可解析為 `v:'keyx1'` 的分發 payload；或
+2. 其餘 channel（含未標）之 content 為合法 `nrec1` 密文信封（`isEncryptedContent` 語義：含 `"v":"nrec1"` 標記、嚴格 parse、ct/iv 為字串）。
+
+**conformance 向量**（落 `tests/unit/CourierPlaintextFilter.spec.ts`，表驅動）：合格＝{合法 keyx1；nrec1 信封之 chat/game/reaction/read/未標}；不合格＝{明文 chat；明文 game/reaction/read；含 nrec1 標記但 parse 失敗；channel:'keyx' 而 content 非 keyx1；空字串}。
+
+**落點**：`src/core/relay/courierEligibility.ts`（純函數 `isCourierEligibleRecord`）。推側：`runCourierBackup` 於 `buildRoomStore` 前過濾（digest 亦不宣告明文紀錄）＋`CourierClient.reconcile` 推送前防禦過濾。收側：`CourierStore.deposit` 拒收 `{accepted:false, reason:'plaintext-content'}`（單一收斂點，IOU 與非 IOU 路徑同過）＋`revive` 略過既存不合格紀錄（歷史遺留清洗）。Spec 003 相容：舊 client 推明文將被拒收——其紀錄本來就不該離開成員圈，拒收即協議意圖；合格密文紀錄照舊，wire 格式零變更。
+
+### P4 React 止血（Q1-a；⚠ 運作中 production 路徑）
+
+`src/features/chat/ChatPage.tsx`：mesh 橋接（行 485）與斷線備援（行 508）改經 `meshChatService.encryptForFallback`——有密文才寫 Firestore，無金鑰橋接跳過（featureLog 記 `fallback_skipped_no_key`）、備援標 failed 不明文出手。訂閱側 `decrypt` 依拓撲分流（mesh → `meshChatService.decryptFromFallback`）。指示器：保留 `.e2ee-indicator-dtls` class（`tests/e2e/mesh-diagnostic.spec.ts:75` 以它當 mesh 模式信號，不可改名），文字／title／aria 改依 `getEncryptionState()` 三態真值輪詢更新，撤下「端到端加密尚未支援多人拓撲」的過時宣稱。
+
+### P5 TreeKEM／GroupKeyManager 退役（Q5-a）
+
+刪除 `src/core/crypto/TreeKEMManager.ts`、`src/core/crypto/GroupKeyManager.ts`、`tests/unit/TreeKEMManager.spec.ts`、`tests/unit/GroupKeyManager.spec.ts`（−46 tests，基線同步更新）；`RecordCrypto.ts`／`RoomKeyDistribution.ts` 檔頭註解去除對 GroupKeyManager 的指涉；SDK 表面無此二者匯出（已核）。回填 `docs/adr/0033-retire-treekem-groupkeymanager.md`：理由＝有序送達假設與 gossip 亂序世界觀相悖、keyx O(N) 至 20 人尺度足夠、live 方案已驗證；復活路徑＝git 歷史。
+
+### P6 文件與口徑（Q4-a）
+
+`docs/THREAT_MODEL.md` 新增房間金鑰口徑（名冊變動輪替；keyx 永存日誌；在籍者可解全歷史；離開者無新 epoch；無對在籍者的前向保密——刻意取捨，理由＝補歷史語義）；`docs/CURRENT-STATUS.md` 基線與完成度、`docs/QA-REPORT-chat.md` 已知限制、`docs/mesh-correctness.md` 第 4 項改寫。
+
+### 與 Spec 009 的合併順序聲明
+
+本 spec 對 `GossipMessageHandler` 僅動 `hydrate`（keyx 重放）；009 動 verify 簽章語義與去重鍵 `(senderId, epoch, seq)`。hydrate 重放不依賴去重鍵形狀（keyx 紀錄按 channel 篩選），預期 rebase 衝突面極小。courier digest 過濾若遇 009 的 digest 分代（其 Q5），對齊責任在 009 側。
 
 ## 5. 任務分解（tasks）
 
-〔plan 定案後填。預告：GossipMessageHandler 送出路徑（Q2）與 React ChatPage（Q1）皆為運作中路徑，相關任務一律標 ⚠ 並走 harden-tests（characterization-first、分層閘門、誠實條款）；core 是 React／Vue 兩線共用，兩邊 E2E 皆不可破。〕
-
-- [ ] T1：
-- [ ] T2：
+- [ ] T1 ⚠ characterization：受影響單元基線綠（GossipKeyx／GossipContentCrypto／RoomKeyCoordinator／Courier*／encryptionGate／antiEntropy.simulation）後才動手。
+- [ ] T2 P1 securityLabel 模組＋單元測試。
+- [ ] T3 ⚠ P2 hydrate keyx 重放＋單元（重載重生金鑰環、產生方 epoch 不歸零）。
+- [ ] T4 P2 MeshGossipManager 衍生狀態＋逾時＋waitForSendKey＋單元。
+- [ ] T5 ⚠ P2 MeshChatService 出口閘＋`PlaintextConfirmRequiredError`＋單元（hold 自動補送／逾時確認／reaction-read 略過）。
+- [ ] T6 P2 Vue 頁整合（confirm 流接 allowDegraded）＋`@vue-stable` 指示器回歸。
+- [ ] T7 P3 信使過濾推收兩側＋conformance 向量＋revive 清洗。
+- [ ] T8 ⚠ P4 React 止血（橋接／備援密文、訂閱分流、指示器三態文案）。
+- [ ] T9 P5 TreeKEM／GroupKeyManager 退役＋ADR-0033。
+- [ ] T10 P6 文件收尾＋第 6 節驗收全跑（四出口斷言：複本＝mesh-e2ee.spec 既有、Firestore＝新 E2E fallback 密文專項、信使＝T7 單元、明文窗＝T5 單元）。
 
 ## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收；最終形狀依 Q7 拍板）
 
