@@ -65,6 +65,7 @@ function makeMessage(overrides: Partial<GossipMessage> = {}): GossipMessage {
     senderId: 'sender-abc',
     pubKey: 'mock-pub-key-base64',
     seq: 1,
+    sessionEpoch: 1,
     timestamp: 1_000_000,
     content: 'hello',
     ttl: 3,
@@ -274,7 +275,7 @@ describe('GossipMessageHandler', () => {
 
       expect(neighbor.sendDigest).toHaveBeenCalledTimes(1);
       const digest = neighbor.sendDigest.mock.calls[0][0];
-      expect(digest['sender-abc']).toEqual({ floor: 1, max: 3, missing: [2] });
+      expect(digest['sender-abc']).toEqual({ epoch: 1, floor: 1, max: 3, missing: [2] });
     });
 
     it('handleDigest：把對方缺的訊息補送過去（對方沒聽過該 sender → 全補）', async () => {
@@ -296,7 +297,7 @@ describe('GossipMessageHandler', () => {
       const neighbor = makeMockNeighbor('n2');
       // 對方宣告：有 1..3 但缺 2
       await handler.handleDigest(
-        { 'sender-abc': { floor: 1, max: 3, missing: [2] } },
+        { 'sender-abc': { epoch: 1, floor: 1, max: 3, missing: [2] } },
         neighbor as any,
       );
 
@@ -309,7 +310,7 @@ describe('GossipMessageHandler', () => {
       const neighbor = makeMockNeighbor('n2');
 
       await handler.handleDigest('garbage', neighbor as any);
-      await handler.handleDigest({ 'sender-abc': { floor: -1, max: 'x', missing: null } }, neighbor as any);
+      await handler.handleDigest({ 'sender-abc': { epoch: 1, floor: -1, max: 'x', missing: null } }, neighbor as any);
 
       expect(neighbor.send).not.toHaveBeenCalled();
     });
@@ -324,6 +325,113 @@ describe('GossipMessageHandler', () => {
       expect(sent).toHaveLength(1);
       expect(sent[0].senderId).toBe('local-user');
       expect(sent[0].content).toBe('from-local');
+    });
+  });
+
+  // ── Spec 009：session epoch 接受規則（V1 重放專項）───────────────────────
+
+  describe('Spec 009 — session epoch 接受規則', () => {
+    it('V1 舊代完全拒收：已知現行代後，舊會話訊息不入 store、不上 UI、不轉發', async () => {
+      const listener = vi.fn();
+      handler.onMessage(listener);
+
+      // 先看到現行代（epoch 5）→ 採納
+      await handler.handleReceivedMessage(makeMessage({ sessionEpoch: 5, seq: 1 }), 'n1');
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      const neighbors = topology.getNeighbors();
+      neighbors.forEach((n) => n.send.mockClear());
+
+      // 舊會話（epoch 3）重放 → Q6 口徑：完全拒收
+      await handler.handleReceivedMessage(
+        makeMessage({ sessionEpoch: 3, seq: 99, content: 'replayed-old-session' }),
+        'n2',
+      );
+      expect(listener).toHaveBeenCalledTimes(1); // 不上 UI
+      for (const n of neighbors) expect(n.send).not.toHaveBeenCalled(); // 不轉發
+
+      // 不入 store：對空 digest 的補送不含舊代訊息
+      const probe = makeMockNeighbor('probe');
+      await handler.handleDigest({}, probe as any);
+      const sent = probe.send.mock.calls.map((c) => c[0] as GossipMessage);
+      expect(sent.every((m) => m.sessionEpoch === 5)).toBe(true);
+      expect(sent.some((m) => m.seq === 99)).toBe(false);
+    });
+
+    it('V1 預佔槽位失效：舊代先佔 seq，現行代同 seq 的新訊息不得被誤判重複', async () => {
+      const listener = vi.fn();
+      handler.onMessage(listener);
+
+      // 攻擊者對全新 store 搶先重放舊會話 (epoch 1, seq 1)
+      await handler.handleReceivedMessage(
+        makeMessage({ sessionEpoch: 1, seq: 1, content: 'stale-preempt' }),
+        'attacker',
+      );
+      expect(listener).toHaveBeenCalledTimes(1); // 全新 store 尚無現行代資訊，接受（殘留一，有界）
+
+      // sender 換裝置後新會話 (epoch 5, seq 1)：去重鍵分代 → 必須被接受
+      await handler.handleReceivedMessage(
+        makeMessage({ sessionEpoch: 5, seq: 1, content: 'genuine-new' }),
+        'n1',
+      );
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener.mock.calls[1][0].content).toBe('genuine-new');
+
+      // 採納新代後，攻擊者續灌舊代 → 拒收
+      await handler.handleReceivedMessage(
+        makeMessage({ sessionEpoch: 1, seq: 2, content: 'stale-more' }),
+        'attacker',
+      );
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('採納新代後 digest 只宣告現行代（舊代桶剪除、不再宣告）', async () => {
+      await handler.handleReceivedMessage(makeMessage({ sessionEpoch: 1, seq: 1 }), 'n1');
+      await handler.handleReceivedMessage(makeMessage({ sessionEpoch: 5, seq: 1 }), 'n1');
+      await handler.handleReceivedMessage(makeMessage({ sessionEpoch: 5, seq: 3 }), 'n1');
+
+      const neighbor = makeMockNeighbor('n1');
+      await handler.sendDigestTo(neighbor as any);
+      const digest = neighbor.sendDigest.mock.calls[0][0];
+      expect(digest['sender-abc']).toEqual({ epoch: 5, floor: 1, max: 3, missing: [2] });
+    });
+
+    it('缺 sessionEpoch（v1 舊版節點）：整則拒收並通知版本不合', async () => {
+      const listener = vi.fn();
+      const mismatch = vi.fn();
+      handler.onMessage(listener);
+      handler.onProtocolMismatch(mismatch);
+
+      const legacy = makeMessage({ seq: 1 });
+      delete (legacy as Partial<GossipMessage>).sessionEpoch;
+      await handler.handleReceivedMessage(legacy, 'n1');
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(mismatch).toHaveBeenCalledWith('n1');
+    });
+
+    it('同代之內 anti-entropy 亂序補送照常接受（epoch 門檻與 wall-clock 正交）', async () => {
+      const listener = vi.fn();
+      handler.onMessage(listener);
+      await handler.handleReceivedMessage(makeMessage({ sessionEpoch: 5, seq: 5 }), 'n1');
+      await handler.handleReceivedMessage(
+        makeMessage({ sessionEpoch: 5, seq: 3, content: 'backfill' }),
+        'n1',
+      );
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('自己送出的訊息帶本會話代（記憶體模式以 Date.now() 種出）且同會話固定', async () => {
+      const before = Date.now();
+      await handler.sendMessage('m1');
+      await handler.sendMessage('m2');
+
+      const probe = makeMockNeighbor('probe');
+      await handler.handleDigest({}, probe as any);
+      const sent = probe.send.mock.calls.map((c) => c[0] as GossipMessage);
+      expect(sent).toHaveLength(2);
+      expect(sent[0].sessionEpoch).toBeGreaterThanOrEqual(before);
+      expect(sent[0].sessionEpoch).toBe(sent[1].sessionEpoch);
     });
   });
 
@@ -347,6 +455,7 @@ describe('GossipMessageHandler', () => {
         senderId: 'sender-abc',
         pubKey: pubKeyB64,
         seq: 1,
+        sessionEpoch: 7, // 現行代簽出的舊 timestamp 訊息：epoch 門檻不是 wall-clock 門檻
         timestamp: Date.now() - 30 * 60 * 1000,
         content: 'old-but-valid',
         ttl: 0,

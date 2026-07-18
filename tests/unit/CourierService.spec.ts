@@ -17,6 +17,7 @@ import {
   runCourierBackup,
 } from '../../src/core/relay/CourierService';
 import { CourierStore, DEFAULT_COURIER_CONFIG } from '../../src/core/relay/CourierStore';
+import { maxEpochs } from '../../src/core/mesh/antiEntropy';
 import { signTombstone, senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
 import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
 import { arrayBufferToBase64 } from '../../src/utils/crypto';
@@ -59,6 +60,7 @@ function rec(over: Partial<GossipMessage> = {}): GossipMessage {
     senderId: 's1',
     pubKey: 'pk',
     seq: 1,
+    sessionEpoch: 1,
     timestamp: 1000,
     content: 'ENC:secret',
     ttl: 3,
@@ -170,7 +172,7 @@ describe('CourierService — anti-entropy 對帳（reconcile 雙向）', () => {
     const localStore = buildRoomStore([B]);
     const received: GossipMessage[] = [];
 
-    const res = await client.reconcile('r1', localStore, new Map(), (m) => received.push(m));
+    const res = await client.reconcile('r1', localStore, new Map(), maxEpochs(localStore), (m) => received.push(m));
 
     // 方向一：成員收到 A。
     expect(res.received).toBe(1);
@@ -190,7 +192,8 @@ describe('CourierService — anti-entropy 對帳（reconcile 雙向）', () => {
     client.start();
     const A = rec({ senderId: 'sA', seq: 1, messageId: 'A' });
     store.deposit(A);
-    const res = await client.reconcile('r1', buildRoomStore([A]), new Map(), () => {});
+    const storeA = buildRoomStore([A]);
+    const res = await client.reconcile('r1', storeA, new Map(), maxEpochs(storeA), () => {});
     expect(res).toEqual({ received: 0, pushed: 0 });
   });
 
@@ -210,7 +213,7 @@ describe('CourierService — anti-entropy 對帳（reconcile 雙向）', () => {
       rec({ senderId: 'sA', seq: 3, messageId: 'a3' }),
     ]);
     const received: GossipMessage[] = [];
-    const res = await client.reconcile('r1', local, new Map(), (m) => received.push(m));
+    const res = await client.reconcile('r1', local, new Map(), maxEpochs(local), (m) => received.push(m));
     expect(received.map((m) => m.messageId)).toEqual(['a2']); // 只補洞
     expect(res.pushed).toBe(0); // 信使不缺任何
   });
@@ -242,8 +245,9 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
     const saved: Array<{ roomId: string; id: string }> = [];
     const deps: CourierBackupDeps = {
       listRooms: async () => ['room1', 'room2'],
-      loadRoom: async (roomId) => ({ records: local[roomId] ?? [], floors: [] }),
+      loadRoom: async (roomId) => ({ records: local[roomId] ?? [], floors: [], acceptedEpochs: [] }),
       saveRecord: async (roomId, m) => { saved.push({ roomId, id: m.messageId! }); },
+      verifyRecord: async () => true,
       discoverCourierUids: async () => ['courier-uid'],
       ...realBackupSetup(courierStore),
     };
@@ -265,6 +269,7 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
       listRooms: async () => [],
       loadRoom: vi.fn(),
       saveRecord: vi.fn(),
+      verifyRecord: async () => true,
       discoverCourierUids: vi.fn(),
       openClient: vi.fn(),
     };
@@ -276,8 +281,9 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
   it('沒有可用信使 → 不動作（回 0）', async () => {
     const deps: CourierBackupDeps = {
       listRooms: async () => ['room1'],
-      loadRoom: async () => ({ records: [], floors: [] }),
+      loadRoom: async () => ({ records: [], floors: [], acceptedEpochs: [] }),
       saveRecord: vi.fn(),
+      verifyRecord: async () => true,
       discoverCourierUids: async () => [],
       openClient: vi.fn(),
     };
@@ -292,8 +298,9 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
     const tried: string[] = [];
     const deps: CourierBackupDeps = {
       listRooms: async () => ['room1'],
-      loadRoom: async () => ({ records: [rec({ roomId: 'room1', senderId: 'sX', seq: 1, messageId: 'X' })], floors: [] }),
+      loadRoom: async () => ({ records: [rec({ roomId: 'room1', senderId: 'sX', seq: 1, messageId: 'X' })], floors: [], acceptedEpochs: [] }),
       saveRecord: async () => {},
+      verifyRecord: async () => true,
       discoverCourierUids: async () => ['stale-uid', 'live-uid'],
       openClient: async (courierUid) => {
         tried.push(courierUid);
@@ -313,9 +320,10 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
       listRooms: async () => ['bad', 'good'],
       loadRoom: async (roomId) => {
         if (roomId === 'bad') throw new Error('load boom');
-        return { records: [rec({ roomId: 'good', senderId: 'sG', seq: 1, messageId: 'G' })], floors: [] };
+        return { records: [rec({ roomId: 'good', senderId: 'sG', seq: 1, messageId: 'G' })], floors: [], acceptedEpochs: [] };
       },
       saveRecord: async () => {},
+      verifyRecord: async () => true,
       discoverCourierUids: async () => ['courier-uid'],
       ...realBackupSetup(courierStore),
     };

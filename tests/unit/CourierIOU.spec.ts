@@ -24,7 +24,8 @@ import { createReceiptDraft, counterSign } from '../../src/core/incentive/CoSign
 import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
 import { senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
 import { arrayBufferToBase64 } from '../../src/utils/crypto';
-import { computeDigest, recordsPeerLacks } from '../../src/core/mesh/antiEntropy';
+import { computeDigest, recordsPeerLacks, maxEpochs } from '../../src/core/mesh/antiEntropy';
+import { buildRoomStore } from '../../src/core/relay/CourierService';
 import type { GossipMessage, P2PEnvelope } from '../../src/types';
 
 class BusEnd implements CourierBus {
@@ -59,7 +60,7 @@ async function node() {
 
 function rec(over: Partial<GossipMessage> = {}): GossipMessage {
   return {
-    roomId: 'room', senderId: 'record-signer', pubKey: 'pk', seq: 1, timestamp: 1,
+    roomId: 'room', senderId: 'record-signer', pubKey: 'pk', seq: 1, sessionEpoch: 1, timestamp: 1,
     content: 'ENC:x', ttl: 3, signature: 'SIG', ...over,
   };
 }
@@ -374,25 +375,26 @@ describe('Courier IOU — V4 免費成員互補不受信使拒收影響', () => 
     client.start();
 
     // 信使路徑是可拒絕的加速層；拒收不能取得或刪除成員的本地權威紀錄。
-    const memberA = new Map([[localRecord.senderId, new Map([[localRecord.seq, localRecord]])]]);
-    const memberB = new Map([[peerRecord.senderId, new Map([[peerRecord.seq, peerRecord]])]]);
+    const memberA = buildRoomStore([localRecord]);
+    const memberB = buildRoomStore([peerRecord]);
     expect(await client.deposit(localRecord)).toEqual({ accepted: false, reason: 'insufficient-credit' });
     expect(courierStore.stats().recordCount).toBe(0);
-    expect(memberA.get(localRecord.senderId)?.get(localRecord.seq)).toBe(localRecord);
+    expect(memberA.get(localRecord.senderId)?.get(1)?.get(localRecord.seq)).toBe(localRecord);
 
     // 免費底線：兩個房間成員用同一套正式 digest/select 原語互補，無欠條亦可收斂。
-    const digestA = computeDigest(memberA, new Map());
-    const digestB = computeDigest(memberB, new Map());
-    for (const message of recordsPeerLacks(memberA, digestB)) {
-      if (!memberB.has(message.senderId)) memberB.set(message.senderId, new Map());
-      memberB.get(message.senderId)!.set(message.seq, message);
-    }
-    for (const message of recordsPeerLacks(memberB, digestA)) {
-      if (!memberA.has(message.senderId)) memberA.set(message.senderId, new Map());
-      memberA.get(message.senderId)!.set(message.seq, message);
-    }
+    const put = (store: ReturnType<typeof buildRoomStore>, message: GossipMessage) => {
+      let epochs = store.get(message.senderId);
+      if (!epochs) store.set(message.senderId, (epochs = new Map()));
+      let seqs = epochs.get(message.sessionEpoch);
+      if (!seqs) epochs.set(message.sessionEpoch, (seqs = new Map()));
+      seqs.set(message.seq, message);
+    };
+    const digestA = computeDigest(memberA, new Map(), maxEpochs(memberA));
+    const digestB = computeDigest(memberB, new Map(), maxEpochs(memberB));
+    for (const message of recordsPeerLacks(memberA, digestB, maxEpochs(memberA))) put(memberB, message);
+    for (const message of recordsPeerLacks(memberB, digestA, maxEpochs(memberB))) put(memberA, message);
 
-    expect(memberA.get(peerRecord.senderId)?.get(peerRecord.seq)).toBe(peerRecord);
-    expect(memberB.get(localRecord.senderId)?.get(localRecord.seq)).toBe(localRecord);
+    expect(memberA.get(peerRecord.senderId)?.get(1)?.get(peerRecord.seq)).toBe(peerRecord);
+    expect(memberB.get(localRecord.senderId)?.get(1)?.get(localRecord.seq)).toBe(localRecord);
   });
 });

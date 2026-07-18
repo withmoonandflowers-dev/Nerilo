@@ -17,15 +17,16 @@ import { describe, it, expect } from 'vitest';
 import { computeDigest, normalizeDigest, peerLacks } from '../../src/core/mesh/antiEntropy';
 import type { GossipMessage } from '../../src/types';
 
-// GossipMessage 對收斂性只有 (senderId, seq) 有意義；其餘給最小值
-function msg(senderId: string, seq: number): GossipMessage {
+// GossipMessage 對收斂性只有 (senderId, sessionEpoch, seq) 有意義；其餘給最小值
+function msg(senderId: string, seq: number, sessionEpoch = 1): GossipMessage {
   return {
     roomId: 'sim',
     senderId,
     pubKey: 'x',
     seq,
+    sessionEpoch,
     timestamp: seq,
-    content: `${senderId}-${seq}`,
+    content: `${senderId}-${sessionEpoch}-${seq}`,
     ttl: 1,
     signature: 'sig',
   } as GossipMessage;
@@ -42,27 +43,41 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** 模擬節點：真 antiEntropy 函數驅動的 store + 對帳 */
+/** 模擬節點：真 antiEntropy 函數驅動的分代 store + 現行代門檻 + 對帳（Spec 009） */
 class SimNode {
-  store = new Map<string, Map<number, GossipMessage>>();
+  store = new Map<string, Map<number, Map<number, GossipMessage>>>();
+  accepted = new Map<string, number>();
   put(m: GossipMessage): void {
-    let seqs = this.store.get(m.senderId);
-    if (!seqs) this.store.set(m.senderId, (seqs = new Map()));
+    const cur = this.accepted.get(m.senderId);
+    if (cur !== undefined && m.sessionEpoch < cur) return; // 現行代門檻（鏡射 handleReceivedMessage）
+    if (cur === undefined || m.sessionEpoch > cur) {
+      this.accepted.set(m.senderId, m.sessionEpoch);
+      const epochs = this.store.get(m.senderId);
+      if (epochs) for (const ep of [...epochs.keys()]) if (ep < m.sessionEpoch) epochs.delete(ep);
+    }
+    let epochs = this.store.get(m.senderId);
+    if (!epochs) this.store.set(m.senderId, (epochs = new Map()));
+    let seqs = epochs.get(m.sessionEpoch);
+    if (!seqs) epochs.set(m.sessionEpoch, (seqs = new Map()));
     seqs.set(m.seq, m);
   }
-  /** 把「對方（依其 digest）缺、我有」的訊息補給 peer——鏡射 handleDigest 核心 */
+  /** 把「對方（依其 digest）缺、我有」的訊息補給 peer——鏡射 handleDigest 核心（只送現行代） */
   fillTo(peer: SimNode): void {
     const theirs = normalizeDigest(peer.digest());
     if (!theirs) return;
-    for (const [sender, seqs] of this.store)
-      for (const [seq, m] of seqs) if (peerLacks(theirs, sender, seq)) peer.put(m);
+    for (const [sender, epoch] of this.accepted) {
+      const seqs = this.store.get(sender)?.get(epoch);
+      if (!seqs) continue;
+      for (const [seq, m] of seqs) if (peerLacks(theirs, sender, epoch, seq)) peer.put(m);
+    }
   }
   digest() {
-    return computeDigest(this.store, new Map());
+    return computeDigest(this.store, new Map(), this.accepted);
   }
   keys(): Set<string> {
     const k = new Set<string>();
-    for (const [s, seqs] of this.store) for (const seq of seqs.keys()) k.add(`${s}:${seq}`);
+    for (const [s, epochs] of this.store)
+      for (const [ep, seqs] of epochs) for (const seq of seqs.keys()) k.add(`${s}:${ep}:${seq}`);
     return k;
   }
 }
@@ -90,7 +105,7 @@ function runSim(
     const seq = (seqOf.get(sender) ?? 0) + 1;
     seqOf.set(sender, seq);
     nodes[pick(opts.nodes)]!.put(msg(sender, seq));
-    expected.add(`${sender}:${seq}`);
+    expected.add(`${sender}:1:${seq}`);
   }
 
   // 邊：隨機生成樹保證連通(除非 connected:false 則不加樹，可能斷開)
@@ -141,7 +156,7 @@ describe('antiEntropy 確定性模擬', () => {
     const nodes = [new SimNode(), new SimNode(), new SimNode(), new SimNode()];
     nodes[0]!.put(msg('N0', 1));
     nodes[3]!.put(msg('N3', 1));
-    const expected = new Set(['N0:1', 'N3:1']);
+    const expected = new Set(['N0:1:1', 'N3:1:1']);
 
     // 分割期：只組內對帳 → 不會全員一致
     for (let r = 0; r < 5; r++) {
@@ -157,6 +172,39 @@ describe('antiEntropy 確定性模擬', () => {
       nodes[2]!.fillTo(nodes[3]!); nodes[3]!.fillTo(nodes[2]!);
     }
     for (const n of nodes) expect(eqSet(n.keys(), expected)).toBe(true);
+  });
+
+  it('100 個 seed 代際切換：sender 換代散佈後，全員收斂到現行代聯集、舊代訊息絕跡', () => {
+    const failures: number[] = [];
+    for (let seed = 1; seed <= 100; seed++) {
+      const rng = mulberry32(seed * 7919);
+      const pick = (n: number) => Math.floor(rng() * n);
+      const N = 5;
+      const nodes = Array.from({ length: N }, () => new SimNode());
+      // 第 1 代：sender S 的 1..6 散佈在隨機節點（模擬上一會話殘留）
+      for (let seq = 1; seq <= 6; seq++) nodes[pick(N)]!.put(msg('S', seq, 1));
+      // 換代：S 重進以第 2 代發 1..4，僅落在節點 0（sender 本人）
+      const expected = new Set<string>();
+      for (let seq = 1; seq <= 4; seq++) {
+        nodes[0]!.put(msg('S', seq, 2));
+        expected.add(`S:2:${seq}`);
+      }
+      // 連通圖（生成樹 + 隨機邊）+ 30% 丟包，跑到收斂或逾輪
+      const edges: Array<[number, number]> = [];
+      for (let i = 1; i < N; i++) edges.push([pick(i), i]);
+      for (let i = 0; i < N; i++) { const j = pick(N); if (i !== j) edges.push([i, j]); }
+      let converged = false;
+      for (let round = 0; round < 60 && !converged; round++) {
+        const order = [...edges].sort(() => rng() - 0.5);
+        for (const [x, y] of order) {
+          if (rng() >= 0.3) nodes[x]!.fillTo(nodes[y]!);
+          if (rng() >= 0.3) nodes[y]!.fillTo(nodes[x]!);
+        }
+        converged = nodes.every((n) => eqSet(n.keys(), expected) && n.accepted.get('S') === 2);
+      }
+      if (!converged) failures.push(seed);
+    }
+    expect(failures, `不收斂的 seed: ${failures.join(',')}`).toEqual([]);
   });
 
   it('反向對照（誠實）：完全斷開的孤立節點不收斂——證明測試會偵測不收斂', () => {
