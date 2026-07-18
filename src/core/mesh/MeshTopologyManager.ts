@@ -26,6 +26,14 @@ export class MeshTopologyManager {
   private static readonly BASE_RECONNECT_DELAY_MS = 1_000;
   private static readonly MAX_RECONNECT_DELAY_MS = 30_000;
 
+  /**
+   * accept 側讓位餘裕（Spec 011 R-a）：reactive discovery 對「全新成員」的連線
+   * 允許上限放寬到 k+SLACK。連線是雙側各自建 MeshConnection 才成形——k 滿的一側
+   * 若不建，對側的 offer 無人接、晚到者連不進圖（anti-entropy 收斂前提是連通圖）。
+   * 超出 k 的部分由旋轉逐步修剪；≤6 人房 k=6≥n-1，slack 永不觸發、行為不變。
+   */
+  private static readonly ACCEPT_SLACK = 2;
+
   /** 追蹤每個 peer 的重試次數，避免無限重試 */
   private reconnectAttempts: Map<string, number> = new Map();
   /** 進行中的重連 timer，cleanup 時需要清除 */
@@ -159,14 +167,16 @@ export class MeshTopologyManager {
         }
       }
 
-      if (newCandidates.length > 0 && this.neighbors.size < this.k) {
+      // Spec 011 R-a：全新成員的連線允許上限放寬到 k+ACCEPT_SLACK（見常數註解）。
+      const acceptLimit = this.k + MeshTopologyManager.ACCEPT_SLACK;
+      if (newCandidates.length > 0 && this.neighbors.size < acceptLimit) {
         logger.info('[MeshTopologyManager] Reactive discovery: new candidates found', {
           roomId: this.roomId,
           newCandidates,
           currentNeighbors: this.neighbors.size,
         });
-        const toConnect = this.prioritize(newCandidates).slice(0, this.k - this.neighbors.size);
-        this.connectToNeighbors(toConnect).catch(error => {
+        const toConnect = this.prioritize(newCandidates).slice(0, acceptLimit - this.neighbors.size);
+        this.connectToNeighbors(toConnect, acceptLimit).catch(error => {
           logger.error('[MeshTopologyManager] Reactive connect error', { error });
         });
       }
@@ -175,10 +185,12 @@ export class MeshTopologyManager {
 
   /**
    * 建立鄰居連線（含重試機制）
+   * @param limit 連線數上限；預設 k。reactive discovery 接新成員時放寬到
+   *   k+ACCEPT_SLACK（Spec 011 R-a），其餘路徑（補滿/旋轉/重連）維持嚴格 k。
    */
-  async connectToNeighbors(targetUserIds: string[]): Promise<void> {
+  async connectToNeighbors(targetUserIds: string[], limit: number = this.k): Promise<void> {
     for (const userId of targetUserIds) {
-      if (this.neighbors.size >= this.k) break;
+      if (this.neighbors.size >= limit) break;
       if (this.neighbors.has(userId)) continue;
       if (userId === this.localUserId) continue;
 
@@ -525,25 +537,42 @@ export class MeshTopologyManager {
   }
 
   /**
-   * 根據參與者人數更新拓撲策略。
-   * 由 MeshGossipManager 在參與者變動時呼叫。
+   * 根據參與者人數更新拓撲策略（Spec 011「只升不降」政策）。
+   * 由 MeshGossipManager 在名冊 watch push 時呼叫（人數＝rosterFromRoom 語義）。
+   *
+   * - 策略 rank 上升 → 整組採納（strategy、k、gossipConfig）。full→partial 時
+   *   k 由 6 縮到 max(3,⌈√n⌉) 是設計內縮編，多餘連線由旋轉逐步收斂。
+   * - 同 rank → k 與 fanout/ttl 只取 max（partial 區間 7→10 人 k 3→4 單調不縮）。
+   * - rank 下降 → 忽略。人數短暫低報（名冊快照落後）不得使運作中房間降級抖動；
+   *   多餘連線無正確性代價。淨效果：≤6 人房永遠停在建構預設（k=6/fanout5/ttl1），
+   *   既有 2-5 人基線行為不變；第 7 人到場才首次切 partial。
    */
   updateParticipantCount(participantCount: number): void {
     const evaluation = this.adaptiveTopology.evaluateTopology(participantCount);
     const oldK = this.k;
     const oldStrategy = this.currentStrategy;
 
-    this.k = evaluation.targetNeighborCount;
-    this.currentStrategy = evaluation.strategy;
-    this.currentGossipConfig = evaluation.gossipConfig;
+    if (this.adaptiveTopology.shouldUpgrade(this.currentStrategy, participantCount)) {
+      this.currentStrategy = evaluation.strategy;
+      this.k = evaluation.targetNeighborCount;
+      this.currentGossipConfig = evaluation.gossipConfig;
+    } else if (evaluation.strategy === this.currentStrategy) {
+      this.k = Math.max(this.k, evaluation.targetNeighborCount);
+      this.currentGossipConfig = {
+        fanout: Math.max(this.currentGossipConfig.fanout, evaluation.gossipConfig.fanout),
+        ttl: Math.max(this.currentGossipConfig.ttl, evaluation.gossipConfig.ttl),
+      };
+    } else {
+      return; // 只升不降：評估結果 rank 較低，忽略
+    }
 
-    if (oldStrategy !== evaluation.strategy || oldK !== this.k) {
+    if (oldStrategy !== this.currentStrategy || oldK !== this.k) {
       logger.info('[MeshTopologyManager] Topology updated', {
         roomId: this.roomId,
         participantCount,
-        strategy: evaluation.strategy,
+        strategy: this.currentStrategy,
         k: this.k,
-        gossipConfig: evaluation.gossipConfig,
+        gossipConfig: this.currentGossipConfig,
       });
 
       // Adjust neighbor count if needed
@@ -552,13 +581,18 @@ export class MeshTopologyManager {
           logger.warn('[MeshTopologyManager] fillNeighbors after upgrade failed', err);
         });
       }
-      // Downgrade: gradually reduce connections (handled by rotation)
+      // full→partial 的 k 縮編：由旋轉逐步收斂（rotateConnection）
     }
   }
 
   /** Current topology strategy */
   getStrategy(): TopologyStrategy {
     return this.currentStrategy;
+  }
+
+  /** 目前的目標鄰居數 k（Spec 011：橋接條件與 UI 覆蓋率的基準值） */
+  getTargetNeighborCount(): number {
+    return this.k;
   }
 
   /** Current gossip configuration (fanout + ttl) */
