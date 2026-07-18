@@ -307,13 +307,18 @@ export class MeshChatService {
   }
 
   /**
-   * mesh 覆蓋狀況：connected=已連上的鄰居數、known=已發現的鄰居數（含未連上）。
-   * connected < known 代表有成員在 mesh 之外（多半掉到 Firestore 備援），
-   * 呼叫端據此決定是否雙寫備援橋接。
+   * mesh 覆蓋狀況：connected=已連上的鄰居數、known=已發現的鄰居數（含未連上）、
+   * targetNeighbors=拓撲目標鄰居數 k（Spec 011；partial mesh 下 k < n-1 是設計常態）。
+   * 呼叫端的橋接條件應以 min(n-1, targetNeighbors) 為期望值，
+   * 否則 partial mesh 房會每訊息觸發備援雙寫（Q4 拍板）。
    */
-  getMeshCoverage(): { connected: number; known: number } {
+  getMeshCoverage(): { connected: number; known: number; targetNeighbors?: number } {
     const s = this.meshGossipManager.getConnectionState();
-    return { connected: s.neighborCount, known: s.totalNeighbors };
+    return {
+      connected: s.neighborCount,
+      known: s.totalNeighbors,
+      ...(s.targetNeighbors !== undefined ? { targetNeighbors: s.targetNeighbors } : {}),
+    };
   }
 
   /**
