@@ -124,6 +124,17 @@ export class MeshGossipManager {
         if (typeof this.directory.watchIdentities === 'function') {
           this.directoryWatchUnsub = this.directory.watchIdentities((snapshot) => {
             this.latestDirectorySnapshot = snapshot;
+            // Spec 011：拓撲自適應接線（updateParticipantCount 首個產品呼叫者）。
+            // 人數權威來源與 keyx 同語義（rosterFromRoom：participants 集合大小）。
+            // 只升不降政策在 MeshTopologyManager 內——此處只餵事實，低報無害。
+            // feature-detect：容忍測試樁的部分介面。
+            if (typeof this.topologyManager?.updateParticipantCount === 'function') {
+              const { participantCount } = rosterFromRoom(
+                snapshot.meshIdentities,
+                snapshot.participants
+              );
+              this.topologyManager.updateParticipantCount(participantCount);
+            }
           });
         }
       } catch (err) {
@@ -155,6 +166,18 @@ export class MeshGossipManager {
         this.buildWarmColdFactory(firebaseUid),
         this.introducerUid // 首選連線對象：先連介紹人，其餘 pair 才有暖路徑
       );
+
+      // Spec 011：若名冊 watch 首推早於 topologyManager 建立，補一次初始人數評估
+      if (
+        this.latestDirectorySnapshot &&
+        typeof this.topologyManager.updateParticipantCount === 'function'
+      ) {
+        const { participantCount } = rosterFromRoom(
+          this.latestDirectorySnapshot.meshIdentities,
+          this.latestDirectorySnapshot.participants
+        );
+        this.topologyManager.updateParticipantCount(participantCount);
+      }
 
       // 4. 初始化 PeerScoring & RelayManager
       this.peerScoring = new PeerScoring();
@@ -573,6 +596,8 @@ export class MeshGossipManager {
     neighborCount: number;
     totalNeighbors: number;
     isConnected: boolean;
+    /** 目標鄰居數 k（Spec 011）；拓撲管理器不可用或樁缺方法時省略 */
+    targetNeighbors?: number;
   } {
     if (!this.topologyManager) {
       return {
@@ -591,6 +616,10 @@ export class MeshGossipManager {
       neighborCount: connectedNeighbors.length,
       totalNeighbors: neighbors.length,
       isConnected: connectedNeighbors.length > 0,
+      // feature-detect：容忍只實作部分介面的測試樁
+      ...(typeof this.topologyManager.getTargetNeighborCount === 'function'
+        ? { targetNeighbors: this.topologyManager.getTargetNeighborCount() }
+        : {}),
     };
   }
 
