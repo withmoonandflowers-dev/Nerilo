@@ -177,29 +177,39 @@ export class GossipMessageHandler {
    * 確保本會話代已配發（Spec 009 §4.4，比照 reserveSeq 的 reserve-then-send）。
    * 每會話一次；記憶體模式與持久失敗退 Date.now()（時鐘下限保證跨重載單調）。
    */
-  private async ensureSessionEpoch(): Promise<number> {
-    if (this.sessionEpoch !== null) return this.sessionEpoch;
-    let reserved: number;
-    if (this.persistence) {
-      try {
-        reserved = await this.persistence.reserveSessionEpoch(this.roomId, this.userId);
-      } catch (err) {
-        logger.warn('[GossipMessageHandler] reserveSessionEpoch failed, falling back to Date.now()', {
-          roomId: this.roomId, errName: (err as Error)?.name,
-        });
+  /**
+   * single-flight：並發的首兩次送出（chat 與 fire-and-forget 的 read 水位常同時進來）
+   * 若各自跑一次配發，會拿到兩個不同會話代——第二次的 adoptEpoch 剪掉第一則所在的桶，
+   * 寄件端自己弄丟訊息（四線合併時 Vue golden-path 實測根因之二）。以進行中 promise 去重。
+   */
+  private sessionEpochInflight: Promise<number> | null = null;
+
+  private ensureSessionEpoch(): Promise<number> {
+    if (this.sessionEpochInflight) return this.sessionEpochInflight;
+    this.sessionEpochInflight = (async (): Promise<number> => {
+      let reserved: number;
+      if (this.persistence) {
+        try {
+          reserved = await this.persistence.reserveSessionEpoch(this.roomId, this.userId);
+        } catch (err) {
+          logger.warn('[GossipMessageHandler] reserveSessionEpoch failed, falling back to Date.now()', {
+            roomId: this.roomId, errName: (err as Error)?.name,
+          });
+          reserved = Date.now();
+        }
+      } else {
         reserved = Date.now();
       }
-    } else {
-      reserved = Date.now();
-    }
-    // 防禦：hydrate 到的自身現行代不可能高於新配發代（配發取 max(persisted, now)），
-    // 但若持久層異常仍要維持單調——自己的新代必須嚴格高於任何已知舊代。
-    const prev = this.acceptedEpochs.get(this.userId) ?? 0;
-    this.sessionEpoch = reserved > prev ? reserved : prev + 1;
-    // 自己的現行代與收端語義一致（＝最後實際簽出的代），持久化讓重載後、尚未在
-    // 新會話發言前，上一會話的自簽紀錄仍可補他人；一旦新會話發言即換代剪除。
-    this.adoptEpoch(this.userId, this.sessionEpoch);
-    return this.sessionEpoch;
+      // 防禦：hydrate 到的自身現行代不可能高於新配發代（配發取 max(persisted, now)），
+      // 但若持久層異常仍要維持單調——自己的新代必須嚴格高於任何已知舊代。
+      const prev = this.acceptedEpochs.get(this.userId) ?? 0;
+      this.sessionEpoch = reserved > prev ? reserved : prev + 1;
+      // 自己的現行代與收端語義一致（＝最後實際簽出的代），持久化讓重載後、尚未在
+      // 新會話發言前，上一會話的自簽紀錄仍可補他人；一旦新會話發言即換代剪除。
+      this.adoptEpoch(this.userId, this.sessionEpoch);
+      return this.sessionEpoch;
+    })();
+    return this.sessionEpochInflight;
   }
 
   /**
@@ -246,19 +256,25 @@ export class GossipMessageHandler {
     // reserve-then-send（ADR-0023 P1）：先在持久層原子保留 seq 再送。
     // 重載/重進後 seq 續增永不重用 → 不會與對方複本的舊 seq 碰撞被當重複丟棄。
     // crash 於保留與送出之間只留 seq 空洞，anti-entropy 容忍。
+    // seq 必須是「本次呼叫的區域值」：並發送出（chat 與 fire-and-forget 的 read
+    // 水位常同時進來）若共用 this.seq 欄位，後者會在前者組訊息前覆寫欄位，兩則
+    // 拿到同一個 seq、第二筆 storePut 被去重靜默丟棄——寄件端自己弄丟訊息
+    // （四線合併時 Vue golden-path 實測根因）。欄位只當水位（取 max）供記憶體模式遞增。
+    let seq: number;
     if (this.persistence) {
       try {
-        this.seq = await this.persistence.reserveSeq(this.roomId, this.userId);
+        seq = await this.persistence.reserveSeq(this.roomId, this.userId);
       } catch (err) {
         logger.warn('[GossipMessageHandler] reserveSeq failed, falling back to memory seq', {
           roomId: this.roomId,
           errName: (err as Error)?.name,
         });
-        this.seq++;
+        seq = this.seq + 1;
       }
     } else {
-      this.seq++;
+      seq = this.seq + 1;
     }
+    if (seq > this.seq) this.seq = seq;
 
     // 從拓撲管理器讀取動態 gossip 設定
     const gossipConfig = this.topologyManager.getGossipConfig();
@@ -288,7 +304,7 @@ export class GossipMessageHandler {
       roomId: this.roomId,
       senderId: this.userId,
       pubKey: await this.identityManager.exportPublicKey(),
-      seq: this.seq,
+      seq,
       sessionEpoch,
       // 呼叫端可帶入 timestamp，讓寄件端本機回音與線上複本共用同一時戳（已讀水位跨端比對需
       // 同一 orderKey；否則本機另取 Date.now() 會與線上值分歧）。未帶則自取。
@@ -338,7 +354,7 @@ export class GossipMessageHandler {
 
     logger.info('[GossipMessageHandler] sent', {
       roomId: this.roomId,
-      seq: this.seq,
+      seq,
       fanoutTargets: selected.map((n) => n.getId()),
       neighborCount: neighbors.length,
     });

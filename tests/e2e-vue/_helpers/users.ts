@@ -26,7 +26,7 @@ export async function setupUser(browser: Browser): Promise<User> {
       msg.type() === 'error' ||
       msg.type() === 'warning' ||
       text.includes('NERILO') ||
-      /GossipMessageHandler|MeshGossipManager|MeshTopologyManager|MeshConnection/.test(text)
+      /GossipMessageHandler|MeshGossipManager|MeshTopologyManager|MeshConnection|RoomContentKeyRing|RoomKeyCoordinator|MeshChatService/.test(text)
     ) {
       console.log(`[${tag}]`, msg.type(), text);
     }
@@ -99,8 +99,18 @@ export function uniqueMessage(prefix: string): string {
 
 /** 訊息在畫面上恰好一次（count==1 同時抓漏與重） */
 export async function expectExactlyOnce(page: Page, text: string, timeoutMs = 15_000): Promise<void> {
-  await expect(page.locator('.bubble').filter({ hasText: text }).first()).toBeVisible({
-    timeout: timeoutMs,
-  });
+  try {
+    await expect(page.locator('.bubble').filter({ hasText: text }).first()).toBeVisible({
+      timeout: timeoutMs,
+    });
+  } catch (err) {
+    // 失敗診斷證據：把當下畫面的泡泡與警示 bar 轉錄到測試輸出（只在失敗時跑，
+    // 不影響綠色路徑）。四線合併時靠這個把「寄件端並發丟訊」定位到 gossip send 競態。
+    const bubbles = await page.locator('.bubble').allTextContents().catch(() => []);
+    console.log('[DIAG] bubbles on page:', JSON.stringify(bubbles));
+    const banners = await page.locator('.chat__e2ee-warn, .chat__e2ee-confirm, [data-testid^="e2ee-"]').allTextContents().catch(() => []);
+    console.log('[DIAG] banners:', JSON.stringify(banners));
+    throw err;
+  }
   await expect(page.locator('.bubble').filter({ hasText: text })).toHaveCount(1);
 }
