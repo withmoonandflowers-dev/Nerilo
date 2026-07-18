@@ -10,7 +10,7 @@
  *  3. 明文與密文可共存偵測（mesh 現況為明文）：密文信封是帶版本標記的 JSON，
  *     一般聊天明文不會誤判（見 isEncryptedContent）。
  *
- * 金鑰來源是房間內容金鑰（P2 由 GroupKeyManager 分發；本模組只負責「一則的
+ * 金鑰來源是房間內容金鑰（P2 由 keyx 紀錄分發，見 RoomKeyDistribution；本模組只負責「一則的
  * 加解密」，不管分發——分發設計見 docs/adr/0023 P2 段）。純函數、可獨立測試。
  */
 
