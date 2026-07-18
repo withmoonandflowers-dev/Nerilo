@@ -47,6 +47,13 @@ export class MeshGossipManager {
    */
   private typingListeners: Set<(data: { userId: string; isTyping: boolean }) => void> = new Set();
   /**
+   * 協議版本不合（Spec 009 §4.7）：GOSSIP_HELLO 相等比對失敗、或收到缺
+   * sessionEpoch 的 v1 gossip 訊息（舊版確證）。每 peer 至多通知一次；
+   * 上層 UI 據此提示「請雙方更新」，不靜默降級。
+   */
+  private protocolMismatchListeners: Set<(info: { peerId: string }) => void> = new Set();
+  private mismatchNotifiedPeers = new Set<string>();
+  /**
    * 暖中繼 signaling 路由器（Spec 005 T3）。每房一顆；鄰居連上後掛 link，
    * 新 pair 的 signaling 優先經它走加密 peer 中繼（零伺服器），無路退 Firestore。
    */
@@ -177,6 +184,14 @@ export class MeshGossipManager {
       );
       // 連線建立前先從複本重生（seq 水位、紀錄、floors）
       await this.messageHandler.hydrate();
+
+      // 舊版節點確證（Spec 009 §4.7）：缺 sessionEpoch 的 gossip 訊息 → 版本不合提示。
+      // feature-detect：容忍測試樁 handler 缺此方法。
+      if (typeof this.messageHandler.onProtocolMismatch === 'function') {
+        this.messageHandler.onProtocolMismatch((fromNeighbor) => {
+          this.notifyProtocolMismatch(fromNeighbor);
+        });
+      }
 
       // keyx 消費啟用（ADR-0023 P2-②c）：注入本機 ECDH 私鑰，讓 handler 能開出封給
       // 自己的房間金鑰。ECDH 不可用（持久失敗且無 webcrypto）時退明文相容。
@@ -428,6 +443,12 @@ export class MeshGossipManager {
             );
           }
 
+          // 協議版本不合（Spec 009 §4.7）：GOSSIP_HELLO 相等比對失敗 → 上層提示更新。
+          // feature-detect：容忍鴨子型別連線（測試樁）缺此方法。
+          if (typeof neighbor.onProtocolMismatch === 'function') {
+            neighbor.onProtocolMismatch(() => this.notifyProtocolMismatch(peerId));
+          }
+
           neighbor.onMessage(async (message: GossipMessage) => {
             // 處理 relay 封包
             const raw = message as unknown as Record<string, unknown>;
@@ -543,6 +564,31 @@ export class MeshGossipManager {
     return () => {
       this.typingListeners.delete(listener);
     };
+  }
+
+  /**
+   * 監聽協議版本不合（Spec 009 §4.7）。觸發即代表房內存在 gossip 協議版本
+   * 不同的節點（v1↔v2 本質不互通），UI 應提示「請雙方更新後重新整理」。
+   */
+  onProtocolMismatch(listener: (info: { peerId: string }) => void): () => void {
+    this.protocolMismatchListeners.add(listener);
+    return () => {
+      this.protocolMismatchListeners.delete(listener);
+    };
+  }
+
+  private notifyProtocolMismatch(peerId: string): void {
+    if (this.mismatchNotifiedPeers.has(peerId)) return; // 每 peer 至多一次
+    this.mismatchNotifiedPeers.add(peerId);
+    this.protocolMismatchListeners.forEach((listener) => {
+      try {
+        listener({ peerId });
+      } catch (err) {
+        logger.error('[MeshGossipManager] protocol mismatch listener error', {
+          roomId: this.roomId, err,
+        });
+      }
+    });
   }
 
   /** 備援層加密（房間金鑰）；無金鑰回 null。見 GossipMessageHandler.encryptForFallback。 */
@@ -664,6 +710,8 @@ export class MeshGossipManager {
     this.topologyManager = null;
     this.messageHandler = null;
     this.typingListeners.clear();
+    this.protocolMismatchListeners.clear();
+    this.mismatchNotifiedPeers.clear();
     this.initialized = false;
     logger.info('[MeshGossipManager] Cleaned up', { roomId: this.roomId });
   }

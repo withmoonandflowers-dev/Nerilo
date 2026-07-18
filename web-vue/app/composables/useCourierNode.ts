@@ -27,6 +27,8 @@ import {
 } from '@legacy/core/relay/CourierService'
 import { FirestoreRelayDirectory } from '@legacy/core/relay/FirestoreRelayDirectory'
 import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
+import { SecurityManager } from '@legacy/core/mesh/SecurityManager'
+import { maxEpochs } from '@legacy/core/mesh/antiEntropy'
 import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
 import { ecdsaSigner } from '@legacy/core/relay/CourierReceipts'
 import { CourierIOUBook } from '@legacy/core/incentive/CourierIOU'
@@ -231,10 +233,23 @@ export function useCourierNode() {
   function backupDeps(uid: string): CourierBackupDeps | null {
     const persistence = getGossipReplicaStore()
     if (!persistence) return null
+    const security = new SecurityManager()
     return {
       listRooms: () => persistence.listRooms(),
       loadRoom: (roomId) => persistence.loadRoom(roomId),
       saveRecord: (roomId, m) => persistence.saveRecord(roomId, m),
+      // Spec 009 §4.9 信使回填收緊：驗簽＋pubKey↔senderId 綁定，任一失敗即丟棄（fail-closed）
+      verifyRecord: async (m) => {
+        try {
+          const pub = await security.importPublicKey(m.pubKey)
+          if (!(await security.verifyMessage(m, pub, { maxAgeMs: null }))) return false
+          if (!identity) return false // 身分未就緒 → 無法綁定驗證 → 不落地
+          return (await identity.deriveUserId(pub)) === m.senderId
+        } catch {
+          return false
+        }
+      },
+      saveAcceptedEpoch: (roomId, senderId, epoch) => persistence.saveAcceptedEpoch(roomId, senderId, epoch),
       discoverCourierUids: () => discoverCourierUids(uid),
       openClient: (courierUid) => openClient(uid, courierUid, true), // 背景備份：等 connected
     }
@@ -334,7 +349,7 @@ export function useCourierNode() {
         for (let attempt = 0; attempt < 5; attempt++) {
           const received: GossipMessage[] = []
           try {
-            const res = await client.reconcile(roomId, localStore, new Map(), (m) => received.push(m))
+            const res = await client.reconcile(roomId, localStore, new Map(), maxEpochs(localStore), (m) => received.push(m))
             return { received, pushed: res.pushed }
           } catch (err) {
             if (attempt === 4) throw err

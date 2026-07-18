@@ -15,8 +15,11 @@ import type { GossipMessage } from '../../src/types';
 function makeFakePersistence(): IGossipPersistence & {
   dump(): Map<string, GossipMessage>;
 } {
-  const records = new Map<string, GossipMessage>(); // key: room|sender|seq
-  const meta = new Map<string, { floor?: number; nextSeq?: number }>(); // key: room|sender
+  const records = new Map<string, GossipMessage>(); // key: room|sender|epoch|seq
+  const meta = new Map<string, {
+    floor?: number; floorEpoch?: number; nextSeq?: number;
+    nextSessionEpoch?: number; acceptedEpoch?: number;
+  }>(); // key: room|sender
   return {
     async reserveSeq(roomId, senderId) {
       const k = `${roomId}|${senderId}`;
@@ -25,25 +28,47 @@ function makeFakePersistence(): IGossipPersistence & {
       meta.set(k, { ...m, nextSeq: seq + 1 });
       return seq;
     },
+    async reserveSessionEpoch(roomId, senderId) {
+      const k = `${roomId}|${senderId}`;
+      const m = meta.get(k) ?? {};
+      const reserved = Math.max(m.nextSessionEpoch ?? 1, Date.now());
+      meta.set(k, { ...m, nextSessionEpoch: reserved + 1 });
+      return reserved;
+    },
+    async saveAcceptedEpoch(roomId, senderId, epoch) {
+      const k = `${roomId}|${senderId}`;
+      const m = meta.get(k) ?? {};
+      if ((m.acceptedEpoch ?? 0) < epoch) meta.set(k, { ...m, acceptedEpoch: epoch });
+    },
     async loadRoom(roomId) {
       const out: GossipMessage[] = [];
       for (const [k, v] of records) if (k.startsWith(`${roomId}|`)) out.push(v);
-      const floors: Array<{ senderId: string; floor: number }> = [];
+      const floors: Array<{ senderId: string; epoch: number; floor: number }> = [];
+      const acceptedEpochs: Array<{ senderId: string; epoch: number }> = [];
       for (const [k, m] of meta) {
-        if (k.startsWith(`${roomId}|`) && typeof m.floor === 'number') {
-          floors.push({ senderId: k.split('|')[1]!, floor: m.floor });
+        if (!k.startsWith(`${roomId}|`)) continue;
+        const senderId = k.split('|')[1]!;
+        if (typeof m.floor === 'number') {
+          floors.push({ senderId, epoch: m.floorEpoch ?? 0, floor: m.floor });
+        }
+        if (typeof m.acceptedEpoch === 'number') {
+          acceptedEpochs.push({ senderId, epoch: m.acceptedEpoch });
         }
       }
-      return { records: out, floors };
+      return { records: out, floors, acceptedEpochs };
     },
     async saveRecord(roomId, message) {
-      records.set(`${roomId}|${message.senderId}|${message.seq}`, message);
+      records.set(`${roomId}|${message.senderId}|${message.sessionEpoch}|${message.seq}`, message);
     },
-    async evictRecord(roomId, senderId, seq, newFloor) {
-      records.delete(`${roomId}|${senderId}|${seq}`);
+    async evictRecord(roomId, senderId, sessionEpoch, seq, newFloor) {
+      records.delete(`${roomId}|${senderId}|${sessionEpoch}|${seq}`);
       const k = `${roomId}|${senderId}`;
       const m = meta.get(k) ?? {};
-      meta.set(k, { ...m, floor: Math.max(m.floor ?? 0, newFloor) });
+      if (sessionEpoch > (m.floorEpoch ?? -1)) {
+        meta.set(k, { ...m, floorEpoch: sessionEpoch, floor: newFloor });
+      } else if (sessionEpoch === (m.floorEpoch ?? -1)) {
+        meta.set(k, { ...m, floor: Math.max(m.floor ?? 0, newFloor) });
+      }
     },
     async listRooms() {
       const rooms = new Set<string>();
@@ -92,10 +117,10 @@ function makeHandler(persistence: IGossipPersistence | null, m = makeMocks()) {
   };
 }
 
-function remoteMsg(seq: number, content = `m${seq}`): GossipMessage {
+function remoteMsg(seq: number, content = `m${seq}`, sessionEpoch = 1): GossipMessage {
   return {
     roomId: 'room-r', senderId: 'remote-sender', pubKey: 'pk',
-    seq, timestamp: Date.now(), content, ttl: 1, signature: 'sig',
+    seq, sessionEpoch, timestamp: Date.now(), content, ttl: 1, signature: 'sig',
   };
 }
 
@@ -160,9 +185,45 @@ describe('ADR-0023 P1 複本持久化', () => {
     expect(filled.some((m) => m.senderId === 'local-u' && m.content === 'mine')).toBe(true);
   });
 
+  it('Spec 009：acceptedEpoch 落盤 → 重載後立即拒舊代重放（無首接觸窗）', async () => {
+    const p = makeFakePersistence();
+    const a = makeHandler(p);
+    await a.handler.hydrate();
+    await a.handler.handleReceivedMessage(remoteMsg(1, 'current', 9), 'n1');
+    await tick(); // 等 saveAcceptedEpoch 落地
+
+    // 重載：同一顆持久層，全新 instance
+    const b = makeHandler(p);
+    await b.handler.hydrate();
+    const seenB: string[] = [];
+    b.handler.onMessage((m) => seenB.push(m.content));
+    // 舊會話（epoch 3）重放：即使 (epoch, seq) 不在複本，也因現行代門檻直接拒收
+    await b.handler.handleReceivedMessage(remoteMsg(99, 'replayed', 3), 'n1');
+    expect(seenB).toEqual([]);
+    // 現行代訊息照常接受
+    await b.handler.handleReceivedMessage(remoteMsg(2, 'fresh', 9), 'n1');
+    expect(seenB).toEqual(['fresh']);
+  });
+
+  it('Spec 009：重載後新會話代嚴格高於前會話（reserveSessionEpoch 單調）', async () => {
+    const p = makeFakePersistence();
+    const a = makeHandler(p);
+    await a.handler.hydrate();
+    await a.handler.sendMessage('s1');
+    const epochA = (a.mocks.neighbor.send.mock.calls[0][0] as GossipMessage).sessionEpoch;
+
+    const b = makeHandler(p);
+    await b.handler.hydrate();
+    await b.handler.sendMessage('s2');
+    const epochB = (b.mocks.neighbor.send.mock.calls[0][0] as GossipMessage).sessionEpoch;
+    expect(epochB).toBeGreaterThan(epochA);
+  });
+
   it('持久層故障：hydrate/reserve 都優雅退回記憶體模式', async () => {
     const broken: IGossipPersistence = {
       reserveSeq: vi.fn().mockRejectedValue(new Error('boom')),
+      reserveSessionEpoch: vi.fn().mockRejectedValue(new Error('boom')),
+      saveAcceptedEpoch: vi.fn().mockRejectedValue(new Error('boom')),
       loadRoom: vi.fn().mockRejectedValue(new Error('boom')),
       saveRecord: vi.fn().mockRejectedValue(new Error('boom')),
       evictRecord: vi.fn().mockRejectedValue(new Error('boom')),

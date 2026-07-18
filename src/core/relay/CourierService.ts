@@ -18,7 +18,14 @@
 
 import type { P2PEnvelope, GossipMessage } from '../../types';
 import { CourierStore, recordBytes, type DepositResult } from './CourierStore';
-import { computeDigest, recordsPeerLacks, type GossipDigest } from '../mesh/antiEntropy';
+import {
+  computeDigest,
+  recordsPeerLacks,
+  maxEpochs,
+  type GossipDigest,
+  type EpochStore,
+  type EpochFloors,
+} from '../mesh/antiEntropy';
 import { verifyTombstone, type Tombstone } from './TombstoneCrypto';
 import { ecdsaVerifier, pubKeyBindsNodeId, verifyCoSignedReceipt } from './CourierReceipts';
 import {
@@ -150,14 +157,27 @@ interface PricedDepositPayload {
   issuerPubKey: string;
 }
 
-/** 由紀錄陣列建 anti-entropy store 視圖：Map<senderId, Map<seq, GossipMessage>>。 */
-export function buildRoomStore(records: GossipMessage[]): Map<string, Map<number, GossipMessage>> {
-  const store = new Map<string, Map<number, GossipMessage>>();
+/**
+ * 由紀錄陣列建分代 anti-entropy store 視圖（Spec 009）：
+ * Map<senderId, Map<sessionEpoch, Map<seq, GossipMessage>>>。
+ * 缺 sessionEpoch 的 legacy 紀錄進 0 代桶（永不宣告/補送，v2 收端必拒）。
+ */
+export function buildRoomStore(
+  records: GossipMessage[]
+): Map<string, Map<number, Map<number, GossipMessage>>> {
+  const store = new Map<string, Map<number, Map<number, GossipMessage>>>();
   for (const m of records) {
-    let inner = store.get(m.senderId);
+    const epoch =
+      Number.isSafeInteger(m.sessionEpoch) && m.sessionEpoch >= 1 ? m.sessionEpoch : 0;
+    let epochs = store.get(m.senderId);
+    if (!epochs) {
+      epochs = new Map<number, Map<number, GossipMessage>>();
+      store.set(m.senderId, epochs);
+    }
+    let inner = epochs.get(epoch);
     if (!inner) {
       inner = new Map<number, GossipMessage>();
-      store.set(m.senderId, inner);
+      epochs.set(epoch, inner);
     }
     if (!inner.has(m.seq)) inner.set(m.seq, m); // first-write-wins（對齊 CourierStore）
   }
@@ -364,11 +384,17 @@ export class CourierServer {
         }
         case CourierMsgType.SYNC: {
           const { roomId, digest } = env.payload as SyncPayload;
-          const roomStore = this.store.roomStore(roomId); // 標記房被存取（LRU 保鮮）由 serveRoom 做；此處只讀
+          // 標記房被存取（LRU 保鮮）由 serveRoom 做；此處只讀。分代視圖（Spec 009）：
+          // 信使無驗證脈絡，以持有紀錄的最高代宣告（maxEpochs）；legacy 0 代不宣告。
+          const flat = this.store.roomStore(roomId);
+          const nested: GossipMessage[] = [];
+          for (const seqs of flat.values()) for (const m of seqs.values()) nested.push(m);
+          const roomStore = buildRoomStore(nested);
+          const epochs = maxEpochs(roomStore);
           // 信使有、成員缺 → 補送（離線間隙回填）。
-          const records = recordsPeerLacks(roomStore, digest);
+          const records = recordsPeerLacks(roomStore, digest, epochs);
           // 信使自己的 digest（floors 空 = floor 1；信使 TTL 內不遺忘）→ 讓成員回推信使缺的。
-          const courierDigest = computeDigest(roomStore, new Map());
+          const courierDigest = computeDigest(roomStore, new Map(), epochs);
           await this.reply(env, CourierMsgType.SYNC_RESP, {
             roomId,
             records,
@@ -515,26 +541,28 @@ export class CourierClient {
    *  1. 送本地 digest → 收信使有、我缺的紀錄 → ingest（補離線間隙）。
    *  2. 依信使回傳的 digest，把信使缺的本地紀錄 push 回去（deposit，first-write-wins）。
    * 一輪即收斂（對稱差嚴格縮小；見 antiEntropy 收斂論證）。
-   * @param localStore 本地該房 store（Map<senderId, Map<seq, msg>>；可用 buildRoomStore 從陣列造）。
-   * @param floors 本地各 sender 的 floor（已淘汰下限）；無則傳空 Map（floor 預設 1）。
-   * @param ingest 收到「我缺的紀錄」時的回填（呼叫端寫入自己的 store/UI）。
+   * @param localStore 本地該房分代 store（可用 buildRoomStore 從陣列造）。
+   * @param floors 本地各 (sender, epoch) 的 floor（已淘汰下限）；無則傳空 Map（floor 預設 1）。
+   * @param currentEpochs 每 sender 的宣告代（成員傳已驗證 acceptedEpochs）。
+   * @param ingest 收到「我缺的紀錄」時的回填（呼叫端負責驗簽＋epoch 門檻後落地）。
    * @returns { received: 收到補的筆數, pushed: 回推信使的筆數 }
    */
   async reconcile(
     roomId: string,
-    localStore: ReadonlyMap<string, ReadonlyMap<number, GossipMessage>>,
-    floors: ReadonlyMap<string, number>,
+    localStore: EpochStore,
+    floors: EpochFloors,
+    currentEpochs: ReadonlyMap<string, number>,
     ingest: (msg: GossipMessage) => void
   ): Promise<{ received: number; pushed: number }> {
-    const myDigest = computeDigest(localStore, floors);
+    const myDigest = computeDigest(localStore, floors, currentEpochs);
     const req = envelope(CourierMsgType.SYNC, this.selfId, { roomId, digest: myDigest } as SyncPayload);
     const resp = await this.request(req);
     const { records, digest: courierDigest } = resp.payload as SyncRespPayload;
 
     for (const m of records ?? []) ingest(m); // 方向一：信使補我
 
-    // 方向二：我回推信使缺的（用信使 digest 過濾本地）。
-    const toPush = recordsPeerLacks(localStore, courierDigest ?? {});
+    // 方向二：我回推信使缺的（用信使 digest 過濾本地；只推各 sender 現行代）。
+    const toPush = recordsPeerLacks(localStore, courierDigest ?? {}, currentEpochs);
     let pushed = 0;
     for (const m of toPush) {
       const result = await this.deposit(m); // 逐筆 deposit（已測、ack 冪等）
@@ -568,12 +596,23 @@ export class CourierClient {
 export interface CourierBackupDeps {
   /** 我持有紀錄的房 id（getGossipReplicaStore().listRooms）。 */
   listRooms: () => Promise<string[]>;
-  /** 載入一房的持久紀錄 + floors。 */
+  /** 載入一房的持久紀錄 + 分代 floors + 已驗證現行代（Spec 009）。 */
   loadRoom: (
     roomId: string
-  ) => Promise<{ records: GossipMessage[]; floors: Array<{ senderId: string; floor: number }> }>;
-  /** 把信使補回來的紀錄寫進本地持久層（離線間隙落地）。 */
+  ) => Promise<{
+    records: GossipMessage[];
+    floors: Array<{ senderId: string; epoch: number; floor: number }>;
+    acceptedEpochs: Array<{ senderId: string; epoch: number }>;
+  }>;
+  /** 把信使補回來的紀錄寫進本地持久層（離線間隙落地；僅在通過驗證與 epoch 門檻後被呼叫）。 */
   saveRecord: (roomId: string, msg: GossipMessage) => Promise<void>;
+  /**
+   * 驗證信使補回紀錄的簽章＋pubKey↔senderId 身分綁定（Spec 009 §4.9 信使回填收緊：
+   * 信使不可信，未驗證的紀錄不得落地本地複本）。回 false 即丟棄。
+   */
+  verifyRecord: (msg: GossipMessage) => Promise<boolean>;
+  /** 持久化更高的已驗證現行代（信使補回的新代紀錄通過驗證後推進；best-effort）。 */
+  saveAcceptedEpoch?: (roomId: string, senderId: string, epoch: number) => Promise<void>;
   /**
    * 發現候選信使（非自己）的 firebase uid，新鮮者優先。回多個以容忍陳舊名冊條目：
    * 節點崩潰未撤回時仍留在名冊，連上去 DataChannel 永不開、對帳逾時 → 換下一個候選。
@@ -623,14 +662,40 @@ export async function runCourierBackup(
 
     for (const roomId of roomIds) {
       try {
-        const { records, floors } = await deps.loadRoom(roomId);
+        const { records, floors, acceptedEpochs } = await deps.loadRoom(roomId);
         const localStore = buildRoomStore(records);
-        const floorMap = new Map(floors.map((f) => [f.senderId, f.floor] as const));
+        const floorMap = new Map<string, Map<number, number>>();
+        for (const f of floors) {
+          let byEpoch = floorMap.get(f.senderId);
+          if (!byEpoch) floorMap.set(f.senderId, (byEpoch = new Map()));
+          byEpoch.set(f.epoch, f.floor);
+        }
+        // 宣告代（Spec 009）：以持有紀錄的最高代為底（本地複本皆經驗證落地），
+        // 已持久化的 acceptedEpochs 覆蓋其上（防複本殘留舊代誤宣告）。legacy 不宣告。
+        const epochMap = maxEpochs(localStore);
+        for (const e of acceptedEpochs) {
+          if (e.epoch > (epochMap.get(e.senderId) ?? 0)) epochMap.set(e.senderId, e.epoch);
+        }
+        // 信使回填收緊（Spec 009 §4.9）：驗簽＋身分綁定＋sessionEpoch 形狀＋現行代門檻
+        // 全過才落地；更高代通過驗證即推進 acceptedEpoch。信使不可信，這裡是唯一閘門。
+        const ingest = (m: GossipMessage) => {
+          void (async () => {
+            if (!Number.isSafeInteger(m.sessionEpoch) || m.sessionEpoch < 1) return; // legacy/畸形
+            const accepted = epochMap.get(m.senderId);
+            if (accepted !== undefined && m.sessionEpoch < accepted) return; // 舊代重放
+            if (!(await deps.verifyRecord(m))) return; // 驗簽或身分綁定失敗
+            const acceptedNow = epochMap.get(m.senderId);
+            if (acceptedNow !== undefined && m.sessionEpoch < acceptedNow) return;
+            if (acceptedNow === undefined || m.sessionEpoch > acceptedNow) {
+              epochMap.set(m.senderId, m.sessionEpoch);
+              await deps.saveAcceptedEpoch?.(roomId, m.senderId, m.sessionEpoch).catch(() => undefined);
+            }
+            await deps.saveRecord(roomId, m);
+          })().catch(() => undefined); // 落地失敗不拖垮對帳
+        };
         // 已連上，但信使 CourierServer 可能剛掛上（inbound 不緩衝晚訂閱者）→ 重試跨越該視窗。
         const res = await retry(() =>
-          client!.reconcile(roomId, localStore, floorMap, (m) => {
-            void deps.saveRecord(roomId, m).catch(() => undefined); // 落地失敗不拖垮對帳
-          })
+          client!.reconcile(roomId, localStore, floorMap, epochMap, ingest)
         );
         summary.rooms += 1;
         summary.received += res.received;

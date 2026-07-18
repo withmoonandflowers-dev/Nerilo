@@ -1,5 +1,5 @@
 id,severity,module,title,evidence,impact,invariant,recommendation,priority,confidence
-R1,High,GossipMessageHandler,跨會話重放不受時效窗限制,src/core/mesh/GossipMessageHandler.ts 收訊路徑註解自我揭露(時效窗豁免換補送可靠),持有舊簽章訊息者可在新會話重放使其被重新接受,恰好一次,per-session epoch 或 store floor 跨會話持久延續,P1,高
+R1,Low,GossipMessageHandler,跨會話重放不受時效窗限制(已收斂 Spec 009 2026-07-18),sessionEpoch 入簽章+現行代門檻+去重鍵分代(SessionEpochConformance.spec C1-C7),殘留:全新 store 首接觸窗的舊內容重現(有界;佔位結構上不可能;acceptedEpoch 落盤後同裝置即拒),恰好一次,殘留為自宣告代固有限制;完全消除需外部權威(未來項;殘留清單見 QA-REPORT),已修,高
 R2,High,MeshGossipManager/keyx,keyx 失敗退明文相容且僅被動告知,MeshGossipManager initialize 的 ECDH 缺席分支(room stays plaintext),阻斷 keyx 可誘導整房降級明文,E2EE,降級改 fail-visible:明文模式需使用者確認或預設拒送,P1,高
 R3,Medium,RoomKeyCoordinator,keyx 名冊形成期瞬時不一致,RoomKeyCoordinator 檔尾誠實邊界註解,形成期短暫錯封/漏封金鑰,E2EE,名冊收斂事件化+輪替即時觸發,P2,高
 R4,Medium,RoomService/rules,離開者 meshIdentity 殘留,leaveRoom 只縮 participants 不清 meshIdentities(以交集補救),前向保密依賴交集正確性與 epoch 輪替,E2EE,離開時清理或 rules 層 TTL,P2,中
