@@ -155,6 +155,7 @@ antiEntropy digest v2（GOSSIP_DIGEST payload 與信使 SYNC digest 共用）：
 - CourierService 的 buildRoomStore／reconcile／runCourierBackup 隨 digest v2 與巢狀 store 改簽名；信使本體維持盲（照存照服，digest 以持有最高代計）。
 - **信使回填收緊**（新增防護，堵既有注入面）：runCourierBackup 的 ingest 目前直寫持久層；改為先驗簽＋身分綁定＋sessionEpoch 形狀＋現行代門檻（epoch ≥ 已持久化 acceptedEpoch，較高則採納）才落地。legacy／舊代紀錄一律不落地。
 - 舊格式寄存紀錄退場：v2 收端一律拒收（缺 sessionEpoch），無豁免通道；信使側殘量靠 byte-day 計價與墓碑自然清退，不另寫遷移程式。Protocol Spec 003 的 record 定義隨 GossipMessage v2 連動（record＝已簽名 GossipMessage，欄位跟著 4.3）。
+- 實作階段補記（spec 活文件條款）：CourierStore 內部寄存槽位維持 (senderId, seq) first-write-wins 鍵（連動 Spec 003/004 的持久 schema 與計量，本 spec 不動）。後果：sender 換裝置後，同 seq 的新代紀錄在「仍持有舊代同槽紀錄」的信使處會被 duplicate 拒收——只損備份冗餘，不損恰好一次（收端現行代門檻必拒舊代補送，正確性不受影響）；靠信使 TTL/墓碑自然清退。列 QA 已知限制。
 
 ### 4.10 安全考量（誠實邊界）
 
@@ -171,14 +172,14 @@ GossipMessageHandler（接受規則、去重鍵、巢狀 store、epoch 配發）
 
 GossipMessageHandler／SecurityManager／antiEntropy／GossipReplicaStore／CourierService 皆運作中路徑，標 ⚠ 走 harden-tests：characterization-first、新行為先寫失敗測試、分層閘門（type-check → 受影響單元 → 全單元 → E2E → ci）。
 
-- [ ] T1 ⚠ 基線釘現況：受影響測試套件（GossipMessageHandler、SecurityManager、antiEntropy×3、GossipReplica、CourierService、MeshGossipManager 系列）與 type-check 全綠存證。
-- [ ] T2 ⚠ 型別＋簽章：GossipMessage.sessionEpoch 必要欄位；SecurityManager 序列化 v2（先寫失敗測試：簽章覆蓋 sessionEpoch、竄改 epoch 驗簽必敗）。
-- [ ] T3 ⚠ 接受規則核心：GossipMessageHandler 巢狀 store、(senderId, epoch, seq) 去重＋inflight、per-(sender, epoch) floor、reserveSessionEpoch 惰性配發、acceptedEpoch 追蹤＋採納＋舊桶剪除、Q6 完全拒收；V1 重放與預佔槽位劇本測試；V2 回歸鎖（30 分鐘補送、maxAgeMs: null）不動搖。
-- [ ] T4 ⚠ antiEntropy digest v2：computeDigest/normalizeDigest/peerLacks/recordsPeerLacks 分代；simulation 加代際切換劇本、多 seed。
-- [ ] T5 ⚠ 持久層：IGossipPersistence v2、GossipReplicaStore Dexie v2 原子遷移（含 legacy=0 標記與中斷恢復論證）、acceptedEpoch/nextSessionEpoch 落盤；GossipReplica 測試補遷移案例。
-- [ ] T6 版本訊號：MeshConnection GOSSIP_HELLO、MeshGossipManager onProtocolMismatch（含「缺 sessionEpoch 的舊版 gossip 訊息」確證路徑）、MeshChatService 轉發、兩線 UI 提示。
-- [ ] T7 ⚠ 信使：buildRoomStore/reconcile/runCourierBackup 隨 v2 改簽名；ingest 收緊（驗簽＋身分＋epoch 門檻）；useCourierNode 接線更新；CourierService 測試補舊代拒收。
-- [ ] T8 conformance：測試向量 C1-C7 落地（specs/009 conformance 章節＋可執行 spec），見第 6 節 V6。
+- [x] T1 ⚠ 基線釘現況：受影響測試套件（GossipMessageHandler、SecurityManager、antiEntropy×3、GossipReplica、CourierService、MeshGossipManager 系列）與 type-check 全綠存證。
+- [x] T2 ⚠ 型別＋簽章：GossipMessage.sessionEpoch 必要欄位；SecurityManager 序列化 v2（先寫失敗測試：簽章覆蓋 sessionEpoch、竄改 epoch 驗簽必敗）。
+- [x] T3 ⚠ 接受規則核心：GossipMessageHandler 巢狀 store、(senderId, epoch, seq) 去重＋inflight、per-(sender, epoch) floor、reserveSessionEpoch 惰性配發、acceptedEpoch 追蹤＋採納＋舊桶剪除、Q6 完全拒收；V1 重放與預佔槽位劇本測試；V2 回歸鎖（30 分鐘補送、maxAgeMs: null）不動搖。
+- [x] T4 ⚠ antiEntropy digest v2：computeDigest/normalizeDigest/peerLacks/recordsPeerLacks 分代；simulation 加代際切換劇本、多 seed。
+- [x] T5 ⚠ 持久層：IGossipPersistence v2、GossipReplicaStore Dexie v2 原子遷移（含 legacy=0 標記與中斷恢復論證）、acceptedEpoch/nextSessionEpoch 落盤；GossipReplica 測試補遷移案例。
+- [x] T6 版本訊號：MeshConnection GOSSIP_HELLO、MeshGossipManager onProtocolMismatch（含「缺 sessionEpoch 的舊版 gossip 訊息」確證路徑）、MeshChatService 轉發、兩線 UI 提示。
+- [x] T7 ⚠ 信使：buildRoomStore/reconcile/runCourierBackup 隨 v2 改簽名；ingest 收緊（驗簽＋身分＋epoch 門檻）；useCourierNode 接線更新；CourierService 測試補舊代拒收。
+- [x] T8 conformance：測試向量 C1-C7 落地（specs/009 conformance 章節＋可執行 spec），見第 6 節 V6。
 - [ ] T9 收尾：`npm run ci` 全綠、E2E 診斷、CURRENT-STATUS／QA-REPORT 已知限制／risks.csv R1、ADR-0033 定稿、spec 狀態更新。
 
 ## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收，缺一不可）
@@ -188,7 +189,14 @@ GossipMessageHandler／SecurityManager／antiEntropy／GossipReplicaStore／Cour
 - [ ] V3 單元全綠：`npm run test:run`（基線 124 檔／1421 tests）。
 - [ ] V4 確定性模擬：`tests/unit/antiEntropy.simulation.spec.ts` 多 seed 全過。
 - [ ] V5 E2E 診斷：`tests/e2e/mesh-diagnostic.spec.ts` 3 人矩陣連續 5 次全 =1（`npm run test:e2e:ci`，需 Java 21+）。
-- [ ] V6 protocol 軌 conformance：測試向量落地（給定舊會話重放輸入必須拒收、給定補送輸入必須接受），他人實作可執行。
+- [x] V6 protocol 軌 conformance：測試向量落地於 `tests/unit/SessionEpochConformance.spec.ts`（真 ECDSA 簽章，非 mock），他人實作跑得過等價向量即相容：
+  - C1 舊會話重放必須拒收（已知現行代後，較低 sessionEpoch 的合法簽章訊息不入 store、不上 UI、不轉發）
+  - C2 補送輸入必須接受（現行代、30 分鐘前 timestamp、ttl=0 → 恰好一次呈現；重複補送去重）
+  - C3 預佔槽位失效（舊代 (E1, seq1) 先佔，現行代 (E5, seq1) 仍必須被接受；採納後舊代拒收）
+  - C4 sessionEpoch 有簽章保護（竄改 epoch → 驗簽必敗、拒收）
+  - C5 缺 sessionEpoch 的 v1 訊息整則拒收並發出版本不合確證
+  - C6 digest v2 形狀（v1 digest fail-closed 整份忽略；對方代落後 → 現行代全補；對方代較新 → 不送）
+  - C7 未來時間戳仍一律拒絕（不受 maxAgeMs: null 影響）
 - [ ] V7 收尾文件：`docs/CURRENT-STATUS.md`、`docs/QA-REPORT-chat.md` 已知限制清單、`docs/audit/core-invariants-risks.csv` R1 狀態同步更新。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）

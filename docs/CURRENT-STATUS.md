@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-07-16。README、CLAUDE、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-07-18（feature/spec-009-session-epoch 分支）。README、CLAUDE、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -27,6 +27,12 @@
 ### 核心傳輸
 
 - 2 人與 mesh 聊天、E2EE、fallback 密文、因果順序、去重與 TURN production smoke 已有可執行證據。
+- Spec 009（2026-07-18，本分支）：sessionEpoch 入簽章收斂跨會話重放（R1 閉環）。
+  gossip 協議升 v2（v1 不互通，GOSSIP_HELLO 版本訊號＋fail-visible 提示）；去重鍵與
+  anti-entropy digest 全面分代；NeriloReplica Dexie v2 原子遷移（legacy=0 代只供本機）；
+  信使回填加驗簽＋epoch 閘門。產品面代價（使用者拍板）：跨會話補歷史能力放棄。
+  conformance 向量 C1-C7 落地 `tests/unit/SessionEpochConformance.spec.ts`；殘留清單
+  見 QA-REPORT 已知限制與 ADR-0033。
 - SDK 已抽出公開入口、quickstart 與 minimal example，且不會從 eager import 偷帶 Firebase。
 - `game/`、`community/` 與部分 relay/transport 能力仍有「已測但未完整接入產品流」的模組；不可把單元測試等同 production 接線。
 
