@@ -15,7 +15,7 @@
 
 | 層級 | 2026-07-18 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；137 test files／1542 tests 全綠（既有 7 warnings；四線合併後實測 2026-07-18） |
+| Core quality | TypeScript、ESLint gate 通過；137 test files／1543 tests 全綠（既有 7 warnings；四線合併後實測 2026-07-18） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
