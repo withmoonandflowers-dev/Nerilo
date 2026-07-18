@@ -165,6 +165,14 @@ partial mesh 已接線(7-20 人檔,房間上限 10),firestore.rules 依 request.
 與 TURN 保障仍受 Functions 未部署限制,待 Blaze/Functions 後才誠實可做。
 plan claim 讀取管道已就緒(usePlan hook,付款鏈路驗證時已確認徽章邏輯)。
 
+**發放路徑補完(2026-07-18)**:(1) 手動發放 `scripts/grant-plan.mjs <uid|email> <pro|free>`
+(需 service account,GOOGLE_APPLICATION_CREDENTIALS 或 FIREBASE_SERVICE_ACCOUNT;
+供匯款成交/贈送/測試,與 webhook 同語義 merge claims)。(2) web-vue 建房 sheet 有
+方案容量列+升級入口(PlanCapacityLine,composables/usePlan.ts;VITE_LS_CHECKOUT_URL
+由 nuxt.config define 注入 process.env)。(3) 兩線升級點擊後 focus 強制刷新 token
+(30 分鐘窗,轉 pro 即停)——LS 結帳在新分頁,claim 不會自己進本分頁的 ID token。
+(4) rules 整合測試補 token.plan 容量五例(tests/integration/firestore-rules.spec.ts)。
+
 **另一項使用者操作(資料保留,非阻塞)**:原生 TTL policy 需跑
 `bash scripts/setup-ttl-policies.sh`(需 gcloud + GCP 權限),不跑僅過期資料不自動清。
 
