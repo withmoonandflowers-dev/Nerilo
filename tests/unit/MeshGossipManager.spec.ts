@@ -34,6 +34,9 @@ const mockTopologyManager = {
   getNeighborCount: vi.fn().mockReturnValue(0),
   getNeighbors: vi.fn().mockReturnValue([]),
   cleanup: vi.fn().mockResolvedValue(undefined),
+  // Spec 011：拓撲自適應接線
+  updateParticipantCount: vi.fn(),
+  getTargetNeighborCount: vi.fn().mockReturnValue(6),
 };
 
 vi.mock('../../src/core/mesh/MeshTopologyManager', () => ({
@@ -119,6 +122,64 @@ describe('MeshGossipManager', () => {
     it('重複呼叫 initialize() 不應拋錯（幂等）', async () => {
       await manager.initialize();
       await expect(manager.initialize()).resolves.toBeUndefined();
+    });
+  });
+
+  // ── 拓撲自適應接線（Spec 011）─────────────────────────────────────────────
+
+  describe('拓撲自適應接線（Spec 011）', () => {
+    function makeWatchableDirectory() {
+      let watchCb:
+        | ((snap: { meshIdentities: Record<string, unknown>; participants: string[] }) => void)
+        | null = null;
+      return {
+        directory: {
+          registerIdentity: vi.fn().mockResolvedValue(undefined),
+          getSnapshot: vi.fn().mockResolvedValue({ meshIdentities: {}, participants: [] }),
+          watchIdentities: vi.fn((cb: typeof watchCb) => {
+            watchCb = cb;
+            return () => {
+              watchCb = null;
+            };
+          }),
+        },
+        push(snap: { meshIdentities: Record<string, unknown>; participants: string[] }) {
+          watchCb?.(snap);
+        },
+      };
+    }
+
+    it('名冊 watch push 以 rosterFromRoom 人數（participants 集合大小）餵 updateParticipantCount', async () => {
+      const { directory, push } = makeWatchableDirectory();
+      const mgr = new MeshGossipManager(
+        'room-topo',
+        'firebase-uid-123',
+        undefined,
+        directory as never
+      );
+      await mgr.initialize();
+
+      push({
+        meshIdentities: { a: { userId: 'ua' }, b: { userId: 'ub' } },
+        participants: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+      });
+      expect(mockTopologyManager.updateParticipantCount).toHaveBeenCalledWith(7);
+
+      await mgr.cleanup();
+    });
+
+    it('getConnectionState 透出 targetNeighbors（供橋接條件與 UI 覆蓋率）', async () => {
+      const { directory } = makeWatchableDirectory();
+      const mgr = new MeshGossipManager(
+        'room-topo',
+        'firebase-uid-123',
+        undefined,
+        directory as never
+      );
+      await mgr.initialize();
+      mockTopologyManager.getTargetNeighborCount.mockReturnValue(3);
+      expect(mgr.getConnectionState().targetNeighbors).toBe(3);
+      await mgr.cleanup();
     });
   });
 

@@ -40,10 +40,10 @@ npm run ci           # type-check + lint + unit tests
 
 | Participants | Topology | Module |
 |---|---|---|
-| 2 | Star (direct P2P) | `P2PManager` |
-| 3-5 | Full Mesh + Gossip | `MeshGossipManager` |
-| 6-20 | Partial Mesh | `AdaptiveTopologyManager` |
-| >20 | Super-Node | `SuperNodeElection` |
+| 2 | Star (direct P2P; Vue line uses gossip for 2 too) | `P2PManager` |
+| 3-6 | Full Mesh + Gossip | `MeshGossipManager` |
+| 7-20 | Partial Mesh (wired, Spec 011/ADR-0035; rooms cap at 10, upgrade-only mid-session) | `AdaptiveTopologyManager` |
+| >20 | Super-Node (dormant, ADR-0007) | `SuperNodeElection` |
 
 ### Core Layers
 

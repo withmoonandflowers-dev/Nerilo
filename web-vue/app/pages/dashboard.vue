@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { RoomService } from '@legacy/services/RoomService'
+import { ownerMaxParticipants } from '@legacy/services/roomCapacity'
+import { auth } from '@legacy/config/firebase'
 import { FriendService, type Friendship } from '@legacy/services/FriendService'
 import { indexedDBService } from '@legacy/services/IndexedDBService'
 import { decodeContent } from '@legacy/features/chat/messageContent'
@@ -289,13 +291,11 @@ async function handleCreate(withGame = false) {
     const roomId = await RoomService.createRoom(
       user.value.uid,
       user.value.displayName ?? '訪客',
-      // isPrivate=false（對齊 React 版預設）：私房會讓非參與者連 getRoom 都被
-      // 規則拒絕，「分享連結邀人」整條路壞掉。私密房等有 UI 開關再開放。
+      // isPrivate=false（對齊 React 版預設）：私房會讓非參與者連 getRoom 都被規則拒絕；私密房等有 UI 開關再開放
       false,
-      undefined,
-      undefined,
-      undefined,
-      roomName.value.trim() || undefined
+      undefined, undefined, undefined,
+      roomName.value.trim() || undefined,
+      await ownerMaxParticipants(auth) // Spec 011 Q7：房主 Pro→10、Free→缺省 5（rules 最終防線）
     )
     featureLog('dashboard', 'room_created', { roomId, withGame })
     if (withGame) markOpenGameFlag(roomId)

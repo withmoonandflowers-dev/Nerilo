@@ -17,8 +17,8 @@ import { PeerRelaySignalingTransport } from '../p2p/PeerRelaySignalingTransport'
 import { WarmColdSignalingTransport } from '../p2p/WarmColdSignalingTransport';
 import { createDirectoryPeerKeyResolver } from '../p2p/DirectoryPeerKeyResolver';
 import { arrayBufferToBase64 } from '../../utils/crypto';
-import { RoomAdvertCache, buildRoomAdvert, type RoomAdvert } from '../relay/RoomDirectoryGossip';
-import { wireRoomDirectoryOnConnection } from './roomDirectoryWiring';
+import { RoomAdvertCache, type RoomAdvert } from '../relay/RoomDirectoryGossip';
+import { wireRoomDirectoryOnConnection, buildLocalRoomAdvertSupplier } from './roomDirectoryWiring';
 import type { EncryptionState } from '../../types';
 import { deriveEncryptionState } from '../security/securityLabel';
 
@@ -142,6 +142,17 @@ export class MeshGossipManager {
         if (typeof this.directory.watchIdentities === 'function') {
           this.directoryWatchUnsub = this.directory.watchIdentities((snapshot) => {
             this.latestDirectorySnapshot = snapshot;
+            // Spec 011：拓撲自適應接線（updateParticipantCount 首個產品呼叫者）。
+            // 人數權威來源與 keyx 同語義（rosterFromRoom：participants 集合大小）。
+            // 只升不降政策在 MeshTopologyManager 內——此處只餵事實，低報無害。
+            // feature-detect：容忍測試樁的部分介面。
+            if (typeof this.topologyManager?.updateParticipantCount === 'function') {
+              const { participantCount } = rosterFromRoom(
+                snapshot.meshIdentities,
+                snapshot.participants
+              );
+              this.topologyManager.updateParticipantCount(participantCount);
+            }
           });
         }
       } catch (err) {
@@ -173,6 +184,18 @@ export class MeshGossipManager {
         this.buildWarmColdFactory(firebaseUid),
         this.introducerUid // 首選連線對象：先連介紹人，其餘 pair 才有暖路徑
       );
+
+      // Spec 011：若名冊 watch 首推早於 topologyManager 建立，補一次初始人數評估
+      if (
+        this.latestDirectorySnapshot &&
+        typeof this.topologyManager.updateParticipantCount === 'function'
+      ) {
+        const { participantCount } = rosterFromRoom(
+          this.latestDirectorySnapshot.meshIdentities,
+          this.latestDirectorySnapshot.participants
+        );
+        this.topologyManager.updateParticipantCount(participantCount);
+      }
 
       // 4. 初始化 PeerScoring & RelayManager
       this.peerScoring = new PeerScoring();
@@ -299,31 +322,15 @@ export class MeshGossipManager {
     );
   };
 
-  /**
-   * 本房的簽章廣告（roomdir gossip 的本地供給）。
-   * 誠實邊界：manager 不知房名/房主（那是 UI/RoomService 層資料）——先以空值送出，
-   * 去中心化大廳消費者落地時由上層補真值；目前的用途（成員/房間存在性發現）不受影響。
-   */
-  private async localRoomAdverts(): Promise<RoomAdvert[]> {
-    try {
-      const snap = await this.directory!.getSnapshot(true);
-      return [
-        await buildRoomAdvert(
-          {
-            roomId: this.roomId,
-            roomName: '',
-            ownerUid: '',
-            participantCount: snap.participants.length,
-            issuedAt: Date.now(),
-            nodeId: this.identityManager.getUserId(),
-            pubKey: await this.identityManager.exportPublicKey(),
-          },
-          this.identitySign
-        ),
-      ];
-    } catch {
-      return []; // 金鑰/名冊未就緒：這輪不廣播（協議週期重播會再試）
-    }
+  /** 本房簽章廣告供給（實作抽至 roomDirectoryWiring.buildLocalRoomAdvertSupplier）。 */
+  private localRoomAdverts(): Promise<RoomAdvert[]> {
+    return buildLocalRoomAdvertSupplier({
+      roomId: this.roomId,
+      getParticipantCount: async () => (await this.directory!.getSnapshot(true)).participants.length,
+      getNodeId: () => this.identityManager.getUserId(),
+      getPubKey: () => this.identityManager.exportPublicKey(),
+      sign: (data) => this.identitySign(data),
+    })();
   }
 
   /** 房間目錄快取（暖 mesh gossip 交換、已驗簽的廣告；供發現/大廳讀取）。 */
@@ -644,6 +651,8 @@ export class MeshGossipManager {
     neighborCount: number;
     totalNeighbors: number;
     isConnected: boolean;
+    /** 目標鄰居數 k（Spec 011）；拓撲管理器不可用或樁缺方法時省略 */
+    targetNeighbors?: number;
   } {
     if (!this.topologyManager) {
       return {
@@ -662,6 +671,10 @@ export class MeshGossipManager {
       neighborCount: connectedNeighbors.length,
       totalNeighbors: neighbors.length,
       isConnected: connectedNeighbors.length > 0,
+      // feature-detect：容忍只實作部分介面的測試樁
+      ...(typeof this.topologyManager.getTargetNeighborCount === 'function'
+        ? { targetNeighbors: this.topologyManager.getTargetNeighborCount() }
+        : {}),
     };
   }
 

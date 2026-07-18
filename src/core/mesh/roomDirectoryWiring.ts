@@ -10,6 +10,7 @@
  */
 import {
   attachRoomDirectory,
+  buildRoomAdvert,
   type RoomAdvert,
   type RoomAdvertCache,
 } from '../relay/RoomDirectoryGossip';
@@ -44,4 +45,39 @@ export function wireRoomDirectoryOnConnection(
     getLocalAdverts: opts.getLocalAdverts,
     ...(opts.announceIntervalMs !== undefined ? { announceIntervalMs: opts.announceIntervalMs } : {}),
   });
+}
+
+/**
+ * 本房簽章廣告的供給器（roomdir gossip 的本地供給；自 MeshGossipManager 抽出）。
+ * 誠實邊界：manager 不知房名/房主（那是 UI/RoomService 層資料）——先以空值送出，
+ * 去中心化大廳消費者落地時由上層補真值；目前的用途（成員/房間存在性發現）不受影響。
+ * 金鑰/名冊未就緒時回空陣列（這輪不廣播，協議週期重播會再試）。
+ */
+export function buildLocalRoomAdvertSupplier(deps: {
+  roomId: string;
+  getParticipantCount: () => Promise<number>;
+  getNodeId: () => string;
+  getPubKey: () => Promise<string>;
+  sign: (data: string) => Promise<string>;
+}): () => Promise<RoomAdvert[]> {
+  return async () => {
+    try {
+      return [
+        await buildRoomAdvert(
+          {
+            roomId: deps.roomId,
+            roomName: '',
+            ownerUid: '',
+            participantCount: await deps.getParticipantCount(),
+            issuedAt: Date.now(),
+            nodeId: deps.getNodeId(),
+            pubKey: await deps.getPubKey(),
+          },
+          deps.sign
+        ),
+      ];
+    } catch {
+      return [];
+    }
+  };
 }
