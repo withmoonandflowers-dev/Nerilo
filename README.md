@@ -16,7 +16,7 @@ Current implementation status, verified test baselines, active work and known ga
 ## Core features
 
 - 🔒 **E2EE messages** — AES-256-GCM sender keys, distributed per-recipient via ECDH P-256. Auto-rotates every 100 messages or 1 hour.
-- 🕸️ **Mesh + gossip** — 2-peer direct, 3–5 full mesh, 6–20 partial mesh, >20 super-node. Auto-migrates on join/leave.
+- 🕸️ **Mesh + gossip** — 2-peer direct, 3–6 full mesh, 7–20 partial mesh (wired & tested to 10-person rooms; upgrades on join, never downgrades mid-session), >20 super-node (dormant).
 - 🛰️ **Sphinx-Lite onion routing** — 2–3 hops, fixed 4 KB packets, Poisson cover traffic. Defeats single-relay deanonymization (not global passive adversaries).
 - 📦 **Firestore as signaling + fallback** — message content is encrypted before any Firestore write.
 - 📝 **IndexedDB** persistence — clear browser data to forget everything.

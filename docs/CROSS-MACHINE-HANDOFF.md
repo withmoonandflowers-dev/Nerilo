@@ -158,10 +158,11 @@ firebase-admin 寫 plan claim)實測全通。webhook secret 因 LS 上限用 32-
   - **注意**:Firebase 專案綁在**擁有者的 gmail 帳號**(非 workspace),
     未來要進 Firebase Console 需用對的帳號。service account 私鑰 Claude 不經手。
 
-**Pro 實質權益現況(誠實)**:能伺服器端強制的維度(每房人數、fallback 配額、
-TURN 保障)目前都受技術限制(拓撲上限 5 人、Functions 未部署),故暫無可強制的
-free/pro 差異。Pro 現階段是身分標記(徽章)+ 未來權益承諾;實質配額分層待
-partial mesh 接線(人數)與 Blaze/Functions(配額、TURN)後才誠實可做。
+**Pro 實質權益現況**:每房人數已可伺服器端強制(Spec 011/ADR-0033,2026-07-18):
+partial mesh 已接線(7-20 人檔,房間上限 10),firestore.rules 依 request.auth.token.plan
+驗證建房容量(Free 5/Pro 10,maxParticipants 欄位、join 對文件強制)。Pro 建大房
+入口目前只在 web-vue(React 凍結線建房仍缺省 5,join 大房不受影響)。fallback 配額
+與 TURN 保障仍受 Functions 未部署限制,待 Blaze/Functions 後才誠實可做。
 plan claim 讀取管道已就緒(usePlan hook,付款鏈路驗證時已確認徽章邏輯)。
 
 **另一項使用者操作(資料保留,非阻塞)**:原生 TTL policy 需跑

@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-07-16。README、CLAUDE、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-07-18（Spec 011 partial mesh 接線）。README、CLAUDE、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -13,9 +13,9 @@
 
 ## 已驗證基線
 
-| 層級 | 2026-07-16 基線 |
+| 層級 | 2026-07-18 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；124 test files／1421 tests 全綠（既有 7 warnings） |
+| Core quality | TypeScript、ESLint gate 通過；133 test files／1490 tests 全綠（既有 7 warnings） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
@@ -27,6 +27,11 @@
 ### 核心傳輸
 
 - 2 人與 mesh 聊天、E2EE、fallback 密文、因果順序、去重與 TURN production smoke 已有可執行證據。
+- partial mesh（7-20 人檔）已接線（Spec 011／ADR-0033，2026-07-18）：第 7 人起
+  k=max(3,⌈√n⌉)、fanout 3、ttl 3，拓撲只升不降；房間容量分層 Free 5／Pro 10
+  （maxParticipants 欄位＋rules token.plan 驗證）。證據分層：n=7..10 確定性模擬
+  1100 組 seed（含 churn＋晚到者）全收斂；7 人 E2E 矩陣（未入 @vue-stable，
+  觀察累積中）；super-node（>20）維持凍結。
 - SDK 已抽出公開入口、quickstart 與 minimal example，且不會從 eager import 偷帶 Firebase。
 - `game/`、`community/` 與部分 relay/transport 能力仍有「已測但未完整接入產品流」的模組；不可把單元測試等同 production 接線。
 
