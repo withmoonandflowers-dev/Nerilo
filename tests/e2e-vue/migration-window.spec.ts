@@ -25,6 +25,13 @@
  * - 斷言前固定沉澱 5s，給「重複」浮現的機會。
  * - C 對 2 人時代歷史（m1/m2）的可見性只記錄不斷言：新成員歷史補齊是獨立
  *   語義（anti-entropy 覆蓋、rejoin.spec 鎖類似路徑），不屬遷移窗。
+ * - 與 C 加入「並發」的訊息（msgA/msgB）對 C 可見與否不斷言（2026-07-18 使用者
+ *   拍板，四線合併裁決）：這些訊息可能以 C 未受封的房間金鑰 epoch 加密——012 出口閘
+ *   關閉形成期明文窗後，「新人不解加入前內容」是已鎖密碼學語義
+ *   （MeshKeyxIntegration.spec），與 009「舊代不補」同一安全取向。本測試的可靠性
+ *   主張收斂為：既有成員（A、B）之間任何時窗的訊息恆恰好一次、C 加入後的訊息
+ *   （msgC）全員恰好一次——「不重不漏」對既有成員成立，C 的並發窗可見性讓位給
+ *   保密語義。若 C 收到（明文窗仍開／同 epoch），仍斷言不得重複。
  */
 import { test, expect, type Page } from '@playwright/test';
 import {
@@ -115,9 +122,11 @@ test.describe('Spec 010 遷移窗（Vue 線無星型棧）', () => {
       ];
       const windowMsgs = [msgA, msgB, msgC];
 
-      // 先等每格「至少一次」送達（涉及 C 的格子含 ICE 成形時間）
+      // 先等「必須送達」的格子（涉及 C 的格子含 ICE 成形時間）。
+      // C×(msgA,msgB) 不在此列：並發訊息對 C 可見與否不斷言（見檔頭裁決）。
       for (const [name, page] of viewers) {
         for (const text of windowMsgs) {
+          if (name === 'C' && text !== msgC) continue;
           const involvesCarol = name === 'C' || text === msgC;
           await expect(
             page.locator('.bubble').filter({ hasText: text }).first(),
@@ -144,10 +153,16 @@ test.describe('Spec 010 遷移窗（Vue 線無星型棧）', () => {
         await carol.page.locator('.bubble').filter({ hasText: m1 }).count(),
         await carol.page.locator('.bubble').filter({ hasText: m2 }).count(),
       ];
-      console.log(`=== Spec 010 遷移窗矩陣 ===\n${matrix.join('\n')}\nC 見基線歷史: ${preOnC.join(' ')}`);
+      console.log(`=== Spec 010 遷移窗矩陣（C×並發格不斷言，見檔頭） ===\n${matrix.join('\n')}\nC 見基線歷史: ${preOnC.join(' ')}`);
 
       for (const [name, page] of viewers) {
         for (const text of windowMsgs) {
+          if (name === 'C' && text !== msgC) {
+            // 並發窗訊息對 C：0（未受封 epoch，保密語義）或 1（收到即不得重複）
+            const n = await page.locator('.bubble').filter({ hasText: text }).count();
+            expect(n, `C 畫面 ${text} 至多 1（不得重複）`).toBeLessThanOrEqual(1);
+            continue;
+          }
           await expect(
             page.locator('.bubble').filter({ hasText: text }),
             `${name} 畫面 ${text} 應恰好 1`
