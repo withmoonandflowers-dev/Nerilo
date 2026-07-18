@@ -17,6 +17,7 @@
  */
 
 import type { GossipMessage } from '../../types';
+import { isCourierEligibleRecord } from './courierEligibility';
 
 /** ADR-0024 Decision 2 的預設配額（可調總預算 0/50/100/500 MB）。 */
 export interface CourierStoreConfig {
@@ -37,10 +38,16 @@ export const DEFAULT_COURIER_CONFIG: CourierStoreConfig = {
   ttlMs: 14 * 24 * 60 * 60 * 1000,
 };
 
-/** deposit 結果——被拒時帶原因（供計量/診斷；ADR-0022 收據只對「已存」發）。 */
+/**
+ * deposit 結果——被拒時帶原因（供計量/診斷；ADR-0022 收據只對「已存」發）。
+ * 'plaintext-content'＝Spec 012 P3 收側規則：盲信使拒收非密文紀錄（keyx 豁免，見 courierEligibility）。
+ */
 export type DepositResult =
   | { accepted: true; bytes: number }
-  | { accepted: false; reason: 'budget-zero' | 'record-too-large' | 'duplicate' | 'expired' };
+  | {
+      accepted: false;
+      reason: 'budget-zero' | 'record-too-large' | 'duplicate' | 'expired' | 'plaintext-content';
+    };
 
 interface StoredRecord {
   msg: GossipMessage;
@@ -177,6 +184,11 @@ export class CourierStore {
         this.persist(() => this.persistence!.deleteRecord(p.roomId, p.msg.senderId, p.msg.seq));
         continue;
       }
+      // Spec 012 P3：歷史遺留清洗——規則生效前寄存的明文紀錄，重載時不再代管並刪除
+      if (!isCourierEligibleRecord(p.msg)) {
+        this.persist(() => this.persistence!.deleteRecord(p.roomId, p.msg.senderId, p.msg.seq));
+        continue;
+      }
       const room = this.rooms.get(p.roomId) ?? {
         senders: new Map<string, Map<number, StoredRecord>>(),
         bytes: 0,
@@ -202,6 +214,9 @@ export class CourierStore {
    */
   deposit(msg: GossipMessage): DepositResult {
     if (this.config.totalBudgetBytes <= 0) return { accepted: false, reason: 'budget-zero' };
+    // Spec 012 P3 收側規則：只代管密文（keyx 豁免）。明文紀錄的補齊路徑是成員間
+    // anti-entropy，信使不代管——「盲」由此成為可驗證的協議承諾。
+    if (!isCourierEligibleRecord(msg)) return { accepted: false, reason: 'plaintext-content' };
     const bytes = recordBytes(msg);
     if (bytes > this.config.maxRecordBytes) return { accepted: false, reason: 'record-too-large' };
 

@@ -137,9 +137,27 @@ export class GossipMessageHandler {
           for (const s of seqs.keys()) if (s > this.seq) this.seq = s;
         }
       }
+
+      // 重放 keyx（Spec 012 P2）：重載後金鑰環是空的，而 keyx 紀錄已在自己 store 內
+      // （anti-entropy 不會重送給自己、名冊未變時產生方也不重發）→ 不重放則明文窗重開，
+      // 且產生方重載後 getMaxKnownEpoch()=-1 會重發 epoch 0 與既有代碰撞。
+      // 皆為當初驗簽通過才入庫的紀錄，重放即重建金鑰環（setContentKey 自取最高 epoch 送出）。
+      // Spec 009 合流：store 已分代（senderId → sessionEpoch → seq），重放掃全部代——
+      // 舊會話代的 keyx 也要重放（房間金鑰代與會話代是兩個代，歷史密文靠舊金鑰解）。
+      let keyxReplayed = 0;
+      for (const epochs of this.store.values()) {
+        for (const seqs of epochs.values()) {
+          for (const msg of seqs.values()) {
+            if (msg.channel === 'keyx') {
+              await this.contentKeys.consumeKeyx(msg);
+              keyxReplayed++;
+            }
+          }
+        }
+      }
       logger.info('[GossipMessageHandler] hydrated from replica', {
         roomId: this.roomId, records: loaded, floors: this.floors.size,
-        acceptedEpochs: this.acceptedEpochs.size,
+        acceptedEpochs: this.acceptedEpochs.size, keyxReplayed,
       });
     } catch (err) {
       logger.warn('[GossipMessageHandler] hydrate failed — memory-only mode', {

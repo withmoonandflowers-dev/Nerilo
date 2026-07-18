@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { CourierStore, recordBytes, type CourierStoreConfig } from '../../src/core/relay/CourierStore';
 import type { GossipMessage } from '../../src/types';
+import { encSized } from './_courierFixtures';
 
 function mk(roomId: string, senderId: string, seq: number, contentBytes: number): GossipMessage {
   return {
@@ -19,16 +20,18 @@ function mk(roomId: string, senderId: string, seq: number, contentBytes: number)
     pubKey: 'pk',
     seq,
     timestamp: 0,
-    content: 'x'.repeat(contentBytes),
+    // Spec 012：content 須為合法信封；encSized 保精確位元組數（min 36），
+    // 生成尺寸整體平移 +36、config 等比對應，量測語義不變。
+    content: encSized(36 + contentBytes),
     ttl: 3,
     signature: '',
   };
 }
 
 const config: CourierStoreConfig = {
-  maxRecordBytes: 50,
-  maxRoomBytes: 200,
-  totalBudgetBytes: 500,
+  maxRecordBytes: 86, // 36+50：與生成尺寸同平移，維持「有時超限被拒」覆蓋
+  maxRoomBytes: 344, // ≈4 筆滿額紀錄（原 200/50=4）
+  totalBudgetBytes: 860, // ≈10 筆滿額紀錄（原 500/50=10）
   ttlMs: 1_000_000,
 };
 

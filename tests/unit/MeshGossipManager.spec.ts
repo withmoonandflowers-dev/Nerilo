@@ -202,3 +202,70 @@ describe('MeshGossipManager', () => {
     });
   });
 });
+
+// ── Spec 012 Q2：交換逾時衍生與 waitForSendKey ───────────────────────────────
+describe('Spec 012 Q2：交換逾時與送出金鑰等待', () => {
+  type Internals = {
+    initialized: boolean;
+    keyCoordinator: object | null;
+    messageHandler: { hasSendKey: () => boolean } | null;
+    keyxStartedAt: number | null;
+  };
+  function rig(m: MeshGossipManager, over: Partial<Internals>): void {
+    Object.assign(m as unknown as Internals, over);
+  }
+
+  it('exchanging 逾時（>60s）仍無鑰 → 衍生為 plaintext（fail-visible）', () => {
+    const m = new MeshGossipManager('room-t', 'uid-t');
+    rig(m, {
+      initialized: true,
+      keyCoordinator: {},
+      messageHandler: { hasSendKey: () => false },
+      keyxStartedAt: Date.now() - 61_000,
+    });
+    expect(m.getEncryptionState()).toBe('plaintext');
+  });
+
+  it('exchanging 未逾時 → 維持 exchanging；金鑰就緒 → encrypted（逾時亦恢復）', () => {
+    const m = new MeshGossipManager('room-t', 'uid-t');
+    rig(m, {
+      initialized: true,
+      keyCoordinator: {},
+      messageHandler: { hasSendKey: () => false },
+      keyxStartedAt: Date.now(),
+    });
+    expect(m.getEncryptionState()).toBe('exchanging');
+    // 金鑰事後到位：即使逾時線已過，衍生值回 encrypted（狀態可恢復）
+    rig(m, {
+      messageHandler: { hasSendKey: () => true },
+      keyxStartedAt: Date.now() - 120_000,
+    });
+    expect(m.getEncryptionState()).toBe('encrypted');
+  });
+
+  it('waitForSendKey：金鑰於等待中就緒 → true（hold 自動補送的原語）', async () => {
+    const m = new MeshGossipManager('room-t', 'uid-t');
+    let ready = false;
+    rig(m, {
+      initialized: true,
+      keyCoordinator: {},
+      messageHandler: { hasSendKey: () => ready },
+      keyxStartedAt: Date.now(),
+    });
+    setTimeout(() => { ready = true; }, 300);
+    await expect(m.waitForSendKey()).resolves.toBe(true);
+  });
+
+  it('waitForSendKey：已逾時且無鑰 → 立即 false；協調未啟動 → 立即 false', async () => {
+    const m = new MeshGossipManager('room-t', 'uid-t');
+    rig(m, {
+      initialized: true,
+      keyCoordinator: {},
+      messageHandler: { hasSendKey: () => false },
+      keyxStartedAt: Date.now() - 61_000,
+    });
+    await expect(m.waitForSendKey()).resolves.toBe(false);
+    rig(m, { keyxStartedAt: null });
+    await expect(m.waitForSendKey()).resolves.toBe(false);
+  });
+});
