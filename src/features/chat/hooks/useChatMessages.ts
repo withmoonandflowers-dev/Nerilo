@@ -66,8 +66,18 @@ export function useChatMessages() {
    * 若無 deps，直接加入（向下相容舊版訊息）。
    */
   const addMessage = useCallback((message: ChatMessage) => {
-    // Avoid processing duplicates early
-    if (messageIdsRef.current.has(message.messageId)) return;
+    // 同 id 重派（金鑰晚到補顯示：佔位 → 解密內容）：upsert 內容，保留既有欄位；
+    // 內容相同（備援雙寫去重）則為 no-op。
+    if (messageIdsRef.current.has(message.messageId)) {
+      setMessagesRef.current((prev) =>
+        prev.map((m) =>
+          m.messageId === message.messageId && m.content !== message.content
+            ? { ...m, content: message.content }
+            : m
+        )
+      );
+      return;
+    }
 
     const causal = message as CausalMessage;
     if (causal.deps !== undefined) {

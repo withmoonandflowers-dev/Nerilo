@@ -20,7 +20,14 @@ export function useChatMessages() {
   const causalBuffer = new CausalOrderingBuffer()
 
   const insert = (msg: ChatMessage) => {
-    if (messageIds.has(msg.messageId)) return
+    if (messageIds.has(msg.messageId)) {
+      // 同 id 重派（金鑰晚到補顯示：佔位 → 解密內容）：upsert 內容，保留既有
+      // deliveryStatus 等欄位；內容相同（備援雙寫去重）則等於 no-op。
+      messages.value = messages.value.map((m) =>
+        m.messageId === msg.messageId && m.content !== msg.content ? { ...m, content: msg.content } : m
+      )
+      return
+    }
     messageIds.add(msg.messageId)
     messages.value = sortByHLC([...messages.value, msg])
   }
@@ -33,7 +40,10 @@ export function useChatMessages() {
   onUnmounted(() => causalBuffer.destroy())
 
   const addMessage = (message: ChatMessage) => {
-    if (messageIds.has(message.messageId)) return
+    if (messageIds.has(message.messageId)) {
+      insert(message) // 已存在 → upsert 內容（金鑰晚到補顯示）
+      return
+    }
     const causal = message as CausalMessage
     if (causal.deps !== undefined) {
       // 帶因果資訊（含空 deps）一律經緩衝器，與 React 版 GC2 修復一致

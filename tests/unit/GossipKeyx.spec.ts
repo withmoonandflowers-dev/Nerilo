@@ -195,6 +195,36 @@ describe('P2-②c：GossipMessageHandler keyx 消費', () => {
 });
 
 /** Spec 012 P2：hydrate 重放 keyx——重載後金鑰環自持久複本重生（明文窗不重開） */
+describe('金鑰晚到補顯示（Spec 009×012 合流修復）', () => {
+  it('密文先到、keyx 後到：先佔位呈現，金鑰安裝後同 id 重派解密內容', async () => {
+    // 跨連結亂序（四線合併 Vue migration-window/rejoin 實測根因）：A 的密文訊息經
+    // 直連先到，producer 的 keyx 經另一條連結/對帳晚到——不補顯示的話，佔位字串
+    // 會被 UI 與 chatStorage 永久釘住。
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const roomKey = await generateRoomKey();
+    const payload = await buildKeyx(roomKey, ME, 0, producer, me.publicKey);
+
+    const { handler } = makeHandler();
+    handler.setKeyxPrivateKey(me.privateKey);
+    const shown: GossipMessage[] = [];
+    handler.onMessage((msg) => shown.push(msg));
+
+    // 密文先到（收端還沒有金鑰）→ 誠實佔位
+    const ct = await encryptRecordContent('晚到金鑰的訊息', roomKey, 0);
+    await handler.handleReceivedMessage(chatWire(ct, 5), 'n1');
+    expect(shown).toHaveLength(1);
+    expect(shown[0]!.content).toContain('🔒');
+
+    // keyx 後到 → 金鑰安裝 → 同一則以解密內容重派（UI 以同 id upsert）
+    await handler.handleReceivedMessage(keyxWire(payload, 1), 'n1');
+    await new Promise((r) => setTimeout(r, 0)); // 補顯示是非阻塞派發
+    expect(shown).toHaveLength(2);
+    expect(shown[1]!.seq).toBe(5);
+    expect(shown[1]!.content).toBe('晚到金鑰的訊息');
+  });
+});
+
 describe('Spec 012 P2：hydrate 重放 keyx', () => {
   function makePersistence(records: GossipMessage[]) {
     let seq = 0;

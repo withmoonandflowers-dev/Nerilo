@@ -84,6 +84,8 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       const courierUid = await ownerUid(courier.page);
 
       // member 連上 courier → 寄存一筆密文紀錄 → 立刻回線取回（同一真實 relay 通道往返）。
+      // content 必須是合法 nrec1 信封形狀（Spec 012 信使資格規則：明文紀錄兩側拒收）；
+      // 測試不需真加密，形狀合法即可（盲信使本就不解內容）。
       const record = {
         roomId: 'room-x',
         senderId: 'sender-1',
@@ -91,7 +93,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
         sessionEpoch: 1,
         seq: 7,
         timestamp: 1000,
-        content: 'ENC:blind-courier-ciphertext-payload',
+        content: '{"v":"nrec1","ct":"blind-courier-ciphertext-payload","iv":"AAAAAAAAAAAAAAAA","ep":0}',
         ttl: 3,
         signature: 'SIG-abc',
         messageId: 'msg-777',
@@ -112,7 +114,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       expect(Array.isArray(pulled)).toBe(true);
       const got = (pulled as Array<Record<string, unknown>>).find((m) => m.messageId === 'msg-777');
       expect(got).toBeTruthy();
-      expect(got!.content).toBe('ENC:blind-courier-ciphertext-payload');
+      expect(got!.content).toBe('{"v":"nrec1","ct":"blind-courier-ciphertext-payload","iv":"AAAAAAAAAAAAAAAA","ep":0}');
       expect(got!.signature).toBe('SIG-abc');
       expect(got!.seq).toBe(7);
     } finally {
@@ -130,7 +132,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       // 先讓信使持有 A（模擬別的成員先前寄存過）。
       const A = {
         roomId: 'room-y', senderId: 'sA', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 1,
-        content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A',
+        content: '{"v":"nrec1","ct":"record-A","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-A', messageId: 'A',
       };
       await member.page.evaluate(
         async ({ uid, rec }) => {
@@ -145,7 +147,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       // 成員本地只有 B（缺 A）。一輪 reconcile 後：成員收到 A、且把 B 回推給信使。
       const B = {
         roomId: 'room-y', senderId: 'sB', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 2,
-        content: 'ENC:record-B', ttl: 3, signature: 'SIG-B', messageId: 'B',
+        content: '{"v":"nrec1","ct":"record-B","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-B', messageId: 'B',
       };
       const result = await member.page.evaluate(
         async ({ uid, local }) => {
@@ -164,7 +166,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       // 方向一：成員收到信使代管的 A（離線間隙自動回填）。
       expect(result.received.map((m) => m.messageId)).toContain('A');
       const gotA = result.received.find((m) => m.messageId === 'A')!;
-      expect(gotA.content).toBe('ENC:record-A'); // 密文原樣
+      expect(gotA.content).toBe('{"v":"nrec1","ct":"record-A","iv":"AAAAAAAAAAAAAAAA","ep":0}'); // 密文原樣
       // 方向二：成員把 B 回推信使（信使先前沒有）。
       expect(result.pushed).toBe(1);
 
@@ -175,7 +177,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
             __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<Array<Record<string, unknown>>> } };
           };
           // 用一筆已存在的 A 觸發 pull（deposit 冪等 duplicate；回傳該房全部）。
-          const probe = { roomId: 'room-y', senderId: 'sA', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 1, content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A' };
+          const probe = { roomId: 'room-y', senderId: 'sA', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 1, content: '{"v":"nrec1","ct":"record-A","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-A', messageId: 'A' };
           return w.__nerilo_test__!.relay!.depositAndPull!(uid, probe);
         },
         { uid: courierUid }
@@ -198,7 +200,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       // 成員的持久層（IndexedDB）先有一筆密文紀錄（模擬曾在 room-z 收發過訊息）。
       const record = {
         roomId: 'room-z', senderId: 'sMember', pubKey: 'pk', sessionEpoch: 1, seq: 3, timestamp: 5,
-        content: 'ENC:persisted-record', ttl: 3, signature: 'SIG-Z', messageId: 'Z',
+        content: '{"v":"nrec1","ct":"persisted-record","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-Z', messageId: 'Z',
       };
       await member.page.evaluate(async (rec) => {
         const w = window as unknown as {
@@ -286,7 +288,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
 
       const record = {
         roomId: 'room-t', senderId: nodeId, pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 9,
-        content: 'ENC:to-be-tombstoned', ttl: 3, signature: 'SIG-T', messageId: 'T',
+        content: '{"v":"nrec1","ct":"to-be-tombstoned","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-T', messageId: 'T',
       };
       await member.page.evaluate(
         async ({ uid, rec }) => {
@@ -349,7 +351,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       // 成員寄存一筆：client 先取得本地擁擠報價，再以 mesh 身分簽發「我欠此信使」的欠條。
       const record = {
         roomId: 'room-c', senderId: 'sMeter', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 3,
-        content: 'ENC:metered-payload-xxxxxxxxxxxxxxxx', ttl: 3, signature: 'SIG-C', messageId: 'C',
+        content: '{"v":"nrec1","ct":"metered-payload-xxxxxxxxxxxxxxxx","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-C', messageId: 'C',
       };
       await member.page.evaluate(
         async ({ uid, rec }) => {
@@ -389,7 +391,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       // 成員寄存一筆到信使 → 信使存進 CourierStore 並鏡像 IndexedDB。
       const record = {
         roomId: 'room-persist', senderId: 'sPersist', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 4,
-        content: 'ENC:survives-reload', ttl: 3, signature: 'SIG-P', messageId: 'P',
+        content: '{"v":"nrec1","ct":"survives-reload","iv":"AAAAAAAAAAAAAAAA","ep":0}', ttl: 3, signature: 'SIG-P', messageId: 'P',
       };
       await member.page.evaluate(
         async ({ uid, rec }) => {
