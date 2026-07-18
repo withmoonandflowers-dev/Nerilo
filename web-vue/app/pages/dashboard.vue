@@ -16,7 +16,6 @@ const { error: toastError, success } = useToast()
 // 全站節點 presence（P4-A）：開著 dashboard 即宣告可守護。
 // Spec 006 T2：中繼點數卡與節點數顯示已砍——機制照跑（網路健康度非首頁資訊），
 // e2e 觀測改走 __nerilo_test__.presence。
-const { start: startPresence, stop: stopPresence } = useNodePresence()
 // 盲信使節點（ADR-0023 P4-C）：信使角色 always-on + 成員背景備份；預設參與、可關。
 const {
   start: startCourierNode,
@@ -74,7 +73,6 @@ onUnmounted(() => {
   window.removeEventListener('click', closeMenu)
   window.removeEventListener('scroll', closeMenu, true)
   window.removeEventListener('keydown', onMenuKeydown)
-  void stopPresence()
 })
 
 const selfPoint = [{ coord: timezoneToLatLng(localTimezone()), self: true }]
@@ -93,7 +91,6 @@ watchEffect(() => {
   if (unsubMine) return
   const uid = user.value.uid
   featureLog('dashboard', 'init', { uid })
-  void startPresence(uid) // 宣告本節點在線可守護（顯示已砍，機制照跑）
   startCourierNode(uid) // 盲信使：接受寄存 + 背景備份自己房間（預設參與，可關）
   // P2P 房間目錄：繼續廣播「我的公開房」給連上的節點（顯示已砍，網路公民責任照盡）
   setRoomAdvertSource(() =>
@@ -420,6 +417,9 @@ function relativeTime(ts?: number): string {
           建立第一個聊天室
         </button>
       </section>
+
+      <!-- 在線節點數頁尾（presence 宣告生命週期在元件內，見 PresenceFooter） -->
+      <PresenceFooter v-if="user" :uid="user.uid" />
 
     </template>
 
