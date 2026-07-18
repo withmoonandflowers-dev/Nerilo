@@ -1,8 +1,8 @@
 # Spec 011：接入 6 人以上拓撲，解除 5 人房間上限
 
-- 軌別：feature（現階段不改 gossip 線上格式與簽章覆蓋範圍；若 clarify／plan 拍板引入 wire 變更——例如覆蓋率回報或 digest 分頁——protocol 軌加嚴條款屆時適用，spec 須升軌補齊線上格式與 conformance 向量）
-- 狀態：clarifying
-- 建立：2026-07-18／最後更新：2026-07-18
+- 軌別：feature（clarify 拍板後確認不改 gossip 線上格式與簽章覆蓋範圍，維持 feature 軌）
+- 狀態：implementing
+- 建立：2026-07-18／最後更新：2026-07-18（clarify 全數拍板，進 plan／implement）
 - 關聯：ADR-0003（分層拓撲既有決策：partial mesh／super-node「已有程式碼但未接入」）、ADR-0007（超過 5 人的拓撲列凍結類，「有真實需求再逐案解凍」——本 spec 即解凍案）、ADR-0008（付費層開放大房間的落點）、.claude/skills/mesh-correctness（殘留清單第 3 項）、docs/CROSS-MACHINE-HANDOFF.md:161-165（Pro 實質權益受「拓撲上限 5 人」限制）
 
 ## 1. 要做什麼、為什麼（specify）
@@ -54,51 +54,61 @@
 - 不解跨裝置備份、多副本合併（CURRENT-STATUS 既列的獨立優先項）。
 - nuxt 釘 4.4.2，不升。
 
-## 3. 待釐清（clarify，逐條由使用者拍板；全部清空才進 plan）
+## 3. 待釐清（clarify——2026-07-18 使用者全數拍板，決議內嵌於各題）
 
-- [ ] **Q1 目標人數上限與範疇**（決定整個 spec 的大小）：
-  - (a) 上限 6：按現行程式仍是 full mesh（≤6），只是把 full mesh 從 5 人實測推到 6 人。改動最小，但 partial mesh 依然未實測，殘留第 3 項只算解決一半（甚至名不符實）。
-  - (b) 上限 8-10：跨過 partial mesh 邊界（第 7 人起 k=3），真正行使多跳擴散、旋轉 churn 與自適應切換；E2E 規模尚在可實測範圍。super-node 維持凍結。
-  - (c) 上限 20：吃滿 partial mesh 設計區間。E2E 無法全規模驗證（20 個瀏覽器 context），必須接受「E2E 驗小規模＋模擬驗大規模」的分層證據。
-  - (d) 上限 >20：super-node 入範疇。選舉自報分數的信任問題（1.3 例外）與樞紐節點的隱私面（super-node 看得到誰跟誰通訊的元資料）都要正面處理，規模最大。
-- [ ] **Q2 full-mesh 與 partial-mesh 的切換邊界**：程式（≤6 full mesh）與 CLAUDE.md 文件（3-5 full mesh、6-20 partial）不一致，接線前必須拍板一個並修正另一個：
-  - (a) 依程式：6 人仍 full mesh（15 pairs，WebRTC 尚可行；ADR-0003 自己寫「超過 5 至 6 人即不可行」）。partial 從 7 人起。
-  - (b) 依文件：6 人即 partial mesh。切換點提早，6 人房就開始行使多跳與 churn；full mesh 的實測負擔止於 5 人（現有基線）。
-- [ ] **Q3 會話中人數跨界時的拓撲行為**（R-c 的政策面）：接線 `updateParticipantCount()` 後，房間人數在會話中跨過邊界（如 6→7 或 7→6）怎麼辦：
-  - (a) 動態切換：照 AdaptiveTopologyManager 設計即時升降級。升級補連線、降級靠旋轉慢慢收——但「切換瞬間」是新的遷移窗類風險，且降級語義（shouldDowngrade 有程式、無呼叫者）從未行使。
-  - (b) 進房定型：拓撲在 join 時按當下人數定死，會話中不切換；人數變化只影響新會話。犧牲自適應性換掉一整類時序風險，但「開 5 人房後陸續加到 8 人」會停留在錯誤拓撲。
-  - (c) 只升不降：人數上升即升級（風險窗小、有 anti-entropy 兜底），下降不降級（多餘連線無正確性代價，只是資源）。
-  - 另須拍板：參與人數的權威來源（房間文件 participants、meshIdentities 名冊、或兩者交集——與 keyx 的 rosterFromRoom 語義對齊與否）。
-- [ ] **Q4 備援橋接條件在 partial mesh 下的語義**（R-d，成本與定位的產品決策）：
-  - (a) 維持現狀（connected < n-1 即橋接）：partial mesh 下每訊息都寫 Firestore（密文）。送達性最保守，但 Firestore 寫入成本 O(每訊息)，且「P2P 為主、Firestore 備援」的敘事實質倒置。
-  - (b) 條件改為 connected < k（目標鄰居數）：鄰居健全即信任 gossip 擴散＋對帳，橋接只在自身連線劣化時觸發。成本回歸例外路徑，但「鄰居健全≠全房可達」（R-a 分裂情境橋接不會觸發）。
-  - (c) partial mesh 房停用每訊息橋接，改為週期性「水位／缺口」偵測後補：實作最複雜，證據最誠實。
-  - (d) 依 mesh 覆蓋率的混合條件（如 connected/k 加上最近對帳成功時間）。
-  - 拍板重點：多人房願意付多少 Firestore 成本換送達保守度；此決策直接影響帳本計量面（1.3）。
-- [ ] **Q5 UI 連線狀態與就緒語義**：現行 UI 以「connected/(n-1)」呈現與判斷就緒。partial mesh 下 n-1 永遠達不到：
-  - (a) 顯示 connected/k（目標鄰居數）：誠實反映拓撲設計，但使用者看到「3/3 已連線」不知道另外 4 人是否可達。
-  - (b) 顯示「可達成員數」（經 gossip 心跳／對帳推導）：資訊最有用，但需要新的可達性推導（可能超出 feature 軌）。
-  - (c) 淡化數字，只顯示健康狀態燈（健全／部分／斷線）：實作最小，資訊最少。
-- [ ] **Q6 驗收規模與 E2E 基準**（R-g）：「實測接入」的證據標準：
-  - (a) E2E 全規模：矩陣測到 Q1 拍板的上限人數，連續 5 次全 =1（沿用 3 人矩陣的口徑）。證據最強，CI 成本最高，>8 人恐不可行。
-  - (b) 分層證據：E2E 實測到最小 partial mesh 規模（7 或 8 人，含跨界切換劇本），更大規模交給確定性模擬（antiEntropy.simulation 擴 partial mesh 隨機圖＋churn），另加一次手動真實裝置煙霧測試留紀錄。
-  - (c) E2E 僅守 3 人現況，6+ 全靠模擬：不符「實測接入」的字面意義，列出供否決。
-  - 另須拍板：連續通過次數與矩陣口徑是否沿用「連續 5 次全 =1」。
-- [ ] **Q7 人數上限的產品分層**（商業決策，影響 RoomService 與 firestore.rules 的寫法）：
-  - (a) 全員解鎖新上限：最簡單，但放棄 Pro 唯一可強制的權益落點（CROSS-MACHINE-HANDOFF:161-164、ADR-0003 預留的分層）。
-  - (b) Free 維持 5、Pro 開到新上限：rules 以 `request.auth.token.plan` 分層強制（plan claim 管道已就緒）。Pro 權益第一次誠實兌現，但 rules 與 joinRoom 的分層邏輯要同步兩處。
-  - (c) 先全員解鎖、分層另開 spec：把商業規則與拓撲正確性解耦，本 spec 只交付技術能力與單一新上限。
+- [x] **Q1 目標人數上限與範疇**（決定整個 spec 的大小）：**拍板 (b) 上限 10（8-10 檔位取上緣，一次到位）**；super-node 維持凍結。
+  - 理由：跨過 partial mesh 邊界（第 7 人起 k=3）才真正行使多跳擴散、旋轉 churn 與自適應切換；E2E 尚可實測。上限取 10 是 8-10 檔位的上緣（plan 取捨：10 人時 k=4，多行使一檔 k 值；Pro 權益 5→10 也是誠實可說的差異）。
+- [x] **Q2 full-mesh 與 partial-mesh 的切換邊界**：**拍板 (a) 依程式**——6 人仍 full mesh，partial 從第 7 人起；文件（CLAUDE.md Topology Strategy 表、README:19、docs/GOAL-ANALYSIS.md:164-165 的 3-5／6-20 表述）修正對齊程式。
+- [x] **Q3 會話中人數跨界時的拓撲行為**：**拍板 (c) 只升不降**——人數上升即升級（有 anti-entropy 兜底），下降不降級（多餘連線無正確性代價）。人數權威來源：與 keyx 同語義，`rosterFromRoom(meshIdentities, participants).participantCount`（participants 集合大小；經 MeshGossipManager 既有的 directory watch push 通道取得）。
+- [x] **Q4 備援橋接條件在 partial mesh 下的語義**：**拍板 (b) connected < k 才橋接**——鄰居健全即信任 gossip 擴散＋對帳；已知盲點「鄰居健全≠全房可達」由 V4 連通性模擬看住。實際條件為 `connected < min(n-1, k)`，使 ≤6 人房行為與現狀完全一致（characterization 保持）。
+- [x] **Q5 UI 連線狀態與就緒語義**：**拍板 (a)+(c) 併用**——顯示 connected/k（目標鄰居數）＋健康狀態燈（健全／部分／斷線）。僅 web-vue 實作新 UI；React 線只做橋接條件的最小非破壞修正。
+- [x] **Q6 驗收規模與 E2E 基準**：**拍板 (b) 分層證據**——E2E 實測到最小 partial mesh 規模（7 人，含跨 6→7 邊界的加入劇本）；更大規模交確定性模擬（partial mesh 隨機 k-圖＋churn＋晚到者，多 seed）；另加一次手動真實裝置煙霧測試留紀錄。矩陣口徑沿用「連續 5 次全 =1」。
+- [x] **Q7 人數上限的產品分層**：**拍板 (b) Free 5、Pro 10**——房間容量屬房主權益：createRoom 時依房主 plan 寫入 `maxParticipants` 欄位（rules 以 `request.auth.token.plan` 驗證上限），join 一律對房間文件上的容量強制（加入者的方案不影響）；rules 與 joinRoom 兩處同語義。
 
 ## 4. 技術計畫（plan）
 
-〔clarify 未清空，不進 plan。填寫時影響面至少涵蓋：MeshGossipManager（updateParticipantCount 接線與人數來源）、MeshTopologyManager（accept 側連通性、旋轉政策）、AdaptiveTopologyManager（邊界修訂若 Q2 拍板 b）、GossipMessageHandler（多跳與 fanout 實測）、RoomService＋firestore.rules（上限與分層，兩處同值）、ChatPage.tsx 與 [roomId].vue（橋接條件與 UI 語義）、keyx（RoomKeyCoordinator 名冊規模）、CLAUDE.md 拓撲表與 ADR-0003/0007 狀態更新；重大取捨完成後回填 ADR。〕
+原則：**不動 GossipMessageHandler 本體**（它經 `topologyManager.getGossipConfig()` 讀動態參數，接線後自動取得 partial mesh 的 fanout/ttl，零改動）；**AdaptiveTopologyManager 門檻不改**（Q2a）；升級政策集中在 MeshTopologyManager 單點、單元可測。
+
+### 4.1 拓撲引擎接線（Q1/Q2/Q3）
+
+- `MeshTopologyManager.updateParticipantCount()` 改為「只升不降」政策：
+  - 新策略 rank > 現行 → 整組採納（strategy、k、gossipConfig）。full→partial 時 k 由 6 縮到 max(3,⌈√n⌉) 是**設計內縮編**，既有多餘連線由旋轉逐步收斂（現有註解語義）；
+  - rank 相同 → k 與 gossipConfig 只取 elementwise max（partial 區間內 7→10 人 k 3→4 單調不縮）；
+  - rank 較低 → 忽略（不降級）。
+  - 淨效果：≤6 人房永遠停在建構預設（k=6、fanout 5、ttl 1），**現有 2-5 人基線行為位元級不變**（characterization 保證）；第 7 人到場才首次切 partial。
+- 接線點：`MeshGossipManager.initialize()` 既有的 `directory.watchIdentities` push callback（latestDirectorySnapshot 同源），以 `rosterFromRoom().participantCount` 呼叫 `updateParticipantCount()`（Q3 權威來源）。watch 不可用（測試樁/受限環境）→ 不更新，維持 full-mesh 預設（誠實降級，行為同今日）。
+- **R-a accept 側讓位（accept-slack）**：reactive discovery 對「全新 candidate」的連線允許上限放寬為 k+2（`ACCEPT_SLACK=2`）；fillNeighbors／scheduleReconnect／rotation 維持嚴格 k。保證晚到者的 offer 一定有人接（雙側都會建 MeshConnection），超出部分由旋轉修剪。≤6 人房 k=6≥n-1，slack 永不觸發，行為不變。
+- 取捨：政策放 MeshTopologyManager 而非 caller——單點、可單元測、caller 只餵事實（人數）；不做全域重平衡（超出 feature 軌且 10 人內無必要）。
+
+### 4.2 覆蓋率透出與橋接條件（Q4/Q5）
+
+- `MeshTopologyManager.getTargetNeighborCount()` → `MeshGossipManager.getConnectionState().targetNeighbors` → `MeshChatService.getMeshCoverage().targetNeighbors`（純新增欄位，舊欄位不動）。
+- 橋接條件（兩線）：`expectedPeers = min(participantCount-1, targetNeighbors)`；targetNeighbors 缺失時退回 participantCount-1（＝現狀）。≤6 人房 min 取 n-1，行為不變。
+- web-vue：連線指示改 connected/target ＋三態健康燈（healthy：connected≥target；partial：0<connected<target；down：0）。React 線僅改橋接條件一行（凍結政策）。
+
+### 4.3 人數上限分層（Q7）
+
+- `RoomService.createRoom` 新增選填 `maxParticipants`（int，夾在 2..10，預設 5）寫入房間文件；`joinRoom` 上限改讀 `roomData.maxParticipants ?? 5`（legacy 房無欄位＝5，不遷移）。
+- `firestore.rules`：`participantsWithinCap` 改讀文件欄位（缺欄位＝5、硬上限 10）；create 時驗證欄位值——>5 需 `request.auth.token.plan == 'pro'`；update 時欄位不可變。容量屬**房主**權益，join 側不看加入者 plan。
+- web-vue dashboard 建房時依房主 plan 傳 10（pro）／缺省（free）。React 不加建房新能力（凍結），join 大房不受影響（讀房間欄位）。
+
+### 4.4 驗證（Q6）
+
+- 單元：MeshTopologyManager 政策新測（只升不降、slack、target 透出）；MeshGossipManager 接線測；RoomService 容量測。
+- 模擬：antiEntropy.simulation 擴 partial mesh 隨機 k-圖（n=7..10，出度 k=max(3,⌈√n⌉)）＋每輪旋轉 churn＋晚到者中途進場，多 seed 收斂斷言（V4/R-a）。
+- E2E：新增 7 人矩陣 spec（含第 7 人跨界加入劇本），口徑沿用 =1；跑不動的環境限制如實記錄。
+- 完成後回填 ADR-0033（partial mesh 接線與只升不降政策的取捨）。
 
 ## 5. 任務分解（tasks）
 
-〔plan 定案後填。預告：MeshTopologyManager、GossipMessageHandler、RoomService、firestore.rules 皆為運作中路徑，相關任務一律標 ⚠ 並走 harden-tests（characterization-first、分層閘門、誠實條款）。〕
-
-- [ ] T1：
-- [ ] T2：
+- [ ] T1 ⚠ characterization 基線：`npm run test:run` 全綠（124 檔／1421 tests）後才動手。
+- [ ] T2 ⚠ MeshTopologyManager：只升不降政策、ACCEPT_SLACK、getTargetNeighborCount；新單元 `MeshTopologyManager.topology.spec.ts`。
+- [ ] T3 MeshGossipManager：watch callback 接線 updateParticipantCount（rosterFromRoom 語義）；getConnectionState 透出 targetNeighbors；更新既有 mock。
+- [ ] T4 MeshChatService.getMeshCoverage 加 targetNeighbors；web-vue 橋接條件＋connected/k＋健康燈；React ChatPage 橋接條件最小修。
+- [ ] T5 ⚠ RoomService maxParticipants 分層＋firestore.rules 同語義修訂；RoomService 單元擴充。
+- [ ] T6 模擬擴充：partial mesh k-圖＋churn＋晚到者多 seed（antiEntropy.simulation.spec.ts）。
+- [ ] T7 E2E 7 人矩陣 spec（mesh-diagnostic-7p）；執行結果或環境限制如實記錄。
+- [ ] T8 文件收尾：README、GOAL-ANALYSIS、firestore.rules 註解、CROSS-MACHINE-HANDOFF Pro 段、CURRENT-STATUS、ADR-0003/0007 狀態、ADR-0033 回填。
 
 ## 6. 驗收（黃金判準，沿用 mesh-correctness skill 四層驗收，缺一不可）
 
