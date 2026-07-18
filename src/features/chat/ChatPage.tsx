@@ -33,6 +33,7 @@ import { creditEconomy } from '../../core/incentive/CreditEconomy';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
+import { useE2eeMode, useProtocolMismatch } from './hooks/useChatIndicators';
 import { useRoomSubscription } from './hooks/useRoomSubscription';
 import { useChatMessages } from './hooks/useChatMessages';
 import { useMediaCall, type CallType } from './hooks/useMediaCall';
@@ -663,28 +664,17 @@ const ChatPage: React.FC = () => {
     setReconnectNonce((n) => n + 1);
   };
 
-  // E2EE 狀態指示（ADR-0004 決策 4）：真值來源是 ChatService 的實際金鑰狀態，
-  // 不是連線狀態。mesh 房間尚未支援 E2EE，誠實標示為傳輸層加密。
-  const e2eeMode: 'p2p' | 'fallback' | 'exchanging' | 'mesh-dtls' | null = (() => {
-    if (architecture.isMesh()) return 'mesh-dtls';
-    const chatService = starTopology.getState().chatService;
-    const keysReady = !!chatService && chatService.isE2EEEnabled && chatService.isE2EEReady;
-    if (connectionState === 'connected') {
-      return keysReady ? 'p2p' : 'exchanging';
-    }
-    if (getConnectionMode() === 'firestore') {
-      return keysReady ? 'fallback' : 'exchanging';
-    }
-    return null;
-  })();
-
-  // 金鑰交換完成的瞬間沒有 React 事件可觸發 re-render，以低頻輪詢補上
-  const [, forceE2EERefresh] = useState(0);
-  useEffect(() => {
-    if (e2eeMode !== 'exchanging') return;
-    const timer = setInterval(() => forceE2EERefresh((n) => n + 1), 1000);
-    return () => clearInterval(timer);
-  }, [e2eeMode]);
+  // 指示器邏輯抽出於 useChatIndicators（E2EE 狀態＋Spec 009 協議版本不合）
+  const e2eeMode = useE2eeMode({
+    isMesh: architecture.isMesh(),
+    starChatService: starTopology.getState().chatService,
+    connectionState,
+    connectionMode: getConnectionMode(),
+  });
+  const protocolMismatch = useProtocolMismatch(
+    () => meshTopology.getState().meshChatService,
+    reconnectNonce
+  );
 
   const handleStartCall = async (type: CallType) => {
     try {
@@ -789,6 +779,16 @@ const ChatPage: React.FC = () => {
             connected={connectionState === 'connected'}
             onClose={() => setShowGame(false)}
           />
+        </div>
+      )}
+
+      {/* Spec 009：gossip 協議版本不合（不靜默降級，fail-visible 提示） */}
+      {protocolMismatch && (
+        <div className="incoming-call-banner" role="alert" aria-live="assertive">
+          <div className="incoming-call-info">
+            <span aria-hidden="true">⚠️</span>
+            <span>房內有版本不相容的成員，訊息無法互通。請雙方更新到最新版後重新整理。</span>
+          </div>
         </div>
       )}
 

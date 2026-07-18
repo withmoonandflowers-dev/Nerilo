@@ -88,6 +88,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
         roomId: 'room-x',
         senderId: 'sender-1',
         pubKey: 'pk',
+        sessionEpoch: 1,
         seq: 7,
         timestamp: 1000,
         content: 'ENC:blind-courier-ciphertext-payload',
@@ -128,7 +129,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
 
       // 先讓信使持有 A（模擬別的成員先前寄存過）。
       const A = {
-        roomId: 'room-y', senderId: 'sA', pubKey: 'pk', seq: 1, timestamp: 1,
+        roomId: 'room-y', senderId: 'sA', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 1,
         content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A',
       };
       await member.page.evaluate(
@@ -143,7 +144,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
 
       // 成員本地只有 B（缺 A）。一輪 reconcile 後：成員收到 A、且把 B 回推給信使。
       const B = {
-        roomId: 'room-y', senderId: 'sB', pubKey: 'pk', seq: 1, timestamp: 2,
+        roomId: 'room-y', senderId: 'sB', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 2,
         content: 'ENC:record-B', ttl: 3, signature: 'SIG-B', messageId: 'B',
       };
       const result = await member.page.evaluate(
@@ -174,7 +175,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
             __nerilo_test__?: { relay?: { depositAndPull?: (u: string, r: unknown) => Promise<Array<Record<string, unknown>>> } };
           };
           // 用一筆已存在的 A 觸發 pull（deposit 冪等 duplicate；回傳該房全部）。
-          const probe = { roomId: 'room-y', senderId: 'sA', pubKey: 'pk', seq: 1, timestamp: 1, content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A' };
+          const probe = { roomId: 'room-y', senderId: 'sA', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 1, content: 'ENC:record-A', ttl: 3, signature: 'SIG-A', messageId: 'A' };
           return w.__nerilo_test__!.relay!.depositAndPull!(uid, probe);
         },
         { uid: courierUid }
@@ -196,7 +197,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
 
       // 成員的持久層（IndexedDB）先有一筆密文紀錄（模擬曾在 room-z 收發過訊息）。
       const record = {
-        roomId: 'room-z', senderId: 'sMember', pubKey: 'pk', seq: 3, timestamp: 5,
+        roomId: 'room-z', senderId: 'sMember', pubKey: 'pk', sessionEpoch: 1, seq: 3, timestamp: 5,
         content: 'ENC:persisted-record', ttl: 3, signature: 'SIG-Z', messageId: 'Z',
       };
       await member.page.evaluate(async (rec) => {
@@ -284,7 +285,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
       });
 
       const record = {
-        roomId: 'room-t', senderId: nodeId, pubKey: 'pk', seq: 1, timestamp: 9,
+        roomId: 'room-t', senderId: nodeId, pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 9,
         content: 'ENC:to-be-tombstoned', ttl: 3, signature: 'SIG-T', messageId: 'T',
       };
       await member.page.evaluate(
@@ -347,7 +348,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
 
       // 成員寄存一筆：client 先取得本地擁擠報價，再以 mesh 身分簽發「我欠此信使」的欠條。
       const record = {
-        roomId: 'room-c', senderId: 'sMeter', pubKey: 'pk', seq: 1, timestamp: 3,
+        roomId: 'room-c', senderId: 'sMeter', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 3,
         content: 'ENC:metered-payload-xxxxxxxxxxxxxxxx', ttl: 3, signature: 'SIG-C', messageId: 'C',
       };
       await member.page.evaluate(
@@ -387,7 +388,7 @@ test.describe('陌生節點站級連線（P4-B）', () => {
 
       // 成員寄存一筆到信使 → 信使存進 CourierStore 並鏡像 IndexedDB。
       const record = {
-        roomId: 'room-persist', senderId: 'sPersist', pubKey: 'pk', seq: 1, timestamp: 4,
+        roomId: 'room-persist', senderId: 'sPersist', pubKey: 'pk', sessionEpoch: 1, seq: 1, timestamp: 4,
         content: 'ENC:survives-reload', ttl: 3, signature: 'SIG-P', messageId: 'P',
       };
       await member.page.evaluate(

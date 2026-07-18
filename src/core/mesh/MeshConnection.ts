@@ -17,6 +17,13 @@ import type { GossipDigest } from './antiEntropy';
 import { logger } from '../../utils/logger';
 
 /**
+ * gossip 協議版本（Spec 009）：v2 = 簽章覆蓋 sessionEpoch、digest 分代。
+ * 相等語義（strictProtocols 精神）：版本不等即提示雙方更新，不靜默降級——
+ * v1 驗 v2 簽章必失敗、v2 對 v1 缺欄位必拒收，降級通道只會把防護送給攻擊者剝除。
+ */
+export const GOSSIP_PROTOCOL_VERSION = 2;
+
+/**
  * Mesh 連線包裝類別
  * 封裝與單個鄰居的 P2P 連線
  */
@@ -64,6 +71,12 @@ export class MeshConnection {
    * 首聞回播 + 週期重播」，晚接線者下一輪必補上。
    */
   private roomDirListeners: Set<(env: GossipRelayEnvelope) => void> = new Set();
+  /**
+   * 協議版本不合（Spec 009 §4.7）：對方 GOSSIP_HELLO 宣告的版本 ≠ 本地版本。
+   * 每條連線至多通知一次（避免重複刷提示）。
+   */
+  private protocolMismatchListeners: Set<(info: { remoteVersion: number | null }) => void> = new Set();
+  private mismatchNotified = false;
   private readyPromise: Promise<void>;
   private meshUserId: string; // 用於 Gossip 的 userId
 
@@ -194,8 +207,20 @@ export class MeshConnection {
             logger.error('[MeshConnection] Error in digest listener', { error });
           }
         });
+      } else if (envelope.type === 'GOSSIP_HELLO') {
+        // 版本協商（Spec 009 §4.7）：相等語義，不等即通知（不靜默降級）。
+        // v1 節點不送 GOSSIP_HELLO 也會忽略此 type（未知 type 向前相容），
+        // 其舊版身分由「缺 sessionEpoch 的 gossip 訊息」在 handler 層確證。
+        const v = (envelope.payload as { v?: unknown } | null)?.v;
+        const remoteVersion = typeof v === 'number' ? v : null;
+        if (remoteVersion !== GOSSIP_PROTOCOL_VERSION) {
+          this.notifyProtocolMismatch(remoteVersion);
+        }
       }
     });
+
+    // bus 就緒（含換代重掛）即宣告本地 gossip 協議版本
+    this.sendGossipHello();
 
     // 暫態信號（typing 等）：獨立 ns，不碰 gossip store / 對帳。
     this.channelBus.subscribe('presence', async (envelope) => {
@@ -234,6 +259,51 @@ export class MeshConnection {
           logger.error('[MeshConnection] Error in sigrelay listener', { error });
         }
       });
+    });
+  }
+
+  /** 宣告本地 gossip 協議版本（best-effort；對方收到後做相等比對）。 */
+  private sendGossipHello(): void {
+    if (this.channelBus?.getReadyState() !== 'open') return;
+    void this.channelBus
+      .send({
+        v: 1,
+        ns: 'gossip',
+        type: 'GOSSIP_HELLO',
+        id: `${Date.now()}-${Math.random()}`,
+        ts: Date.now(),
+        from: this.localFirebaseUid,
+        to: this.remoteFirebaseUid,
+        payload: { v: GOSSIP_PROTOCOL_VERSION },
+      })
+      .catch(() => {
+        /* best-effort：送不出就等下次 rebind；不合最終仍由訊息層確證 */
+      });
+  }
+
+  /** 監聽協議版本不合（Spec 009 §4.7）；每條連線至多觸發一次。 */
+  onProtocolMismatch(listener: (info: { remoteVersion: number | null }) => void): () => void {
+    this.protocolMismatchListeners.add(listener);
+    return () => {
+      this.protocolMismatchListeners.delete(listener);
+    };
+  }
+
+  private notifyProtocolMismatch(remoteVersion: number | null): void {
+    if (this.mismatchNotified) return;
+    this.mismatchNotified = true;
+    logger.warn('[MeshConnection] gossip protocol version mismatch — 請雙方更新', {
+      roomId: this.roomId,
+      remoteFirebaseUid: this.remoteFirebaseUid,
+      localVersion: GOSSIP_PROTOCOL_VERSION,
+      remoteVersion,
+    });
+    this.protocolMismatchListeners.forEach((listener) => {
+      try {
+        listener({ remoteVersion });
+      } catch (error) {
+        logger.error('[MeshConnection] Error in protocol mismatch listener', { error });
+      }
     });
   }
 

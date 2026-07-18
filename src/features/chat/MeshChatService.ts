@@ -249,6 +249,14 @@ export class MeshChatService {
   }
 
   /**
+   * 協議版本不合（Spec 009 §4.7）：房內存在 gossip v1 舊版節點（或版本宣告不等）。
+   * UI 據此提示「請雙方更新後重新整理」；不靜默降級（v1↔v2 本質不互通）。
+   */
+  onProtocolMismatch(listener: (info: { peerId: string }) => void): () => void {
+    return this.meshGossipManager.onProtocolMismatch(listener);
+  }
+
+  /**
    * 備援層加密（ADR-0023 P2-③：mesh 房 Firestore 備援不再明文）。
    * 用房間金鑰把明文加成 RecordCrypto 信封，映射成 FallbackEncryptedContent。
    * 無金鑰回 null → 呼叫端「不送明文橋接」（等 keyx 或靠 anti-entropy 補）。

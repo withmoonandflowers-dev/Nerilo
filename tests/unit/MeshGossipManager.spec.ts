@@ -46,6 +46,9 @@ const mockMessageHandler = {
   sendMessage: vi.fn().mockResolvedValue(undefined),
   onMessage: vi.fn().mockReturnValue(() => {}),
   hydrate: vi.fn().mockResolvedValue(undefined),
+  sendDigestTo: vi.fn().mockResolvedValue(undefined),
+  handleReceivedMessage: vi.fn().mockResolvedValue(undefined),
+  handleDigest: vi.fn().mockResolvedValue(undefined),
 };
 
 vi.mock('../../src/core/mesh/GossipMessageHandler', () => ({
@@ -162,6 +165,40 @@ describe('MeshGossipManager', () => {
       await manager.initialize();
       await manager.cleanup();
       expect(mockTopologyManager.cleanup).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── Spec 009 §4.7：協議版本不合事件 ──────────────────────────────────────
+
+  describe('onProtocolMismatch（Spec 009）', () => {
+    it('鄰居 GOSSIP_HELLO 版本不合 → 事件上拋；同 peer 只通知一次', async () => {
+      let fireMismatch: (() => void) | null = null;
+      const neighbor = {
+        getId: vi.fn().mockReturnValue('peer-1'),
+        getState: vi.fn().mockReturnValue('connected'),
+        send: vi.fn().mockResolvedValue(undefined),
+        sendDigest: vi.fn().mockResolvedValue(undefined),
+        onMessage: vi.fn(),
+        onDigest: vi.fn(),
+        onEphemeral: vi.fn(),
+        onProtocolMismatch: vi.fn().mockImplementation((cb: () => void) => {
+          fireMismatch = cb;
+          return () => {};
+        }),
+      };
+      mockTopologyManager.getNeighbors.mockReturnValue([neighbor]);
+
+      await manager.initialize();
+      const events: Array<{ peerId: string }> = [];
+      manager.onProtocolMismatch((info) => events.push(info));
+
+      vi.advanceTimersByTime(2000); // 掃描器接線
+      expect(fireMismatch).not.toBeNull();
+      fireMismatch!();
+      fireMismatch!(); // 重複觸發
+      expect(events).toEqual([{ peerId: 'peer-1' }]); // 每 peer 至多一次
+
+      mockTopologyManager.getNeighbors.mockReturnValue([]);
     });
   });
 });

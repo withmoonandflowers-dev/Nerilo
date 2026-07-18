@@ -29,6 +29,7 @@ function makeUnsignedMessage(
     senderId: 'sender-abc',
     pubKey: 'dummy-pub-key',
     seq: 1,
+    sessionEpoch: 1,
     timestamp: Date.now(),
     content: 'hello world',
     ttl: 5,
@@ -109,6 +110,30 @@ describe('SecurityManager', () => {
       });
       const signature = await sm.signMessage(msg, kp.privateKey);
       expect(await sm.verifyMessage({ ...msg, signature }, kp.publicKey)).toBe(true);
+    });
+  });
+
+  describe('sessionEpoch 有簽章保護（Spec 009：跨會話重放收斂的根基）', () => {
+    it('竄改 sessionEpoch → 驗簽失敗（舊會話訊息無法冒充新代）', async () => {
+      const kp = await generateSigningKeyPair();
+      const pubKey = await exportPubKeySpki(kp.publicKey);
+      const unsigned = makeUnsignedMessage({ pubKey, sessionEpoch: 3 });
+      const signature = await sm.signMessage(unsigned, kp.privateKey);
+
+      const tampered: GossipMessage = { ...unsigned, sessionEpoch: 99, signature };
+      const imported = await sm.importPublicKey(pubKey);
+      expect(await sm.verifyMessage(tampered, imported, { maxAgeMs: null })).toBe(false);
+    });
+
+    it('sessionEpoch 正常簽驗 round-trip', async () => {
+      const kp = await generateSigningKeyPair();
+      const pubKey = await exportPubKeySpki(kp.publicKey);
+      const unsigned = makeUnsignedMessage({ pubKey, sessionEpoch: 1752800000123 });
+      const signature = await sm.signMessage(unsigned, kp.privateKey);
+      const imported = await sm.importPublicKey(pubKey);
+      expect(
+        await sm.verifyMessage({ ...unsigned, signature }, imported, { maxAgeMs: null }),
+      ).toBe(true);
     });
   });
 
