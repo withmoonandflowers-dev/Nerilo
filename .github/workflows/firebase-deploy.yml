@@ -79,6 +79,8 @@ jobs:
           VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
           # Sentry 上線錯誤追蹤 — 未設定時 initSentry() 為 no-op
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          # LS 結帳連結（升級 Pro 入口）— 未設定時升級鈕不顯示
+          VITE_LS_CHECKOUT_URL: ${{ secrets.VITE_LS_CHECKOUT_URL }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
