@@ -11,6 +11,7 @@ import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/ch
 import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
 import { PlaintextConfirmRequiredError, type EncryptionState } from '@legacy/features/chat/encryptionGate'
 import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
+import { boundedFallbackDecrypt } from '@legacy/features/chat/fallbackDecrypt'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
@@ -319,26 +320,10 @@ function startFallbackSubscription() {
     addMessage(msg)
   }, {
     localUid: uid,
-    // 2 人房已一律 mesh（P2-③）：備援密文用房間金鑰（keyx）解，非星型 sender key。
-    // 重進初期初始 snapshot 早於 initializeP2P 完成（meshChat=null）、金鑰也可能稍後
-    // 才經複本重生/keyx 就緒 → 有界等待重試；最終仍解不開則跳過（見 skipUndecryptable）。
-    decrypt: async (payload: unknown, senderId: string) => {
-      const deadline = Date.now() + 20_000
-      for (;;) {
-        if (meshChat) {
-          try {
-            return await meshChat.decryptFromFallback(payload as never, senderId)
-          } catch (e) {
-            if (Date.now() >= deadline) throw e
-          }
-        } else if (Date.now() >= deadline) {
-          throw new Error('mesh chat not ready')
-        }
-        await new Promise((r) => setTimeout(r, 300))
-      }
-    },
-    // mesh 房：解不開不佔位——gossip 權威副本稍後以同 messageId 呈現明文；
-    // 佔位會被 id 去重永久擋住好副本（Spec 012 rejoin 回歸的根因）。
+    // 2 人房已一律 mesh（P2-③）：備援密文用房間金鑰（keyx）解。重進初期服務/金鑰
+    // 晚於初始 snapshot 就緒 → 有界等待（fallbackDecrypt）；仍解不開＝跳過不佔位
+    // （gossip 權威副本同 id 呈現；佔位會被去重永久擋住——Spec 012 實作期修訂三）。
+    decrypt: boundedFallbackDecrypt(() => meshChat, { notReadyMessage: 'mesh chat not ready' }),
     skipUndecryptable: true,
   })
 }

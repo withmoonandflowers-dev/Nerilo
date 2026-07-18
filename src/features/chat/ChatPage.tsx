@@ -32,6 +32,7 @@ import { startRoomHeartbeat } from '../../services/RoomHeartbeat';
 import { creditEconomy } from '../../core/incentive/CreditEconomy';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { E2EEIndicator, type E2EEMode } from './E2EEIndicator';
+import { boundedFallbackDecrypt } from './fallbackDecrypt';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
 import { useRoomSubscription } from './hooks/useRoomSubscription';
@@ -399,23 +400,12 @@ const ChatPage: React.FC = () => {
     const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, {
       localUid: user.uid,
       // 到訊當下再解析服務；依拓撲分流（Spec 012 P4：mesh 房備援已密文化，解密走房間金鑰）。
-      // mesh 房：服務/金鑰可能晚於初始 snapshot 就緒 → 有界等待重試（同 Vue 版）。
-      decrypt: async (payload, senderId) => {
+      // mesh 房：服務/金鑰可能晚於初始 snapshot 就緒 → 有界等待（fallbackDecrypt，同 Vue 版）。
+      decrypt: (payload, senderId) => {
         if (architecture.isMesh()) {
-          const deadline = Date.now() + 20_000;
-          for (;;) {
-            const meshChatService = meshTopology.getState().meshChatService;
-            if (meshChatService) {
-              try {
-                return await meshChatService.decryptFromFallback(payload, senderId);
-              } catch (e) {
-                if (Date.now() >= deadline) throw e;
-              }
-            } else if (Date.now() >= deadline) {
-              throw new Error('MeshChatService not ready');
-            }
-            await new Promise((r) => setTimeout(r, 300));
-          }
+          return boundedFallbackDecrypt(() => meshTopology.getState().meshChatService, {
+            notReadyMessage: 'MeshChatService not ready',
+          })(payload, senderId);
         }
         const chatService = starTopology.getState().chatService;
         if (!chatService) {
