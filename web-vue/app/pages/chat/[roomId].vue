@@ -9,7 +9,7 @@ import { readIntroducerHint } from '~/lib/introducerHint'
 import { consumeOpenGameFlag } from '~/lib/gameRoomFlag'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
 import { applyRead, readCount, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
-import { sendDecisionFor, PlaintextConfirmRequiredError, type EncryptionState } from '@legacy/features/chat/encryptionGate'
+import { PlaintextConfirmRequiredError, type EncryptionState } from '@legacy/features/chat/encryptionGate'
 import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
@@ -56,15 +56,14 @@ function reactionChips(messageId: string): Array<{ emoji: string; count: number;
     emoji, count: froms.length, mine: froms.includes(myMeshId.value),
   }))
 }
-// ── 加密狀態（ADR-0026 R2 明文降級 fail-visible）──
+// ── 加密狀態（ADR-0026 R2 fail-visible；確認流細節見 usePlaintextConfirm）──
 const encryptionState = ref<EncryptionState>('exchanging')
-/** 明文房送訊確認：暫存待送內容；非 null 時顯示阻斷式警告，使用者確認才真送。 */
-const plaintextPending = ref<string | null>(null)
-const e2eeLabel = computed(() =>
-  encryptionState.value === 'encrypted' ? '端對端加密'
-    : encryptionState.value === 'exchanging' ? '金鑰交換中…'
-    : '未加密（此房無法端對端加密）'
-)
+const { plaintextPending, e2eeLabel, interceptSend, confirmPlaintextSend, cancelPlaintextSend } =
+  usePlaintextConfirm({
+    encryptionState,
+    send: (raw, id, allowDegraded) => sendMessage(raw, id, allowDegraded),
+    restoreInput: (raw) => { inputValue.value = decodeContent(raw).text },
+  })
 // ── 已讀人數（per-member 水位；聚合見 readReceipts.ts）──
 const readState = ref<ReadState>({})
 let myWatermark = '' // 上次送出的自身水位（僅前進才再送，天然限流）
@@ -413,49 +412,18 @@ async function handleSend() {
   const content = inputValue.value.trim()
   if (!content) return
   const raw = encodeContent(content, replyingTo.value?.messageId) // 回覆時嵌入被回覆 id（隨內容加密）
-  // ADR-0026 R2 fail-visible：明文房不靜默送出。真明文（ECDH 不可用）→ 阻斷式確認、預設拒送。
-  if (sendDecisionFor(encryptionState.value) === 'confirm-plaintext') {
-    plaintextPending.value = raw // 暫存，顯示警告 bar；使用者按「仍以明文送出」才真送
-    replyingTo.value = null
-    inputValue.value = ''
-    if (textareaEl.value) textareaEl.value.style.height = 'auto'
-    emitTyping(false)
-    return
-  }
   replyingTo.value = null
   inputValue.value = ''
   if (textareaEl.value) textareaEl.value.style.height = 'auto'
   emitTyping(false)
+  // R2 fail-visible：降級定局房攔下進阻斷式確認（預設拒送），否則直接送
+  if (interceptSend(raw)) return
   await sendMessage(raw)
 }
 
-/** 阻斷式確認來自「重送失敗訊息」時的原訊息 id（確認後沿用同 id，去重收斂） */
-const plaintextPendingResendId = ref<string | null>(null)
-
-/** 明文房：使用者明確確認後才以明文送出（fail-visible 的「明確同意」→ allowDegraded）。 */
-async function confirmPlaintextSend() {
-  const raw = plaintextPending.value
-  const resendId = plaintextPendingResendId.value
-  plaintextPending.value = null
-  plaintextPendingResendId.value = null
-  if (raw) await sendMessage(raw, resendId ?? undefined, true)
-}
-function cancelPlaintextSend() {
-  // 取消＝不送。新訊息：內容還回輸入框（避免白打）；重送：氣泡已在（failed 態），不動輸入框。
-  if (plaintextPending.value && !plaintextPendingResendId.value) {
-    inputValue.value = decodeContent(plaintextPending.value).text
-  }
-  plaintextPending.value = null
-  plaintextPendingResendId.value = null
-}
-
 function handleResend(msg: ChatMessage) {
-  // 與 handleSend 同一 pre-check（Spec 012）：降級定局的房間，重送也必須先過阻斷式確認
-  if (sendDecisionFor(encryptionState.value) === 'confirm-plaintext') {
-    plaintextPending.value = msg.content
-    plaintextPendingResendId.value = msg.messageId
-    return
-  }
+  // 與 handleSend 同一攔檢（Spec 012）：降級定局的房間，重送也必須先過阻斷式確認（沿用原 id）
+  if (interceptSend(msg.content, msg.messageId)) return
   sendMessage(msg.content, msg.messageId)
 }
 

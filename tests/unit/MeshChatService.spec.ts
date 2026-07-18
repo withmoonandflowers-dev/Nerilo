@@ -19,6 +19,9 @@ const mockGossipManager = {
     capturedMessageHandler = handler;
   }),
   isInitialized: vi.fn().mockReturnValue(true),
+  // Spec 012 出口閘表面：預設 encrypted（放行），閘門行為由 MeshChatServiceGate.spec 專測
+  getEncryptionState: vi.fn().mockReturnValue('encrypted'),
+  waitForSendKey: vi.fn().mockResolvedValue(true),
   getConnectionState: vi.fn().mockReturnValue({ neighborCount: 1, totalNeighbors: 1 }),
   // gossip senderId 是 mesh userId；測試中與 localUid 'user-1' 一致以驗自訊息過濾
   getUserId: vi.fn().mockReturnValue('user-1'),
