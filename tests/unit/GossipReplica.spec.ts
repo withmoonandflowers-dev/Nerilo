@@ -26,6 +26,7 @@ function makeFakePersistence(): IGossipPersistence & {
       const m = meta.get(k) ?? {};
       const seq = m.nextSeq ?? 1;
       meta.set(k, { ...m, nextSeq: seq + 1 });
+      await new Promise((r) => setTimeout(r, 0)); // 模擬 IDB 非同步（暴露共享欄位競態）
       return seq;
     },
     async reserveSessionEpoch(roomId, senderId) {
@@ -217,6 +218,32 @@ describe('ADR-0023 P1 複本持久化', () => {
     await b.handler.sendMessage('s2');
     const epochB = (b.mocks.neighbor.send.mock.calls[0][0] as GossipMessage).sessionEpoch;
     expect(epochB).toBeGreaterThan(epochA);
+  });
+
+  it('並發送出不共享 seq：chat 與 read 同時送，兩則都入 store、seq 各自獨立', async () => {
+    // 回歸（四線合併時實測根因）：sendMessage 把保留到的 seq 寫回共享欄位 this.seq，
+    // 再經過多個 await 後才組訊息——並發的第二個 send 會覆寫欄位，兩則訊息拿到同一個
+    // seq，第二筆 storePut 被去重靜默丟棄 → 寄件端自己把訊息弄丟（收端永遠收不到）。
+    // 頁面上的實際觸發：使用者送 chat 的同時 advanceMyRead 以 fire-and-forget 送 read。
+    const p = makeFakePersistence();
+    const a = makeHandler(p);
+    await a.handler.hydrate();
+
+    await Promise.all([
+      a.handler.sendMessage('chat-msg', 'id-chat', 'chat'),
+      a.handler.sendMessage('{"watermark":"w"}', undefined, 'read'),
+    ]);
+
+    const sent = a.mocks.neighbor.send.mock.calls.map((c) => c[0] as GossipMessage);
+    expect(sent).toHaveLength(2);
+    const seqs = sent.map((m) => m.seq).sort();
+    expect(seqs).toEqual([1, 2]); // 兩則各自的 seq，不得共享
+
+    // 兩則都必須在 store（digest 對空 digest 的補送應含兩筆）
+    const probe = a.mocks.neighbor;
+    probe.send.mockClear();
+    await a.handler.handleDigest({}, probe as never);
+    expect(probe.send.mock.calls.length).toBe(2);
   });
 
   it('持久層故障：hydrate/reserve 都優雅退回記憶體模式', async () => {
