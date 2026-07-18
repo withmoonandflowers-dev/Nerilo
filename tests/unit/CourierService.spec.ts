@@ -22,6 +22,7 @@ import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
 import { arrayBufferToBase64 } from '../../src/utils/crypto';
 import type { CourierBus, CourierBackupDeps, CourierCreditConfig, MemberCreditConfig } from '../../src/core/relay/CourierService';
 import type { P2PEnvelope, GossipMessage } from '../../src/types';
+import { enc } from './_courierFixtures';
 
 /** 一端：對外 send 交給 partner 的 handlers；自己 subscribe 收 partner 送來的。 */
 class BusEnd implements CourierBus {
@@ -60,7 +61,7 @@ function rec(over: Partial<GossipMessage> = {}): GossipMessage {
     pubKey: 'pk',
     seq: 1,
     timestamp: 1000,
-    content: 'ENC:secret',
+    content: enc('secret'),
     ttl: 3,
     signature: 'SIG',
     ...over,
@@ -76,13 +77,13 @@ describe('CourierService — 寄存/取回端到端', () => {
     server.start();
     client.start();
 
-    const ack = await client.deposit(rec({ seq: 1, content: 'ENC:hello' }));
+    const ack = await client.deposit(rec({ seq: 1, content: enc('hello') }));
     expect(ack.accepted).toBe(true);
-    await client.deposit(rec({ seq: 2, content: 'ENC:world' }));
+    await client.deposit(rec({ seq: 2, content: enc('world') }));
 
     const pulled = await client.pull('r1');
     expect(pulled).toHaveLength(2);
-    expect(pulled.map((m) => m.content).sort()).toEqual(['ENC:hello', 'ENC:world']);
+    expect(pulled.map((m) => m.content).sort()).toEqual([enc('hello'), enc('world')].sort());
     // 信使真的存進了 store（盲存：content 未被改動）
     expect(store.stats().recordCount).toBe(2);
   });
@@ -103,7 +104,7 @@ describe('CourierService — 寄存/取回端到端', () => {
     const client = new CourierClient(memberBus, 'm');
     server.start();
     client.start();
-    const ack = await client.deposit(rec({ content: 'way-too-long-ciphertext', signature: '' }));
+    const ack = await client.deposit(rec({ content: enc('way-too-long-ciphertext'), signature: '' }));
     expect(ack).toEqual({ accepted: false, reason: 'record-too-large' });
   });
 
@@ -162,11 +163,11 @@ describe('CourierService — anti-entropy 對帳（reconcile 雙向）', () => {
     client.start();
 
     // 信使先有 A（別的成員寄存過）。
-    const A = rec({ senderId: 'sA', seq: 1, content: 'ENC:A', messageId: 'A' });
+    const A = rec({ senderId: 'sA', seq: 1, content: enc('A'), messageId: 'A' });
     store.deposit(A);
 
     // 成員本地有 B（信使沒有）。成員缺 A。
-    const B = rec({ senderId: 'sB', seq: 1, content: 'ENC:B', messageId: 'B' });
+    const B = rec({ senderId: 'sB', seq: 1, content: enc('B'), messageId: 'B' });
     const localStore = buildRoomStore([B]);
     const received: GossipMessage[] = [];
 
@@ -410,8 +411,8 @@ describe('CourierService — 計量（共簽收據 → 計點，ADR-0022）', ()
     await settle(50); // 等 IDENTIFY 抵達信使
 
     // 寄存兩筆（各有位元組）。
-    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 1, content: 'ENC:aaaa', signature: 'ss' }));
-    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 2, content: 'ENC:bbbb', signature: 'ss' }));
+    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 1, content: enc('aaaa'), signature: 'ss' }));
+    await client.deposit(rec({ roomId: 'r1', senderId: 'sX', seq: 2, content: enc('bbbb'), signature: 'ss' }));
 
     // 信使發起計量一輪。
     await server.claimCredit();
