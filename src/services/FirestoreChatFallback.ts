@@ -74,6 +74,15 @@ export interface SubscribeOptions {
     payload: FallbackEncryptedContent,
     senderId: string
   ) => Promise<string>;
+  /**
+   * 解不開時「跳過」而非入列佔位訊息（Spec 012 rejoin 回歸修復）。
+   * mesh 房的權威副本在 gossip 複寫日誌（anti-entropy 會補齊並以同 messageId 呈現明文）；
+   * 佔位訊息一旦先入列，id 去重會永久擋住稍後可解密的好副本。onSnapshot 的 'added'
+   * 是一次性事件，佔位沒有第二次機會——故 mesh 房應跳過。星型房「不可」跳過：
+   * 備援是 P2P 斷線時唯一投遞路徑，跳過＝訊息永久消失，佔位是誠實呈現。
+   * 以函數形式在到訊當下評估（星型→mesh 遷移期拓撲會變）。
+   */
+  skipUndecryptable?: boolean | (() => boolean);
 }
 
 /**
@@ -114,7 +123,7 @@ export function subscribeToFirestoreMessages(
           // 自己的密文：本機已有明文回顯，略過（sender key 無法解密自己的訊息）
           if (options?.localUid && data.from === options.localUid) return;
 
-          let content = '[無法解密此訊息]';
+          let content: string | null = null;
           if (options?.decrypt) {
             try {
               content = await options.decrypt(
@@ -122,8 +131,16 @@ export function subscribeToFirestoreMessages(
                 data.from as string
               );
             } catch {
-              // 金鑰不在手上（重整後或未完成交換）：以佔位訊息誠實呈現
+              // 金鑰不在手上（重整後或未完成交換）：依拓撲決定佔位或跳過（見 SubscribeOptions）
             }
+          }
+          if (content === null) {
+            const skip =
+              typeof options?.skipUndecryptable === 'function'
+                ? options.skipUndecryptable()
+                : (options?.skipUndecryptable ?? false);
+            if (skip) return; // mesh 房：讓 gossip 權威副本以同 id 呈現，不佔位擋路
+            content = '[無法解密此訊息]';
           }
           onMessage({ ...base, content });
         } else {

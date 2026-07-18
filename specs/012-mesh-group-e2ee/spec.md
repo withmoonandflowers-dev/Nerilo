@@ -111,6 +111,7 @@ ADR-0010 Decision 1-2 已定原則：每個 transport adapter 宣告安全等級
 - **出口閘（MeshChatService）**：`sendMessage`／`sendGameEnvelope` 進入前過 `sendGateDecision(getEncryptionState(), 'e2ee')`：allow→送；hold→`waitForSendKey` 至房間逾時線，就緒即自動補送（原 promise 續走，UI 維持 sending 態），逾時拋 `PlaintextConfirmRequiredError`；confirm-degrade→直接拋。新增 `allowDegraded` 參數：使用者於 UI 明確確認後的明文送出走此參數（R2 語義）。`sendReaction`／`sendRead` 未達 allow 時靜默略過（皆為冪等聚合，之後可重送；明文窗內聊天本體被扣住，兩者實際無事可送）。typing 豁免（presence 通道，等級已於 P1 誠實宣告）。
 - **Vue 頁**：送前 pre-check 沿用（逾時後狀態衍生為 'plaintext'，走既有 `plaintextPending` 確認 bar）；catch `PlaintextConfirmRequiredError` → 內容回填 `plaintextPending`（樂觀訊息標 failed 移除重複）；`confirmPlaintextSend` 改走 `allowDegraded`。
 - **React 頁**：無確認 bar（Q1-a 不做 parity），catch 後標 failed——React 上「明文房送不出」是刻意的更嚴格止血姿態，記錄於文件。
+- 〔實作期修訂三：備援佔位訊息擋住權威副本〕rejoin E2E 抓到的回歸（探針證據：B 端泡泡是 FirestoreChatFallback 的「[無法解密此訊息]」）：重進初期，Firestore 訂閱的初始 snapshot 早於 meshChat 初始化/金鑰重生就緒，密文橋接 doc 解不開 → 佔位訊息以 m2 的 messageId 先入列 → `useChatMessages` id 去重是 skip 語義 → 稍後 gossip 權威副本（可解密）被永久擋住。onSnapshot 'added' 一次性，佔位沒有第二次機會。修復兩層：(1) `subscribeToFirestoreMessages` 新增 `skipUndecryptable`（mesh 房解不開＝跳過不佔位，權威副本在 gossip 日誌；星型房必須維持佔位——備援是斷線時唯一投遞路徑，跳過＝掉信）；(2) Vue／React mesh decrypt 改有界等待重試（20s 內等服務與金鑰就緒），縮小跳過的窗口。教訓＝「同 id 跨路徑去重」遇上「品質不等的副本」時，先到的劣副本會鎖死顯示；去重收斂設計必須聲明副本等價性前提。
 
 ### P3 盲信使明文過濾（Q3-c；protocol 軌：接受規則＋conformance）
 

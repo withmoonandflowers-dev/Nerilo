@@ -398,14 +398,24 @@ const ChatPage: React.FC = () => {
     if (!roomId || !user || !hasJoinedRoom) return;
     const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, {
       localUid: user.uid,
-      // 到訊當下再解析服務；依拓撲分流（Spec 012 P4：mesh 房備援已密文化，解密走房間金鑰）
-      decrypt: (payload, senderId) => {
+      // 到訊當下再解析服務；依拓撲分流（Spec 012 P4：mesh 房備援已密文化，解密走房間金鑰）。
+      // mesh 房：服務/金鑰可能晚於初始 snapshot 就緒 → 有界等待重試（同 Vue 版）。
+      decrypt: async (payload, senderId) => {
         if (architecture.isMesh()) {
-          const meshChatService = meshTopology.getState().meshChatService;
-          if (!meshChatService) {
-            return Promise.reject(new Error('MeshChatService not ready'));
+          const deadline = Date.now() + 20_000;
+          for (;;) {
+            const meshChatService = meshTopology.getState().meshChatService;
+            if (meshChatService) {
+              try {
+                return await meshChatService.decryptFromFallback(payload, senderId);
+              } catch (e) {
+                if (Date.now() >= deadline) throw e;
+              }
+            } else if (Date.now() >= deadline) {
+              throw new Error('MeshChatService not ready');
+            }
+            await new Promise((r) => setTimeout(r, 300));
           }
-          return meshChatService.decryptFromFallback(payload, senderId);
         }
         const chatService = starTopology.getState().chatService;
         if (!chatService) {
@@ -413,6 +423,9 @@ const ChatPage: React.FC = () => {
         }
         return chatService.decryptFromFallback(payload, senderId);
       },
+      // mesh 房解不開不佔位（gossip 權威副本同 id 呈現；佔位會被去重永久擋住）；
+      // 星型房維持佔位——備援是斷線時唯一投遞路徑，跳過＝訊息永久消失。
+      skipUndecryptable: () => architecture.isMesh(),
     });
     return () => unsubscribe();
   }, [roomId, user, addMessage, hasJoinedRoom, starTopology, meshTopology, architecture]);
