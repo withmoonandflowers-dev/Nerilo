@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-07-18（feature/spec-009-session-epoch 分支）。README、CLAUDE、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-07-18（四線合併：Spec 009/010/011/012）。README、CLAUDE、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -15,7 +15,7 @@
 
 | 層級 | 2026-07-16 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；124 test files／1421 tests 全綠（既有 7 warnings） |
+| Core quality | TypeScript、ESLint gate 通過；134 test files／1492 tests 全綠（既有 7 warnings；Spec 012 退役 TreeKEM/GroupKeyManager −46、新增出口閘/信使過濾/標籤/備援解密 +117） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
@@ -27,12 +27,13 @@
 ### 核心傳輸
 
 - 2 人與 mesh 聊天、E2EE、fallback 密文、因果順序、去重與 TURN production smoke 已有可執行證據。
-- Spec 009（2026-07-18，本分支）：sessionEpoch 入簽章收斂跨會話重放（R1 閉環）。
+- Spec 009（2026-07-18）：sessionEpoch 入簽章收斂跨會話重放（R1 閉環）。
   gossip 協議升 v2（v1 不互通，GOSSIP_HELLO 版本訊號＋fail-visible 提示）；去重鍵與
   anti-entropy digest 全面分代；NeriloReplica Dexie v2 原子遷移（legacy=0 代只供本機）；
   信使回填加驗簽＋epoch 閘門。產品面代價（使用者拍板）：跨會話補歷史能力放棄。
   conformance 向量 C1-C7 落地 `tests/unit/SessionEpochConformance.spec.ts`；殘留清單
   見 QA-REPORT 已知限制與 ADR-0033。
+- Spec 012（2026-07-18）收斂 mesh 群組 E2EE 第二階段：出口閘（金鑰未就緒不送明文、就緒自動補送、逾時 60s 轉 fail-visible）、hydrate 重放 keyx（重載不再重開明文窗）、盲信使推收兩側拒明文（keyx 豁免，協議規則）、React mesh 橋接/備援止血改密文、GX3 安全分級原語（core/security/securityLabel，EncryptionState 改衍生）；TreeKEM/GroupKeyManager 退役（ADR-0034）；金鑰輪替口徑寫入 THREAT_MODEL（在籍者可解全歷史為刻意取捨）。
 - SDK 已抽出公開入口、quickstart 與 minimal example，且不會從 eager import 偷帶 Firebase。
 - `game/`、`community/` 與部分 relay/transport 能力仍有「已測但未完整接入產品流」的模組；不可把單元測試等同 production 接線。
 

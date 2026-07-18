@@ -26,6 +26,7 @@ import {
   type EpochStore,
   type EpochFloors,
 } from '../mesh/antiEntropy';
+import { isCourierEligibleRecord, filterCourierEligible } from './courierEligibility';
 import { verifyTombstone, type Tombstone } from './TombstoneCrypto';
 import { ecdsaVerifier, pubKeyBindsNodeId, verifyCoSignedReceipt } from './CourierReceipts';
 import {
@@ -562,7 +563,10 @@ export class CourierClient {
     for (const m of records ?? []) ingest(m); // 方向一：信使補我
 
     // 方向二：我回推信使缺的（用信使 digest 過濾本地；只推各 sender 現行代）。
-    const toPush = recordsPeerLacks(localStore, courierDigest ?? {}, currentEpochs);
+    // Spec 012 P3 推側防禦：明文紀錄不推給信使（正常呼叫端已在 digest 前過濾，
+    // 此處是最後一道——收側 deposit 也會以 'plaintext-content' 拒收）。
+    const toPush = recordsPeerLacks(localStore, courierDigest ?? {}, currentEpochs)
+      .filter(isCourierEligibleRecord);
     let pushed = 0;
     for (const m of toPush) {
       const result = await this.deposit(m); // 逐筆 deposit（已測、ack 冪等）
@@ -663,7 +667,8 @@ export async function runCourierBackup(
     for (const roomId of roomIds) {
       try {
         const { records, floors, acceptedEpochs } = await deps.loadRoom(roomId);
-        const localStore = buildRoomStore(records);
+        // Spec 012 P3 推側過濾：digest 與 push 皆不含明文紀錄（明文只留成員間 anti-entropy）
+        const localStore = buildRoomStore(filterCourierEligible(records));
         const floorMap = new Map<string, Map<number, number>>();
         for (const f of floors) {
           let byEpoch = floorMap.get(f.senderId);

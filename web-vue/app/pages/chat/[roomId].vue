@@ -9,9 +9,10 @@ import { readIntroducerHint } from '~/lib/introducerHint'
 import { consumeOpenGameFlag } from '~/lib/gameRoomFlag'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/features/chat/reactions'
 import { applyRead, orderKeyOf, type ReadState } from '@legacy/features/chat/readReceipts'
-import { reactionChipsFor, readReceiptTextFor, e2eeLabelFor } from '~/lib/chatDerive'
-import { sendDecisionFor, type EncryptionState } from '@legacy/features/chat/encryptionGate'
+import { reactionChipsFor, readReceiptTextFor } from '~/lib/chatDerive'
+import { PlaintextConfirmRequiredError, type EncryptionState } from '@legacy/features/chat/encryptionGate'
 import { encodeContent, decodeContent } from '@legacy/features/chat/messageContent'
+import { boundedFallbackDecrypt } from '@legacy/features/chat/fallbackDecrypt'
 import { MeshGameBus } from '~/lib/meshGameBus'
 import type { GameBus } from '~/lib/gameBus'
 import { RoomSubscriptionController } from '~/lib/roomSubscription'
@@ -51,13 +52,16 @@ function toggleReaction(messageId: string, emoji: string) {
   pickerFor.value = null
 }
 const reactionChips = (messageId: string) => reactionChipsFor(reactions.value, messageId, myMeshId.value)
-// ── 加密狀態（ADR-0026 R2 明文降級 fail-visible）──
+// ── 加密狀態（ADR-0026 R2 fail-visible；確認流細節見 usePlaintextConfirm）──
 const encryptionState = ref<EncryptionState>('exchanging')
 // Spec 009：gossip 協議版本不合（房內有 v1 舊版節點）→ 常駐提示，不靜默降級
 const protocolMismatch = ref(false)
-/** 明文房送訊確認：暫存待送內容；非 null 時顯示阻斷式警告，使用者確認才真送。 */
-const plaintextPending = ref<string | null>(null)
-const e2eeLabel = computed(() => e2eeLabelFor(encryptionState.value))
+const { plaintextPending, e2eeLabel, interceptSend, confirmPlaintextSend, cancelPlaintextSend } =
+  usePlaintextConfirm({
+    encryptionState,
+    send: (raw, id, allowDegraded) => sendMessage(raw, id, allowDegraded),
+    restoreInput: (raw) => { inputValue.value = decodeContent(raw).text },
+  })
 // ── 已讀人數（per-member 水位；聚合見 readReceipts.ts）──
 const readState = ref<ReadState>({})
 let myWatermark = '' // 上次送出的自身水位（僅前進才再送，天然限流）
@@ -309,11 +313,11 @@ function startFallbackSubscription() {
     addMessage(msg)
   }, {
     localUid: uid,
-    decrypt: (payload: unknown, senderId: string) => {
-      // 2 人房已一律 mesh（P2-③）：備援密文用房間金鑰（keyx）解，非星型 sender key。
-      if (!meshChat) return Promise.reject(new Error('mesh chat not ready'))
-      return meshChat.decryptFromFallback(payload as never, senderId)
-    },
+    // 2 人房已一律 mesh（P2-③）：備援密文用房間金鑰（keyx）解。重進初期服務/金鑰
+    // 晚於初始 snapshot 就緒 → 有界等待（fallbackDecrypt）；仍解不開＝跳過不佔位
+    // （gossip 權威副本同 id 呈現；佔位會被去重永久擋住——Spec 012 實作期修訂三）。
+    decrypt: boundedFallbackDecrypt(() => meshChat, { notReadyMessage: 'mesh chat not ready' }),
+    skipUndecryptable: true,
   })
 }
 
@@ -340,7 +344,8 @@ onUnmounted(() => {
 })
 
 // ── 傳送 ────────────────────────────────────────────────────────────────
-async function sendMessage(content: string, existingMessageId?: string) {
+/** @param allowDegraded 使用者已於阻斷式確認 bar 明確同意以明文送出（R2/Spec 012） */
+async function sendMessage(content: string, existingMessageId?: string, allowDegraded = false) {
   if (!user.value || !roomId.value) return
   const uid = user.value.uid
   const tempId = existingMessageId || generateUUID()
@@ -362,7 +367,9 @@ async function sendMessage(content: string, existingMessageId?: string) {
       throw new Error('連線建立中，請稍候再送')
     }
     // store-first：先入複寫日誌（此刻沒連上也會由 anti-entropy 補送），liveness 不綁當下連線。
-    await meshChat.sendMessage(content, tempId)
+    // 出口閘（Spec 012 Q2）在 MeshChatService 內：exchanging 暫扣等 keyx（sending 態維持），
+    // 就緒自動補送；逾時/明文房拋 PlaintextConfirmRequiredError → 下方 catch 走確認流。
+    await meshChat.sendMessage(content, tempId, allowDegraded ? { allowDegraded: true } : undefined)
     featureLog('chat', 'message_sent', { roomId: roomId.value, channel: 'p2p_mesh' })
     // 覆蓋不足（有成員不在 mesh，多半離線/連線中）→ 加密備援橋接，讓其收得到。
     // 用房間金鑰（keyx）加密；無金鑰則「不送明文」——靠 mesh anti-entropy 補齊，
@@ -383,8 +390,14 @@ async function sendMessage(content: string, existingMessageId?: string) {
     touchActivity()
     touchRead()
   } catch (e) {
-    console.error('[chat] send failed', e)
     updateMessageStatus(tempId, 'failed')
+    if (e instanceof PlaintextConfirmRequiredError) {
+      // 出口閘攔下（交換逾時或明文房）：不默默明文出手。訊息標 failed，
+      // 使用者點重送時經 handleResend 的 pre-check 進入阻斷式確認流。
+      toastError('金鑰交換未完成，訊息未送出；重送時可選擇是否以明文送出')
+      return
+    }
+    console.error('[chat] send failed', e)
     if (e instanceof Error && e.message.includes('金鑰')) toastError(e.message)
   }
 }
@@ -393,35 +406,18 @@ async function handleSend() {
   const content = inputValue.value.trim()
   if (!content) return
   const raw = encodeContent(content, replyingTo.value?.messageId) // 回覆時嵌入被回覆 id（隨內容加密）
-  // ADR-0026 R2 fail-visible：明文房不靜默送出。真明文（ECDH 不可用）→ 阻斷式確認、預設拒送。
-  if (sendDecisionFor(encryptionState.value) === 'confirm-plaintext') {
-    plaintextPending.value = raw // 暫存，顯示警告 bar；使用者按「仍以明文送出」才真送
-    replyingTo.value = null
-    inputValue.value = ''
-    if (textareaEl.value) textareaEl.value.style.height = 'auto'
-    emitTyping(false)
-    return
-  }
   replyingTo.value = null
   inputValue.value = ''
   if (textareaEl.value) textareaEl.value.style.height = 'auto'
   emitTyping(false)
+  // R2 fail-visible：降級定局房攔下進阻斷式確認（預設拒送），否則直接送
+  if (interceptSend(raw)) return
   await sendMessage(raw)
 }
 
-/** 明文房：使用者明確確認後才以明文送出（fail-visible 的「明確同意」）。 */
-async function confirmPlaintextSend() {
-  const raw = plaintextPending.value
-  plaintextPending.value = null
-  if (raw) await sendMessage(raw)
-}
-function cancelPlaintextSend() {
-  // 取消＝不送；把內容還回輸入框，避免使用者白打
-  if (plaintextPending.value) inputValue.value = decodeContent(plaintextPending.value).text
-  plaintextPending.value = null
-}
-
 function handleResend(msg: ChatMessage) {
+  // 與 handleSend 同一攔檢（Spec 012）：降級定局的房間，重送也必須先過阻斷式確認（沿用原 id）
+  if (interceptSend(msg.content, msg.messageId)) return
   sendMessage(msg.content, msg.messageId)
 }
 

@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { CourierStore, recordBytes, type CourierStoreConfig } from '../../src/core/relay/CourierStore';
 import type { GossipMessage } from '../../src/types';
+import { enc, encSized } from './_courierFixtures';
 
 function msg(over: Partial<GossipMessage> = {}): GossipMessage {
   return {
@@ -17,7 +18,7 @@ function msg(over: Partial<GossipMessage> = {}): GossipMessage {
     pubKey: 'pk',
     seq: 1,
     timestamp: 1000,
-    content: 'cipher-envelope',
+    content: enc('cipher-envelope'),
     ttl: 3,
     signature: 'sig',
     ...over,
@@ -26,7 +27,7 @@ function msg(over: Partial<GossipMessage> = {}): GossipMessage {
 
 /** 造一個 content 恰好 nBytes 的紀錄（signature 固定小），供配額邊界測試。 */
 function sizedMsg(over: Partial<GossipMessage>, contentBytes: number): GossipMessage {
-  return msg({ ...over, content: 'x'.repeat(contentBytes), signature: '' });
+  return msg({ ...over, content: encSized(contentBytes), signature: '' });
 }
 
 const cfg = (over: Partial<CourierStoreConfig> = {}): CourierStoreConfig => ({
@@ -40,12 +41,12 @@ const cfg = (over: Partial<CourierStoreConfig> = {}): CourierStoreConfig => ({
 describe('CourierStore — deposit 基本', () => {
   it('存下密文紀錄、可原樣取回（存完整密文，非 hash）', () => {
     const s = new CourierStore(cfg(), () => 1000);
-    const m = msg({ content: 'ENC:abc', signature: 'SIG:xyz' });
+    const m = msg({ content: enc('ENC:abc'), signature: 'SIG:xyz' });
     const res = s.deposit(m);
     expect(res.accepted).toBe(true);
     const served = s.serveRoom('r1');
     expect(served).toHaveLength(1);
-    expect(served[0]!.content).toBe('ENC:abc'); // 原樣，未被改動
+    expect(served[0]!.content).toBe(enc('ENC:abc')); // 原樣，未被改動
     expect(served[0]!.signature).toBe('SIG:xyz');
   });
 
@@ -181,10 +182,10 @@ describe('CourierStore — 簽章墓碑（Decision 3.3）', () => {
 describe('CourierStore — first-write-wins + 主權', () => {
   it('同 (senderId, seq) 重複寄存 → 保留首筆、不覆寫（寄件人分叉防禦）', () => {
     const s = new CourierStore(cfg(), () => 1000);
-    s.deposit(msg({ senderId: 'a', seq: 1, content: 'FIRST', signature: 's' }));
-    const dup = s.deposit(msg({ senderId: 'a', seq: 1, content: 'SECOND', signature: 's' }));
+    s.deposit(msg({ senderId: 'a', seq: 1, content: enc('FIRST'), signature: 's' }));
+    const dup = s.deposit(msg({ senderId: 'a', seq: 1, content: enc('SECOND'), signature: 's' }));
     expect(dup).toEqual({ accepted: false, reason: 'duplicate' });
-    expect(s.serveRoom('r1')[0]!.content).toBe('FIRST');
+    expect(s.serveRoom('r1')[0]!.content).toBe(enc('FIRST'));
   });
 
   it('clearAll 清空全部代存', () => {
@@ -252,19 +253,19 @@ describe('CourierStore — 寄存不刷熱度（Spec 001 Q4 小修）', () => {
 describe('CourierStore — per-簽章身分占用統計（Spec 001）', () => {
   it('deposit 累計、跨房加總、重複不重計', () => {
     const s = new CourierStore(cfg());
-    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 100));
-    s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 50));
-    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'b', seq: 1 }, 30));
-    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 100)); // duplicate → 拒
-    expect(s.signerUsage('a')).toBe(150);
-    expect(s.signerUsage('b')).toBe(30);
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 1000));
+    s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 500));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'b', seq: 1 }, 300));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 1000)); // duplicate → 拒
+    expect(s.signerUsage('a')).toBe(1500);
+    expect(s.signerUsage('b')).toBe(300);
     expect(s.signerUsage('nobody')).toBe(0);
   });
 
   it('TTL 過期扣回；歸零即移除鍵', () => {
     let t = 1000;
     const s = new CourierStore(cfg({ ttlMs: 100 }), () => t);
-    s.deposit(sizedMsg({ senderId: 'a', seq: 1 }, 60));
+    s.deposit(sizedMsg({ senderId: 'a', seq: 1 }, 600));
     t = 1201;
     s.evictExpired();
     expect(s.signerUsage('a')).toBe(0);
@@ -273,33 +274,33 @@ describe('CourierStore — per-簽章身分占用統計（Spec 001）', () => {
 
   it('預算 LRU 整房淘汰時按房內各 sender 扣回', () => {
     let t = 0;
-    const s = new CourierStore(cfg({ totalBudgetBytes: 250, maxRoomBytes: 1000, maxRecordBytes: 100 }), () => t);
+    const s = new CourierStore(cfg({ totalBudgetBytes: 2500, maxRoomBytes: 10000, maxRecordBytes: 1000 }), () => t);
     t = 10;
-    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 60));
-    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'b', seq: 1 }, 40));
-    t = 20; s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 100));
-    t = 30; s.deposit(sizedMsg({ roomId: 'r3', senderId: 'c', seq: 1 }, 100)); // 觸頂 → 淘汰 r1
-    expect(s.signerUsage('a')).toBe(100); // r1 的 60 扣掉，剩 r2 的 100
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 600));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'b', seq: 1 }, 400));
+    t = 20; s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 1000));
+    t = 30; s.deposit(sizedMsg({ roomId: 'r3', senderId: 'c', seq: 1 }, 1000)); // 觸頂 → 淘汰 r1
+    expect(s.signerUsage('a')).toBe(1000); // r1 的 60 扣掉，剩 r2 的 100
     expect(s.signerUsage('b')).toBe(0);
-    expect(s.signerUsage('c')).toBe(100);
+    expect(s.signerUsage('c')).toBe(1000);
   });
 
   it('墓碑刪房與 clearAll 會計歸零', async () => {
     const s = new CourierStore(cfg());
-    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 80));
-    s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 20));
+    s.deposit(sizedMsg({ roomId: 'r1', senderId: 'a', seq: 1 }, 800));
+    s.deposit(sizedMsg({ roomId: 'r2', senderId: 'a', seq: 1 }, 200));
     await s.applyTombstone('r1', () => true);
-    expect(s.signerUsage('a')).toBe(20);
+    expect(s.signerUsage('a')).toBe(200);
     s.clearAll();
     expect(s.signerUsage('a')).toBe(0);
   });
 
   it('單房上限淘汰最舊時逐筆扣回', () => {
     let t = 0;
-    const s = new CourierStore(cfg({ maxRoomBytes: 150, maxRecordBytes: 100 }), () => t);
-    t = 1; s.deposit(sizedMsg({ senderId: 'a', seq: 1 }, 100));
-    t = 2; s.deposit(sizedMsg({ senderId: 'b', seq: 1 }, 100)); // 房 200 > 150 → 淘汰最舊(a)
+    const s = new CourierStore(cfg({ maxRoomBytes: 1500, maxRecordBytes: 1000 }), () => t);
+    t = 1; s.deposit(sizedMsg({ senderId: 'a', seq: 1 }, 1000));
+    t = 2; s.deposit(sizedMsg({ senderId: 'b', seq: 1 }, 1000)); // 房 2000 > 1500 → 淘汰最舊(a)
     expect(s.signerUsage('a')).toBe(0);
-    expect(s.signerUsage('b')).toBe(100);
+    expect(s.signerUsage('b')).toBe(1000);
   });
 });

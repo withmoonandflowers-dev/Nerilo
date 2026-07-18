@@ -27,6 +27,7 @@ import { arrayBufferToBase64 } from '../../src/utils/crypto';
 import { computeDigest, recordsPeerLacks, maxEpochs } from '../../src/core/mesh/antiEntropy';
 import { buildRoomStore } from '../../src/core/relay/CourierService';
 import type { GossipMessage, P2PEnvelope } from '../../src/types';
+import { enc } from './_courierFixtures';
 
 class BusEnd implements CourierBus {
   private handlers = new Map<string, Set<(env: P2PEnvelope) => void | Promise<void>>>();
@@ -61,7 +62,7 @@ async function node() {
 function rec(over: Partial<GossipMessage> = {}): GossipMessage {
   return {
     roomId: 'room', senderId: 'record-signer', pubKey: 'pk', seq: 1, sessionEpoch: 1, timestamp: 1,
-    content: 'ENC:x', ttl: 3, signature: 'SIG', ...over,
+    content: enc('x'), ttl: 3, signature: 'SIG', ...over,
   };
 }
 
@@ -366,7 +367,7 @@ describe('Courier IOU — V4 免費成員互補不受信使拒收影響', () => 
     const courier = await node();
     const sender = await node();
     const localRecord = rec({ roomId: 'free-baseline', senderId: sender.nodeId, seq: 1 });
-    const peerRecord = rec({ roomId: 'free-baseline', senderId: 'peer-signer', seq: 1, content: 'ENC:peer' });
+    const peerRecord = rec({ roomId: 'free-baseline', senderId: 'peer-signer', seq: 1, content: enc('peer') });
     const book = new CourierIOUBook(courier.nodeId, courier.sign, config({ creditLimitPerIssuer: 0 }), () => 1000);
     const [memberBus, courierBus] = linkedBuses();
     const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);

@@ -36,6 +36,26 @@ If you need strong anonymity (e.g. journalism, activism in adversarial jurisdict
 | Forward secrecy | Previous-epoch sender keys retained briefly for in-flight messages, then deleted | Same |
 | Implementation | Browser-native `SubtleCrypto` only; no custom curve code | All crypto modules |
 
+### Mesh room content key（keyx，ADR-0023 P2；輪替口徑 Spec 012 Q4 拍板）
+
+mesh／gossip 房（Vue 線含 2 人房）不走 per-sender key，而是**單一房間內容金鑰**：
+
+| 面向 | 設計 | 出處 |
+|---|---|---|
+| 金鑰形態 | AES-256-GCM 房間金鑰；每則紀錄單一密文信封（nrec1），簽章覆蓋密文 | [RecordCrypto.ts](../src/core/mesh/RecordCrypto.ts) |
+| 分發 | keyx 日誌紀錄：對每位成員以 ECDH 成對封裝一份；遲入／重進靠 anti-entropy 補齊 keyx 自行開鑰 | [RoomKeyDistribution.ts](../src/core/mesh/RoomKeyDistribution.ts) |
+| 輪替 | **僅名冊變動時輪替**（加人／移除 → 新 epoch 新金鑰），無時間／訊息數週期輪替 | [RoomKeyCoordinator.ts](../src/core/mesh/RoomKeyCoordinator.ts) |
+| 前向保密 | 對**離開者**成立：新 epoch 金鑰不封給離開者。對**在籍成員不成立**（見下） | 同上 |
+| 金鑰未就緒 | 出口閘暫扣不送明文；交換逾時（60s）轉 fail-visible 阻斷式確認 | [MeshChatService.ts](../src/features/chat/MeshChatService.ts)、[securityLabel.ts](../src/core/security/securityLabel.ts) |
+| 盲信使 | 只代管密文與 keyx（收側拒收明文紀錄，協議規則） | [courierEligibility.ts](../src/core/relay/courierEligibility.ts) |
+
+**誠實口徑（刻意取捨，Spec 012 Q4）**：keyx 是永久日誌紀錄，任何在籍成員（含遲入者）
+補齊 keyx 即可解該房**全部 epoch 的歷史**——這是「持久聊天室可補歷史」產品語義的直接後果。
+因此：(1) 成員 ECDH 私鑰外洩 = 該房全歷史暴露，週期輪替救不了（攻擊者同樣能開全部 keyx），
+故不做週期輪替、也不對外宣稱在籍前向保密；(2) 真前向保密（ratchet＋刪舊鑰）與補歷史語義
+正面衝突，若未來需要，屬產品級重新定義，不是加個輪替參數。敏感對話的粗粒度界線
+是「換房」（見 Recommended user practices 的 rotate rooms）。
+
 ### What E2EE protects
 
 - ✅ **Message content** (text, file metadata, file chunks) is unreadable to anyone outside the room — including the relay nodes, Firebase, and a passive observer.
@@ -99,6 +119,7 @@ Firebase Auth + Firestore are used for:
 6. **Single Firebase project for now.** A breach of `nerilo` Firebase project compromises every user (no per-tenant isolation).
 7. **No deniability / unlinkable identity.** ECDSA identity keys are stable per-device; multiple rooms on the same device share the same long-term identity.
 8. **E2EE has no post-compromise security after epoch closes.** A future-compromise of a sender key reveals all messages in that epoch, even those received before the compromise was detected — until the next rotation.
+9. **Mesh 房間金鑰對在籍成員無前向保密。** keyx 永存日誌、在籍者可解全歷史（補歷史語義的刻意取捨，Spec 012 Q4）；成員 ECDH 私鑰外洩＝該房全歷史暴露。界線靠換房，不靠輪替。
 
 ## Recommended user practices
 
@@ -121,4 +142,5 @@ The following are **not** part of Nerilo's threat model:
 
 ## Changelog
 
+- 2026-07-18 — Spec 012：新增 mesh 房間金鑰（keyx）節與 Q4 輪替口徑（在籍者可解全歷史為刻意取捨）；known limitations 補第 9 點；出口閘／信使拒收明文入列。
 - 2026-05-27 — initial draft. Covers Sphinx-Lite, ECDH+AES-GCM sender keys, Firebase trust boundary. Tracking gaps: cover-traffic battery side-channel; IndexedDB at-rest encryption; per-tenant Firebase isolation.

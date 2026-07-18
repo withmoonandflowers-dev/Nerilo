@@ -193,3 +193,78 @@ describe('P2-②c：GossipMessageHandler keyx 消費', () => {
     expect(shown).toEqual(['舊時代訊息', '新時代訊息']);
   });
 });
+
+/** Spec 012 P2：hydrate 重放 keyx——重載後金鑰環自持久複本重生（明文窗不重開） */
+describe('Spec 012 P2：hydrate 重放 keyx', () => {
+  function makePersistence(records: GossipMessage[]) {
+    let seq = 0;
+    return {
+      reserveSeq: vi.fn(async () => ++seq),
+      reserveSessionEpoch: vi.fn(async () => Date.now()),
+      saveAcceptedEpoch: vi.fn(async () => undefined),
+      loadRoom: vi.fn(async () => ({ records, floors: [], acceptedEpochs: [] })),
+      saveRecord: vi.fn(async () => undefined),
+      evictRecord: vi.fn(async () => undefined),
+      listRooms: vi.fn(async () => ['room-r']),
+    };
+  }
+
+  it('重載後：store 內的 keyx 紀錄重放進金鑰環，密文歷史與新送出皆恢復', async () => {
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const key0 = await generateRoomKey();
+    const key1 = await generateRoomKey();
+    const persisted: GossipMessage[] = [
+      keyxWire(await buildKeyx(key0, ME, 0, producer, me.publicKey), 1),
+      keyxWire(await buildKeyx(key1, ME, 1, producer, me.publicKey), 2),
+    ];
+
+    const m = makeMocks();
+    const handler = new GossipMessageHandler(
+      'room-r', ME,
+      m.identity as never, m.security as never, m.topology as never,
+      null, makePersistence(persisted) as never,
+    );
+    handler.setKeyxPrivateKey(me.privateKey);
+    expect(handler.hasSendKey()).toBe(false);
+
+    await handler.hydrate();
+
+    // 金鑰環重生：最高 epoch 正確（產生方重載不會再重發 epoch 0 造成同代碰撞）
+    expect(handler.getMaxKnownEpoch()).toBe(1);
+    expect(handler.hasSendKey()).toBe(true);
+
+    // 舊 epoch 歷史密文解得開（顯示路徑）
+    const shown: string[] = [];
+    handler.onMessage((msg) => shown.push(msg.content));
+    const ct0 = await encryptRecordContent('重載前的舊訊息', key0, 0);
+    await handler.handleReceivedMessage(chatWire(ct0, 3), 'n1');
+    expect(shown).toEqual(['重載前的舊訊息']);
+
+    // 新送出走最新 epoch 密文（不再明文）
+    await handler.sendMessage('重載後的新訊息');
+    const sent = m.neighbor.send.mock.calls.at(-1)?.[0] as { content: string };
+    expect(sent.content).toContain('"v":"nrec1"');
+    expect(sent.content).not.toContain('重載後的新訊息');
+  });
+
+  it('封給別人的 keyx 重放不安裝金鑰（維持明文相容、不炸）', async () => {
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const other = await ecdhPair();
+    const key0 = await generateRoomKey();
+    const persisted: GossipMessage[] = [
+      keyxWire(await buildKeyx(key0, 'someone-else', 0, producer, other.publicKey), 1),
+    ];
+    const m = makeMocks();
+    const handler = new GossipMessageHandler(
+      'room-r', ME,
+      m.identity as never, m.security as never, m.topology as never,
+      null, makePersistence(persisted) as never,
+    );
+    handler.setKeyxPrivateKey(me.privateKey);
+    await handler.hydrate();
+    expect(handler.hasSendKey()).toBe(false);
+    expect(handler.getMaxKnownEpoch()).toBe(-1);
+  });
+});

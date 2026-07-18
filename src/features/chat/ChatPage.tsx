@@ -31,6 +31,8 @@ import { generateUUID } from '../../utils/uuid';
 import { startRoomHeartbeat } from '../../services/RoomHeartbeat';
 import { creditEconomy } from '../../core/incentive/CreditEconomy';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
+import { E2EEIndicator } from './E2EEIndicator';
+import { boundedFallbackDecrypt } from './fallbackDecrypt';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
 import { useE2eeMode, useProtocolMismatch } from './hooks/useChatIndicators';
@@ -398,17 +400,26 @@ const ChatPage: React.FC = () => {
     if (!roomId || !user || !hasJoinedRoom) return;
     const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, {
       localUid: user.uid,
-      // 到訊當下再解析 chatService，金鑰交換完成後即可解密
+      // 到訊當下再解析服務；依拓撲分流（Spec 012 P4：mesh 房備援已密文化，解密走房間金鑰）。
+      // mesh 房：服務/金鑰可能晚於初始 snapshot 就緒 → 有界等待（fallbackDecrypt，同 Vue 版）。
       decrypt: (payload, senderId) => {
+        if (architecture.isMesh()) {
+          return boundedFallbackDecrypt(() => meshTopology.getState().meshChatService, {
+            notReadyMessage: 'MeshChatService not ready',
+          })(payload, senderId);
+        }
         const chatService = starTopology.getState().chatService;
         if (!chatService) {
           return Promise.reject(new Error('ChatService not ready'));
         }
         return chatService.decryptFromFallback(payload, senderId);
       },
+      // mesh 房解不開不佔位（gossip 權威副本同 id 呈現；佔位會被去重永久擋住）；
+      // 星型房維持佔位——備援是斷線時唯一投遞路徑，跳過＝訊息永久消失。
+      skipUndecryptable: () => architecture.isMesh(),
     });
     return () => unsubscribe();
-  }, [roomId, user, addMessage, hasJoinedRoom, starTopology]);
+  }, [roomId, user, addMessage, hasJoinedRoom, starTopology, meshTopology, architecture]);
 
   // Scroll detection: track if user is near bottom
   const handleScroll = useCallback(() => {
@@ -480,11 +491,19 @@ const ChatPage: React.FC = () => {
           // 備援讓掉隊者收到；mesh 成員收到兩份同 id 由 useChatMessages 去重
           // → 仍恰好一次。人數以「房間文件」為真相來源（join 即入列），
           // 不用 mesh 鄰居發現數（對方 mesh init 卡住時會少算）。
-          const coverage = meshTopology.getState().meshChatService?.getMeshCoverage();
+          const meshChatService = meshTopology.getState().meshChatService;
+          const coverage = meshChatService?.getMeshCoverage();
           const expectedPeers = participantCountRef.current - 1;
           if (coverage && expectedPeers > 0 && coverage.connected < expectedPeers) {
-            await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
-            featureLog('chat', 'message_sent', { roomId, channel: 'firestore_bridge' });
+            // Spec 012 P4 止血：橋接一律房間金鑰密文；無金鑰不送明文
+            // （掉隊者由 mesh anti-entropy 補齊），不再明文洩漏到 Firestore。
+            const encrypted = await meshChatService?.encryptForFallback(content);
+            if (encrypted) {
+              await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
+              featureLog('chat', 'message_sent', { roomId, channel: 'firestore_bridge' });
+            } else {
+              featureLog('chat', 'fallback_skipped_no_key', { roomId });
+            }
           }
         } else if (architecture.isStar()) {
           await starTopology.sendMessage(content, tempId);
@@ -505,8 +524,14 @@ const ChatPage: React.FC = () => {
           const encrypted = await chatService.encryptForFallback(content);
           await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
         } else {
-          // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文
-          await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
+          // Spec 012 P4 止血：mesh 房備援一律密文；無金鑰（或服務未起）即標失敗，
+          // 不明文出手（React 線無阻斷確認 UI——止血姿態，parity 留待切換決策）。
+          const meshChatService = meshTopology.getState().meshChatService;
+          const encrypted = await meshChatService?.encryptForFallback(content);
+          if (!encrypted) {
+            throw new Error('mesh 房間金鑰未就緒，備援不以明文傳送');
+          }
+          await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
         }
         featureLog('chat', 'message_sent', { roomId, channel: 'firestore_fallback' });
       }
@@ -664,12 +689,13 @@ const ChatPage: React.FC = () => {
     setReconnectNonce((n) => n + 1);
   };
 
-  // 指示器邏輯抽出於 useChatIndicators（E2EE 狀態＋Spec 009 協議版本不合）
-  const e2eeMode = useE2eeMode({
+  // 指示器邏輯抽出於 useChatIndicators（E2EE 狀態＋Spec 012 P4 mesh 三態＋Spec 009 版本不合）
+  const { e2eeMode, meshEncryptionState } = useE2eeMode({
     isMesh: architecture.isMesh(),
     starChatService: starTopology.getState().chatService,
     connectionState,
     connectionMode: getConnectionMode(),
+    getMeshEncryptionState: () => meshTopology.getState().meshChatService?.getEncryptionState() ?? null,
   });
   const protocolMismatch = useProtocolMismatch(
     () => meshTopology.getState().meshChatService,
@@ -692,46 +718,7 @@ const ChatPage: React.FC = () => {
             ← 返回
           </button>
           <h2>{roomDisplayName({ roomName, roomId })}</h2>
-          {e2eeMode === 'p2p' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-p2p"
-              role="status"
-              aria-label="端到端加密已啟用"
-              title="訊息以 AES-256-GCM 加密，僅房間成員可解讀。詳見 docs/THREAT_MODEL.md。"
-            >
-              <span aria-hidden="true">🔒</span> 端到端加密
-            </span>
-          )}
-          {e2eeMode === 'fallback' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-fallback"
-              role="status"
-              aria-label="備援模式：訊息仍以端到端金鑰加密，但透過伺服器中繼"
-              title="P2P 未連線；訊息經由 Firestore 中繼，但內容仍以同一把 sender key 加密。"
-            >
-              <span aria-hidden="true">🔓</span> 備援模式（加密傳輸中）
-            </span>
-          )}
-          {e2eeMode === 'exchanging' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-exchanging"
-              role="status"
-              aria-label="端到端加密金鑰交換中"
-              title="正在與對方交換加密金鑰；完成前訊息會暫緩送出，不會以明文傳送。"
-            >
-              <span aria-hidden="true">🔑</span> 金鑰交換中…
-            </span>
-          )}
-          {e2eeMode === 'mesh-dtls' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-dtls"
-              role="status"
-              aria-label="傳輸層加密（非端到端加密）"
-              title="多人房間目前僅有 WebRTC 傳輸層加密（DTLS）；端到端加密尚未支援多人拓撲。"
-            >
-              <span aria-hidden="true">🛡️</span> 傳輸加密（非端到端）
-            </span>
-          )}
+          <E2EEIndicator mode={e2eeMode} meshState={meshEncryptionState} />
         </div>
         <div className="header-right">
           <button
