@@ -267,6 +267,14 @@ export interface GossipMessage {
   senderId: string; // hash(pubKey)
   pubKey: string; // Base64 編碼的公鑰
   seq: number; // 序列號（防止重放）
+  /**
+   * 會話代（Spec 009）：sender 每次進房會話配發一次，本裝置持久單調遞增，
+   * 簽章覆蓋。訊息身分＝(senderId, sessionEpoch, seq)；收端只接受 per-sender
+   * 現行代（低於已知現行代一律拒收），收斂跨會話重放。與 RecordCrypto 的
+   * 房間金鑰 epoch、SenderKeyManager 的 senderKeyEpoch 是三個不同的代，勿混。
+   * legacy（v1 落盤）紀錄以 0 標記，僅供本機、不再對外補送。
+   */
+  sessionEpoch: number;
   timestamp: number;
   content: string;
   ttl: number; // Time To Live（跳數限制）

@@ -25,11 +25,15 @@ export class SecurityManager {
     // ttl 被竄改只影響洪泛半徑，不影響訊息完整性（內容欄位全數有簽）。
     // messageId 是跨傳輸路徑去重的依據，必須簽（否則可竄改造成收端重複顯示）。
     // channel 決定上層分發（chat/game），必須簽（否則可跨通道錯誤分發）。
+    // sessionEpoch 是跨會話重放防護的根基（Spec 009），必須簽（否則舊會話
+    // 訊息可改標新代重放）。序列化順序凍結於 Spec 009 §4.4，v1↔v2 不互通
+    // 屬預期（版本訊號見 GOSSIP_HELLO）。
     const messageData = JSON.stringify({
       roomId: message.roomId,
       senderId: message.senderId,
       pubKey: message.pubKey,
       seq: message.seq,
+      sessionEpoch: message.sessionEpoch,
       timestamp: message.timestamp,
       content: message.content,
       ...(message.messageId !== undefined ? { messageId: message.messageId } : {}),
@@ -92,12 +96,13 @@ export class SecurityManager {
 
       const signature = base64ToArrayBuffer(message.signature);
       
-      // 重新計算訊息 hash（不含 ttl，與 signMessage 對稱；理由見該處註解）
+      // 重新計算訊息 hash（不含 ttl、含 sessionEpoch，與 signMessage 對稱；理由見該處註解）
       const messageData = JSON.stringify({
         roomId: message.roomId,
         senderId: message.senderId,
         pubKey: message.pubKey,
         seq: message.seq,
+        sessionEpoch: message.sessionEpoch,
         timestamp: message.timestamp,
         content: message.content,
         ...(message.messageId !== undefined ? { messageId: message.messageId } : {}),

@@ -4,16 +4,9 @@ import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import type { MeshConnection } from './MeshConnection';
 import { computeDigest, normalizeDigest, peerLacks } from './antiEntropy';
+import type { NormalizedDigest } from './antiEntropy';
 import type { IGossipPersistence } from './GossipPersistence';
-import {
-  encryptRecordContent,
-  decryptRecordContent,
-  isEncryptedContent,
-  contentEpoch,
-} from './RecordCrypto';
-import { openSealedRoomKey } from './RoomKeyDistribution';
-import { base64ToArrayBuffer } from '../../utils/crypto';
-import type { KeyxRecordPayload } from '../../types';
+import { RoomContentKeyRing } from './RoomContentKeys';
 import type { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 
@@ -24,17 +17,30 @@ import { logger } from '../../utils/logger';
 export class GossipMessageHandler {
   private seq = 0;
   /**
-   * 訊息 store：senderId → (seq → 已簽名訊息)。房間會話生命週期。
-   * 同時是去重的正準依據（(senderId, seq) 是訊息身分）與對帳補送的資料源。
+   * 本會話代（Spec 009）：首次發送時惰性配發（persistence.reserveSessionEpoch，
+   * 記憶體模式以 Date.now() 種出），同會話固定、簽進自己的每則訊息。
    */
-  private store: Map<string, Map<number, GossipMessage>> = new Map();
-  /** 每 sender 淘汰後推進的 floor：digest 據此宣告「floor 前的缺口不用回補」 */
-  private floors: Map<string, number> = new Map();
+  private sessionEpoch: number | null = null;
   /**
-   * 驗簽中的 (senderId:seq) 預佔。去重判定必須在任何 await 之前完成，
+   * 分代訊息 store：senderId → sessionEpoch → (seq → 已簽名訊息)。
+   * 去重的正準依據（(senderId, sessionEpoch, seq) 是訊息身分）與對帳補送的資料源。
+   * 只有各 sender 的現行代桶會被宣告與補送；舊代桶於採納新代時剪除（inert 歷史）。
+   */
+  private store: Map<string, Map<number, Map<number, GossipMessage>>> = new Map();
+  /** 分代 floor：senderId → epoch → floor。digest 據此宣告「floor 前的缺口不用回補」 */
+  private floors: Map<string, Map<number, number>> = new Map();
+  /**
+   * per-sender 已驗證現行代（Spec 009 §4.5）：只在「通過驗簽＋身分綁定」的訊息
+   * 上觀察到更高代才推進（不可偽造）。低於現行代的訊息一律完全拒收。
+   */
+  private acceptedEpochs: Map<string, number> = new Map();
+  /**
+   * 驗簽中的 (senderId:epoch:seq) 預佔。去重判定必須在任何 await 之前完成，
    * 否則兩個鄰居同時遞同一則訊息，會在驗簽 await 期間雙雙通過檢查而重複 notify。
    */
   private inflight: Set<string> = new Set();
+  /** 版本不合通知（Spec 009 §4.7）：收到缺 sessionEpoch 的 v1 gossip 訊息＝舊版確證 */
+  private protocolMismatchListeners: Set<(fromNeighbor: string) => void> = new Set();
   private sendRateLimiter: Map<string, number[]> = new Map();
   private messageListeners: Set<(message: GossipMessage) => void> = new Set();
   private readonly MAX_MESSAGES_PER_SECOND = 10;
@@ -52,77 +58,48 @@ export class GossipMessageHandler {
     private peerScoring: PeerScoring | null = null,
     /** 複本持久化（ADR-0023 P1）；null = 記憶體模式（行為同 P1 之前） */
     private persistence: IGossipPersistence | null = null
-  ) {}
+  ) {
+    this.contentKeys = new RoomContentKeyRing(roomId, userId);
+  }
 
-  // ── 內容金鑰（ADR-0023 P2-②）─────────────────────────────────────────────
-  /**
-   * epoch → 房間內容金鑰 的金鑰環。空 = 尚未就緒 → 收送退明文相容（行為同 P2 之前）。
-   * 保留多個 epoch：加人/移除輪替後，仍能解舊 epoch 的歷史密文（前向保密下的相容補歷史）。
-   */
-  private keyRing: Map<number, CryptoKey> = new Map();
-  /** 目前送出用的 epoch（金鑰環中最高者）；送出一律用最新金鑰。null = 無金鑰。 */
-  private sendEpoch: number | null = null;
-  /**
-   * 本機 ECDH 私鑰（開出封給自己的 keyx）。null = 不參與密文化（無鑰退明文）。
-   * 由 MeshGossipManager 於初始化後注入（IdentityManager.getEcdhPrivateKey）。
-   */
-  private ecdhPrivateKey: CryptoKey | null = null;
+  // ── 內容金鑰（ADR-0023 P2-②；實作在 RoomContentKeys.ts，此處薄委派保持公開 API）──
+  private contentKeys: RoomContentKeyRing;
 
   /**
    * 加入/設定一把房間內容金鑰到金鑰環。key=null 清空整個環（退明文）。
-   * epoch 較高者成為送出用金鑰；解密則按各密文信封的 epoch 選環中對應金鑰。
    * 送出時加密 content（簽章覆蓋密文，盲信使可存可驗不可解）、顯示前解密；
-   * store/轉發/對帳一律保持密文原封。分發協議（keyx 紀錄）見 consumeKeyx / MeshGossipManager。
+   * store/轉發/對帳一律保持密文原封。分發協議（keyx 紀錄）見 RoomContentKeyRing。
    */
   setContentKey(key: CryptoKey | null, epoch = 0): void {
-    if (key === null) {
-      this.keyRing.clear();
-      this.sendEpoch = null;
-      return;
-    }
-    this.keyRing.set(epoch, key);
-    if (this.sendEpoch === null || epoch >= this.sendEpoch) {
-      this.sendEpoch = epoch;
-    }
+    this.contentKeys.setContentKey(key, epoch);
   }
 
   /** 注入本機 ECDH 私鑰，啟用 keyx 消費（開出封給自己的房間金鑰）。 */
   setKeyxPrivateKey(ecdhPrivateKey: CryptoKey | null): void {
-    this.ecdhPrivateKey = ecdhPrivateKey;
+    this.contentKeys.setKeyxPrivateKey(ecdhPrivateKey);
   }
 
-  /** 送出時是否會加密（sendEpoch 已就緒）。false = 目前送出走明文（ADR-0026 R2）。 */
+  /** 送出時是否會加密。false = 目前送出走明文（ADR-0026 R2）。 */
   hasSendKey(): boolean {
-    return this.sendEpoch !== null;
+    return this.contentKeys.hasSendKey();
   }
 
-  /** 金鑰環中已知最高 epoch（-1 = 尚無金鑰）；供產生方交接時 epoch 單調遞增。 */
+  /** 金鑰環中已知最高（房間金鑰）epoch；供產生方交接時單調遞增。 */
   getMaxKnownEpoch(): number {
-    let max = -1;
-    for (const ep of this.keyRing.keys()) if (ep > max) max = ep;
-    return max;
+    return this.contentKeys.getMaxKnownEpoch();
   }
 
   /**
    * 用目前送出金鑰把明文加成 RecordCrypto 信封字串，供 Firestore 備援層使用
-   * （ADR-0023 P2-③：mesh 房備援不再明文）。無金鑰回 null——呼叫端據此「不送」，
-   * 而非退明文洩漏（等 keyx 就緒或靠 anti-entropy 補，不走明文橋接）。
+   * （ADR-0023 P2-③）。無金鑰回 null——呼叫端據此「不送」，而非退明文洩漏。
    */
   async encryptForFallback(plaintext: string): Promise<string | null> {
-    const key = this.sendEpoch !== null ? this.keyRing.get(this.sendEpoch) : undefined;
-    if (!key || this.sendEpoch === null) return null;
-    return encryptRecordContent(plaintext, key, this.sendEpoch);
+    return this.contentKeys.encryptOutgoing(plaintext);
   }
 
-  /**
-   * 解 Firestore 備援層的 RecordCrypto 信封字串 → 明文，按信封 epoch 選環中金鑰。
-   * 無對應 epoch 金鑰（未在籍/未補齊）→ 拋錯，呼叫端顯示佔位（同 store 路徑語義）。
-   */
+  /** 解 Firestore 備援層的 RecordCrypto 信封字串 → 明文。無鑰拋錯，呼叫端顯示佔位。 */
   async decryptForFallback(envelope: string): Promise<string> {
-    const ep = contentEpoch(envelope);
-    const key = ep !== null ? this.keyRing.get(ep) : undefined;
-    if (!key) throw new Error('no room key for fallback decrypt');
-    return decryptRecordContent(envelope, key);
+    return this.contentKeys.decryptEnvelope(envelope);
   }
 
   /**
@@ -132,9 +109,14 @@ export class GossipMessageHandler {
   async hydrate(): Promise<void> {
     if (!this.persistence) return;
     try {
-      const { records, floors } = await this.persistence.loadRoom(this.roomId);
-      for (const { senderId, floor } of floors) {
-        this.floors.set(senderId, floor);
+      const { records, floors, acceptedEpochs } = await this.persistence.loadRoom(this.roomId);
+      for (const { senderId, epoch, floor } of floors) {
+        let byEpoch = this.floors.get(senderId);
+        if (!byEpoch) this.floors.set(senderId, (byEpoch = new Map()));
+        byEpoch.set(epoch, floor);
+      }
+      for (const { senderId, epoch } of acceptedEpochs) {
+        if (Number.isSafeInteger(epoch) && epoch >= 1) this.acceptedEpochs.set(senderId, epoch);
       }
       let loaded = 0;
       for (const msg of records) {
@@ -142,21 +124,87 @@ export class GossipMessageHandler {
           typeof msg?.senderId !== 'string' || msg.senderId.length === 0 ||
           typeof msg?.seq !== 'number' || !Number.isInteger(msg.seq) || msg.seq < 1
         ) continue;
-        if (msg.seq < (this.floors.get(msg.senderId) ?? 1)) continue;
+        // legacy（v1 落盤、無 sessionEpoch）→ 0 代桶：僅本機保留，永不宣告/補送（Spec 009 §4.8）
+        const epoch = this.epochOf(msg);
+        if (msg.seq < (this.floors.get(msg.senderId)?.get(epoch) ?? 1)) continue;
         this.storePut(msg, /* persist */ false); // 來自持久層，不回寫
         loaded++;
       }
       // 自己的 seq 水位以 reserveSeq 為真相；此處僅對齊記憶體值供無持久化路徑参考
       const own = this.store.get(this.userId);
-      if (own) for (const s of own.keys()) if (s > this.seq) this.seq = s;
+      if (own) {
+        for (const seqs of own.values()) {
+          for (const s of seqs.keys()) if (s > this.seq) this.seq = s;
+        }
+      }
       logger.info('[GossipMessageHandler] hydrated from replica', {
         roomId: this.roomId, records: loaded, floors: this.floors.size,
+        acceptedEpochs: this.acceptedEpochs.size,
       });
     } catch (err) {
       logger.warn('[GossipMessageHandler] hydrate failed — memory-only mode', {
         roomId: this.roomId, err,
       });
     }
+  }
+
+  /** 訊息的分代桶：合法 sessionEpoch（safe integer ≥1）即該代，否則 0（legacy） */
+  private epochOf(message: GossipMessage): number {
+    return Number.isSafeInteger(message.sessionEpoch) && message.sessionEpoch >= 1
+      ? message.sessionEpoch
+      : 0;
+  }
+
+  /**
+   * 確保本會話代已配發（Spec 009 §4.4，比照 reserveSeq 的 reserve-then-send）。
+   * 每會話一次；記憶體模式與持久失敗退 Date.now()（時鐘下限保證跨重載單調）。
+   */
+  private async ensureSessionEpoch(): Promise<number> {
+    if (this.sessionEpoch !== null) return this.sessionEpoch;
+    let reserved: number;
+    if (this.persistence) {
+      try {
+        reserved = await this.persistence.reserveSessionEpoch(this.roomId, this.userId);
+      } catch (err) {
+        logger.warn('[GossipMessageHandler] reserveSessionEpoch failed, falling back to Date.now()', {
+          roomId: this.roomId, errName: (err as Error)?.name,
+        });
+        reserved = Date.now();
+      }
+    } else {
+      reserved = Date.now();
+    }
+    // 防禦：hydrate 到的自身現行代不可能高於新配發代（配發取 max(persisted, now)），
+    // 但若持久層異常仍要維持單調——自己的新代必須嚴格高於任何已知舊代。
+    const prev = this.acceptedEpochs.get(this.userId) ?? 0;
+    this.sessionEpoch = reserved > prev ? reserved : prev + 1;
+    // 自己的現行代與收端語義一致（＝最後實際簽出的代），持久化讓重載後、尚未在
+    // 新會話發言前，上一會話的自簽紀錄仍可補他人；一旦新會話發言即換代剪除。
+    this.adoptEpoch(this.userId, this.sessionEpoch);
+    return this.sessionEpoch;
+  }
+
+  /**
+   * 監聽協議版本不合證據（Spec 009 §4.7）：收到缺 sessionEpoch 的 gossip 訊息
+   * ＝對端為 v1 舊版的確證。上層據此提示「請雙方更新」，不靜默降級。
+   */
+  onProtocolMismatch(listener: (fromNeighbor: string) => void): () => void {
+    this.protocolMismatchListeners.add(listener);
+    return () => {
+      this.protocolMismatchListeners.delete(listener);
+    };
+  }
+
+  private notifyProtocolMismatch(fromNeighbor: string): void {
+    this.protocolMismatchListeners.forEach((listener) => {
+      try {
+        listener(fromNeighbor);
+      } catch (error) {
+        logger.error('[GossipMessageHandler] Error in protocol mismatch listener', {
+          roomId: this.roomId, error,
+        });
+      }
+    });
   }
 
   /**
@@ -173,6 +221,9 @@ export class GossipMessageHandler {
     if (!this.checkSendRate(this.userId, channel ?? 'chat')) {
       throw new Error('Rate limit exceeded');
     }
+
+    // 本會話代（Spec 009）：首次發送時配發，之後同會話固定
+    const sessionEpoch = await this.ensureSessionEpoch();
 
     // reserve-then-send（ADR-0023 P1）：先在持久層原子保留 seq 再送。
     // 重載/重進後 seq 續增永不重用 → 不會與對方複本的舊 seq 碰撞被當重複丟棄。
@@ -199,10 +250,10 @@ export class GossipMessageHandler {
     // keyx 通道例外：其 content 本身就是（成對 ECDH 封裝的）金鑰分發紀錄，
     // 不可用房間金鑰再加密（否則要有房間金鑰才能讀房間金鑰，循環）。
     let wireContent = content;
-    const sendKey = this.sendEpoch !== null ? this.keyRing.get(this.sendEpoch) : undefined;
-    if (channel !== 'keyx' && sendKey) {
+    if (channel !== 'keyx' && this.contentKeys.hasSendKey()) {
+      let encrypted: string | null = null;
       try {
-        wireContent = await encryptRecordContent(content, sendKey, this.sendEpoch!);
+        encrypted = await this.contentKeys.encryptOutgoing(content);
       } catch (err) {
         // 加密失敗不得默默送明文（會洩漏）——直接拋，讓上層標記傳送失敗
         logger.error('[GossipMessageHandler] content encryption failed', {
@@ -210,6 +261,8 @@ export class GossipMessageHandler {
         });
         throw new Error('content encryption failed');
       }
+      if (encrypted === null) throw new Error('content encryption failed');
+      wireContent = encrypted;
     }
 
     // 建立訊息（channel 缺省 = 'chat'；游戲事件帶 'game'，同管線同保證）
@@ -218,6 +271,7 @@ export class GossipMessageHandler {
       senderId: this.userId,
       pubKey: await this.identityManager.exportPublicKey(),
       seq: this.seq,
+      sessionEpoch,
       // 呼叫端可帶入 timestamp，讓寄件端本機回音與線上複本共用同一時戳（已讀水位跨端比對需
       // 同一 orderKey；否則本機另取 Date.now() 會與線上值分歧）。未帶則自取。
       timestamp: timestamp ?? Date.now(),
@@ -295,6 +349,18 @@ export class GossipMessageHandler {
     ) {
       return;
     }
+    // sessionEpoch 形狀（Spec 009 §4.3）：缺欄位或非法一律整則拒收——缺欄位且其餘
+    // 形狀完好＝v1 舊版節點的確證，通知版本不合（fail-visible，不靜默分裂）。
+    if (!Number.isSafeInteger(message.sessionEpoch) || message.sessionEpoch < 1) {
+      logger.warn('[GossipMessageHandler] Missing/invalid sessionEpoch — legacy peer?', {
+        roomId: this.roomId,
+        senderId: message.senderId,
+        seq: message.seq,
+        from: fromNeighbor,
+      });
+      this.notifyProtocolMismatch(fromNeighbor);
+      return;
+    }
     if (typeof message.ttl !== 'number' || !Number.isFinite(message.ttl)) {
       logger.warn('[GossipMessageHandler] Invalid TTL type', {
         roomId: this.roomId,
@@ -304,16 +370,29 @@ export class GossipMessageHandler {
       return;
     }
 
-    // (senderId, seq) 同步去重 + 預佔（必須在任何 await 之前，見 inflight 註解）。
-    // 舊實作在此拒收「seq <= 上次見過」的訊息，把 anti-entropy 補送的較早訊息
-    // 當重放丟掉，造成永久遺失——真正的重放是「同 (senderId, seq) 已在 store」。
-    const key = `${message.senderId}:${message.seq}`;
-    if (this.hasMessage(message.senderId, message.seq) || this.inflight.has(key)) {
+    // 現行代門檻（Spec 009 §4.5，Q6 口徑）：低於已知現行代的訊息＝舊會話重放，
+    // 完全拒收（不入 store、不上 UI、不轉發）。簽章本身合法，故計 duplicate
+    // 而非 invalid——計 invalid 會讓攻擊者藉重放他人合法訊息毒化無辜轉發者信譽。
+    const accepted = this.acceptedEpochs.get(message.senderId);
+    if (accepted !== undefined && message.sessionEpoch < accepted) {
+      this.peerScoring?.recordDuplicate(fromNeighbor);
+      return;
+    }
+
+    // (senderId, epoch, seq) 同步去重 + 預佔（必須在任何 await 之前，見 inflight 註解）。
+    // 去重鍵分代（Spec 009）：舊代的 (seq) 不可能佔住新代同 seq 的槽位。
+    // 亂序較早 seq（同代 anti-entropy 補送）仍照常接受——真正的重複是
+    // 「同 (senderId, epoch, seq) 已在 store」。
+    const key = `${message.senderId}:${message.sessionEpoch}:${message.seq}`;
+    if (
+      this.hasMessage(message.senderId, message.sessionEpoch, message.seq) ||
+      this.inflight.has(key)
+    ) {
       this.peerScoring?.recordDuplicate(fromNeighbor);
       return; // 已處理過
     }
-    // floor 前的區間已淘汰，不再收
-    if (message.seq < (this.floors.get(message.senderId) ?? 1)) {
+    // 該代 floor 前的區間已淘汰，不再收
+    if (message.seq < (this.floors.get(message.senderId)?.get(message.sessionEpoch) ?? 1)) {
       return;
     }
 
@@ -353,6 +432,17 @@ export class GossipMessageHandler {
         }
       }
 
+      // 採納現行代（Spec 009 §4.5）：只有通過驗簽＋身分綁定的更高代才推進——
+      // 攻擊者無 sender 私鑰即無法推高任何 sender 的代。
+      const acceptedNow = this.acceptedEpochs.get(message.senderId);
+      if (acceptedNow === undefined || message.sessionEpoch > acceptedNow) {
+        this.adoptEpoch(message.senderId, message.sessionEpoch);
+      } else if (message.sessionEpoch < acceptedNow) {
+        // 驗簽 await 期間另一則訊息已推進現行代 → 本則已成舊代，拒收
+        this.peerScoring?.recordDuplicate(fromNeighbor);
+        return;
+      }
+
       // 入 store（此後 digest 會向鄰居宣告持有，缺的 peer 能從我這補到）
       this.storePut(message);
 
@@ -371,12 +461,12 @@ export class GossipMessageHandler {
       // 自己的房間金鑰 → 加入金鑰環）。它照樣入 store／轉發／對帳（key-as-record：
       // 遲入/重進/盲信使靠同一套補齊），故消費與轉發並存、僅「不顯示」。
       if (message.channel === 'keyx') {
-        await this.consumeKeyx(message);
+        await this.contentKeys.consumeKeyx(message);
       } else {
         // 顯示訊息。注意：顯示不受 ttl 限制——ttl 只限制主動洪泛半徑，
         // 訊息既已到達（含 anti-entropy 補送），對使用者就必須恰好一次呈現。
         // 密文化（P2-②）：僅「顯示副本」解密；store/轉發/對帳沿用密文原封（盲信使相容）。
-        this.notifyMessageListeners(await this.toDisplayMessage(message));
+        this.notifyMessageListeners(await this.contentKeys.toDisplayMessage(message));
       }
 
       // 轉發（建立副本以避免修改傳入物件）；ttl 耗盡則不轉發，缺口由對帳補
@@ -389,22 +479,59 @@ export class GossipMessageHandler {
     }
   }
 
-  /** 是否已持有 (senderId, seq) */
-  private hasMessage(senderId: string, seq: number): boolean {
-    return this.store.get(senderId)?.has(seq) ?? false;
+  /** 是否已持有 (senderId, sessionEpoch, seq) */
+  private hasMessage(senderId: string, sessionEpoch: number, seq: number): boolean {
+    return this.store.get(senderId)?.get(sessionEpoch)?.has(seq) ?? false;
   }
 
   /**
-   * 寫入 store；超過每 sender 上限時淘汰最舊 seq 並推進 floor。
+   * 採納某 sender 的新現行代（Spec 009 §4.5）：推進 acceptedEpoch（持久 best-effort）、
+   * 剪除記憶體中該 sender 的舊代桶與 floors（inert 歷史：不再宣告、不再補送；
+   * 持久層保留，聊天顯示歷史本就存應用層 chatStorage，不受影響）。
+   */
+  private adoptEpoch(senderId: string, epoch: number): void {
+    this.acceptedEpochs.set(senderId, epoch);
+    const epochs = this.store.get(senderId);
+    if (epochs) {
+      for (const ep of [...epochs.keys()]) {
+        if (ep < epoch) epochs.delete(ep);
+      }
+    }
+    const byEpoch = this.floors.get(senderId);
+    if (byEpoch) {
+      for (const ep of [...byEpoch.keys()]) {
+        if (ep < epoch) byEpoch.delete(ep);
+      }
+    }
+    if (this.persistence) {
+      void this.persistence.saveAcceptedEpoch(this.roomId, senderId, epoch).catch((err) => {
+        logger.warn('[GossipMessageHandler] saveAcceptedEpoch failed', {
+          roomId: this.roomId, err,
+        });
+      });
+    }
+    logger.info('[GossipMessageHandler] session epoch adopted', {
+      roomId: this.roomId, senderId, epoch,
+    });
+  }
+
+  /**
+   * 寫入分代 store；該代桶超過每 sender 上限時淘汰最舊 seq 並推進該代 floor。
    * @param persist 寫入持久複本（hydrate 回灌時傳 false 避免無謂回寫）。
    *   持久寫入為非阻塞 best-effort：最壞情況重載後缺一筆「已顯示」紀錄，
    *   由任一持有的成員經對帳補回（複本互補正是本架構的保證）。
    */
   private storePut(message: GossipMessage, persist = true): void {
-    let seqs = this.store.get(message.senderId);
+    const epoch = this.epochOf(message);
+    let epochs = this.store.get(message.senderId);
+    if (!epochs) {
+      epochs = new Map();
+      this.store.set(message.senderId, epochs);
+    }
+    let seqs = epochs.get(epoch);
     if (!seqs) {
       seqs = new Map();
-      this.store.set(message.senderId, seqs);
+      epochs.set(epoch, seqs);
     }
     if (seqs.has(message.seq)) return;
     seqs.set(message.seq, message);
@@ -421,12 +548,14 @@ export class GossipMessageHandler {
         if (s < oldest) oldest = s;
       }
       seqs.delete(oldest);
-      const floor = this.floors.get(message.senderId) ?? 1;
+      let byEpoch = this.floors.get(message.senderId);
+      if (!byEpoch) this.floors.set(message.senderId, (byEpoch = new Map()));
+      const floor = byEpoch.get(epoch) ?? 1;
       const newFloor = Math.max(floor, oldest + 1);
-      this.floors.set(message.senderId, newFloor);
+      byEpoch.set(epoch, newFloor);
       if (this.persistence) {
         void this.persistence
-          .evictRecord(this.roomId, message.senderId, oldest, newFloor)
+          .evictRecord(this.roomId, message.senderId, epoch, oldest, newFloor)
           .catch((err) => {
             logger.warn('[GossipMessageHandler] evictRecord failed', { roomId: this.roomId, err });
           });
@@ -440,8 +569,11 @@ export class GossipMessageHandler {
    */
   async sendDigestTo(neighbor: MeshConnection): Promise<void> {
     if (this.store.size === 0) return; // 沒東西可宣告
+    // 只宣告各 sender 已驗證現行代的持有（Spec 009 §4.6）；僅持 legacy 0 代者不宣告
+    const digest = computeDigest(this.store, this.floors, this.acceptedEpochs);
+    if (Object.keys(digest).length === 0) return;
     try {
-      await neighbor.sendDigest(computeDigest(this.store, this.floors));
+      await neighbor.sendDigest(digest);
     } catch (error) {
       logger.warn('[GossipMessageHandler] Failed to send digest', {
         roomId: this.roomId,
@@ -456,7 +588,7 @@ export class GossipMessageHandler {
    * 補送的是原始已簽名訊息，收端走一般 handleReceivedMessage（驗簽 + 去重 + 顯示）。
    */
   async handleDigest(rawDigest: unknown, neighbor: MeshConnection): Promise<void> {
-    const digest = normalizeDigest(rawDigest);
+    const digest: NormalizedDigest | null = normalizeDigest(rawDigest);
     if (!digest) {
       logger.warn('[GossipMessageHandler] Malformed digest ignored', {
         roomId: this.roomId,
@@ -465,10 +597,13 @@ export class GossipMessageHandler {
       return;
     }
 
+    // 只從各 sender 的現行代桶補送（Spec 009 §4.6）：舊代/legacy 送了必被拒，不送
     const fills: GossipMessage[] = [];
-    outer: for (const [senderId, seqs] of this.store) {
+    outer: for (const [senderId, epoch] of this.acceptedEpochs) {
+      const seqs = this.store.get(senderId)?.get(epoch);
+      if (!seqs) continue;
       for (const [seq, msg] of seqs) {
-        if (peerLacks(digest, senderId, seq)) {
+        if (peerLacks(digest, senderId, epoch, seq)) {
           fills.push(msg);
           if (fills.length >= this.MAX_FILL_PER_ROUND) break outer;
         }
@@ -570,78 +705,6 @@ export class GossipMessageHandler {
     return () => {
       this.messageListeners.delete(listener);
     };
-  }
-
-  /**
-   * 通知監聽器
-   */
-  /**
-   * 產生「顯示用副本」：content 是密文且持有對應金鑰 → 解密副本；明文 → 原封；
-   * 密文但無金鑰（尚未補齊 keyx）→ 佔位字串誠實呈現（如同備援解不開的路徑）。
-   * 不修改傳入物件——store/轉發/對帳要的是密文原封。
-   */
-  private async toDisplayMessage(message: GossipMessage): Promise<GossipMessage> {
-    if (!isEncryptedContent(message.content)) return message; // 明文相容路徑
-    // 按信封 epoch 從金鑰環選鑰（加人/移除輪替後仍能解舊 epoch 歷史密文）
-    const ep = contentEpoch(message.content);
-    const key = ep !== null ? this.keyRing.get(ep) : undefined;
-    if (!key) {
-      return { ...message, content: '[🔒 訊息已加密，尚未取得金鑰]' };
-    }
-    try {
-      const plain = await decryptRecordContent(message.content, key);
-      return { ...message, content: plain };
-    } catch (err) {
-      logger.warn('[GossipMessageHandler] decrypt for display failed', {
-        roomId: this.roomId, senderId: message.senderId, seq: message.seq, err,
-      });
-      return { ...message, content: '[🔒 無法解密此訊息]' };
-    }
-  }
-
-  /**
-   * 消費 keyx 紀錄（ADR-0023 P2-②c）：找出封給自己（forMember == 本機 userId）的那份，
-   * 以本機 ECDH 私鑰 + 紀錄內嵌的 producerEcdh 開出房間金鑰 → 加入金鑰環（該 epoch）。
-   *
-   * 已在 handleReceivedMessage 通過簽章驗證（producerEcdh 隨簽章一併驗真）才進來。
-   * 無 ECDH 私鑰（不參與密文化）、非封給自己、或開鑰失敗 → 靜默略過（無鑰退明文相容）。
-   */
-  private async consumeKeyx(message: GossipMessage): Promise<void> {
-    if (!this.ecdhPrivateKey) return; // 不參與密文化
-    let payload: KeyxRecordPayload;
-    try {
-      payload = JSON.parse(message.content) as KeyxRecordPayload;
-    } catch {
-      return; // 畸形 keyx，忽略
-    }
-    if (payload?.v !== 'keyx1' || typeof payload.producerEcdh !== 'string' || !Array.isArray(payload.keys)) {
-      return;
-    }
-    const mine = payload.keys.find((k) => k?.forMember === this.userId);
-    if (!mine) return; // 沒有封給我的份（例如我加入前的舊 epoch keyx）
-
-    try {
-      const producerEcdh = await crypto.subtle.importKey(
-        'spki',
-        base64ToArrayBuffer(payload.producerEcdh),
-        { name: 'ECDH', namedCurve: 'P-256' },
-        true,
-        []
-      );
-      const roomKey = await openSealedRoomKey(
-        { forMember: mine.forMember, epoch: mine.epoch, enc: mine.enc, iv: mine.iv },
-        this.ecdhPrivateKey,
-        producerEcdh
-      );
-      this.setContentKey(roomKey, mine.epoch);
-      logger.info('[GossipMessageHandler] keyx consumed — room key installed', {
-        roomId: this.roomId, epoch: mine.epoch, from: message.senderId,
-      });
-    } catch (err) {
-      logger.warn('[GossipMessageHandler] keyx open failed', {
-        roomId: this.roomId, epoch: mine.epoch, err,
-      });
-    }
   }
 
   private notifyMessageListeners(message: GossipMessage): void {
