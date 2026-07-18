@@ -15,7 +15,7 @@
 
 | 層級 | 2026-07-18 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；133 test files／1490 tests 全綠（既有 7 warnings） |
+| Core quality | TypeScript、ESLint gate 通過；134 test files／1498 tests 全綠（既有 7 warnings） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
@@ -30,8 +30,10 @@
 - partial mesh（7-20 人檔）已接線（Spec 011／ADR-0033，2026-07-18）：第 7 人起
   k=max(3,⌈√n⌉)、fanout 3、ttl 3，拓撲只升不降；房間容量分層 Free 5／Pro 10
   （maxParticipants 欄位＋rules token.plan 驗證）。證據分層：n=7..10 確定性模擬
-  1100 組 seed（含 churn＋晚到者）全收斂；7 人 E2E 矩陣（未入 @vue-stable，
-  觀察累積中）；super-node（>20）維持凍結。
+  1100 組 seed（含 churn＋晚到者）全收斂；7 人 E2E spec 已落地（未入 @vue-stable），
+  單機高負載下已實證 7 頁全數切 partial-mesh 與 Pro 容量 rules，惟恰好一次矩陣
+  因 WebRTC 遭 CPU 排擠尚未穩定轉綠——殘留與重跑指引見 Spec 011 V1；
+  super-node（>20）維持凍結。
 - SDK 已抽出公開入口、quickstart 與 minimal example，且不會從 eager import 偷帶 Firebase。
 - `game/`、`community/` 與部分 relay/transport 能力仍有「已測但未完整接入產品流」的模組；不可把單元測試等同 production 接線。
 
