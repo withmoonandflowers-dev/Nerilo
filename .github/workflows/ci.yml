@@ -75,7 +75,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: web-vue/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            web-vue/package-lock.json
+
+      # nuxt typecheck 涵蓋複用的根層 ../src（firebase/uuid 等型別在根層 node_modules），
+      # 根層依賴不裝會整片 TS2307/TS7006。
+      - name: Install root dependencies (shared ../src types)
+        run: npm ci
 
       - name: Install Vue dependencies
         run: npm ci --prefix web-vue
