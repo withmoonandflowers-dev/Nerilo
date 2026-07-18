@@ -33,6 +33,14 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # 根層單元測試橫跨 web-vue 原始碼，需先備妥子包環境（同 ci.yml Quality Gate）。
+      - name: Install Vue dependencies (root unit tests span web-vue)
+        run: npm ci --prefix web-vue
+
+      - name: Prepare Nuxt types
+        run: npx nuxt prepare
+        working-directory: web-vue
+
       - name: Unit tests
         run: npm run test:run
 

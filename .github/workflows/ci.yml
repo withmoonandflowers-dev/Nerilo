@@ -43,6 +43,15 @@ jobs:
         continue-on-error: true
         # 若希望嚴格擋下：改為 continue-on-error: false
 
+      # 根層單元測試橫跨 web-vue 原始碼（useMeshHealth 取 web-vue/node_modules/vue、
+      # gameRoomFlag 的 tsconfig 由 nuxt prepare 產生），需先備妥子包環境。
+      - name: Install Vue dependencies (root unit tests span web-vue)
+        run: npm ci --prefix web-vue
+
+      - name: Prepare Nuxt types
+        run: npx nuxt prepare
+        working-directory: web-vue
+
       - name: Unit tests
         run: npm run test:run
 
