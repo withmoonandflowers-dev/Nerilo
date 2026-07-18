@@ -112,7 +112,7 @@
     "@vitejs/plugin-react": "^4.2.1",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^8.55.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.4.5",
     "fast-check": "^3.23.2",
     "firebase-tools": "^15.18.0",
