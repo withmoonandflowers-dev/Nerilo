@@ -20,6 +20,7 @@ import { arrayBufferToBase64 } from '../../utils/crypto';
 import { RoomAdvertCache, buildRoomAdvert, type RoomAdvert } from '../relay/RoomDirectoryGossip';
 import { wireRoomDirectoryOnConnection } from './roomDirectoryWiring';
 import type { EncryptionState } from '../../types';
+import { deriveEncryptionState } from '../transport/securityLabel';
 
 /**
  * Mesh Gossip 管理器
@@ -41,6 +42,16 @@ export class MeshGossipManager {
   private keyxInterval: ReturnType<typeof setInterval> | null = null;
   /** keyx 評估週期：稍慢於鄰居掃描，且用快取讀名冊，省 Firestore server 讀 */
   private static readonly KEYX_TICK_MS = 4000;
+  /**
+   * 交換逾時（Spec 012 Q2）：keyx 協調啟動後逾此仍無送出金鑰 → 衍生狀態轉 'plaintext'
+   * （fail-visible：送訊改走阻斷式確認）。取 60s 的理由：健康房 keyx 於 10 秒內完成
+   * （tick 4s＋穩定窗 1 tick＋gossip 傳播）；與 mesh-diagnostic 現行 60s 拓撲等待同級，
+   * CI 慢環境不誤觸；DoS 窗上限 1 分鐘，期間指示器誠實顯示 🔑 且訊息一律暫扣不外洩。
+   * 金鑰遲到則衍生值自動回 encrypted（可恢復）。
+   */
+  private static readonly KEYX_EXCHANGE_TIMEOUT_MS = 60_000;
+  /** keyx 協調啟動時刻（逾時計算基準）；null = 尚未啟動 */
+  private keyxStartedAt: number | null = null;
   /**
    * 暫態信號（typing）監聽器。走 ns:'presence' lossy 通道，不進 gossip 日誌/對帳。
    * 對齊星型 ChatService.onTyping 的 {userId,isTyping} 契約，讓 UI 兩路可共用。
@@ -495,6 +506,7 @@ export class MeshGossipManager {
    */
   private startKeyxCoordination(): void {
     if (!this.keyCoordinator) return; // ECDH 不可用 → 房間維持明文相容
+    this.keyxStartedAt = Date.now(); // 交換逾時計算基準（Spec 012 Q2）
     // 立即先跑一次（縮短形成期到密文化的空窗），再進週期
     void this.keyCoordinator.tick();
     this.keyxInterval = setInterval(() => {
@@ -602,15 +614,41 @@ export class MeshGossipManager {
   }
 
   /**
-   * 加密狀態（ADR-0026 R2 明文降級 fail-visible）：
+   * 加密狀態（ADR-0026 R2 fail-visible；Spec 012 改由 securityLabel.deriveEncryptionState 衍生）：
    *  - 未初始化 → 'exchanging'（未知，不誤報明文）
    *  - keyCoordinator=null（ECDH 不可用）→ 'plaintext'（真降級，房間永久無法加密）
-   *  - sendEpoch 就緒 → 'encrypted'；否則 keyx 進行中 → 'exchanging'
+   *  - sendEpoch 就緒 → 'encrypted'
+   *  - 交換逾時（KEYX_EXCHANGE_TIMEOUT_MS）仍未就緒 → 'plaintext'（fail-visible 升級；可恢復）
+   *  - 其餘 → 'exchanging'
    */
   getEncryptionState(): EncryptionState {
-    if (!this.initialized) return 'exchanging';
-    if (!this.keyCoordinator) return 'plaintext';
-    return this.messageHandler?.hasSendKey() ? 'encrypted' : 'exchanging';
+    const coordinatorActive = this.keyCoordinator !== null;
+    return deriveEncryptionState({
+      initialized: this.initialized,
+      coordinatorActive,
+      // 短路序與衍生前語義一致：無協調器（plaintext 分支）不觸 messageHandler
+      roomKeyReady: coordinatorActive && (this.messageHandler?.hasSendKey?.() ?? false),
+      exchangeTimedOut:
+        this.keyxStartedAt !== null &&
+        Date.now() - this.keyxStartedAt > MeshGossipManager.KEYX_EXCHANGE_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * 等待送出金鑰就緒（Spec 012 Q2 送出閘的 hold 原語）。輪詢 hasSendKey（250ms），
+   * 零 GossipMessageHandler 改動。至多等到「keyx 協調啟動＋交換逾時」的絕對線；
+   * 協調未啟動（或已逾時）則立即回傳現況。
+   * @returns true = 金鑰就緒可密文送出；false = 逾時仍無鑰（呼叫端走 fail-visible）
+   */
+  async waitForSendKey(): Promise<boolean> {
+    const POLL_MS = 250;
+    for (;;) {
+      if (this.messageHandler?.hasSendKey()) return true;
+      if (this.keyxStartedAt === null) return false; // 協調未啟動：無可等
+      const deadline = this.keyxStartedAt + MeshGossipManager.KEYX_EXCHANGE_TIMEOUT_MS;
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, Math.min(POLL_MS, deadline - Date.now())));
+    }
   }
 
   /** 本機 mesh userId（hash pubKey）；未初始化時為 null。gossip senderId 用此。 */
