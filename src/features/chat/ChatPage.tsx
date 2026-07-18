@@ -397,8 +397,15 @@ const ChatPage: React.FC = () => {
     if (!roomId || !user || !hasJoinedRoom) return;
     const unsubscribe = subscribeToFirestoreMessages(roomId, addMessage, {
       localUid: user.uid,
-      // 到訊當下再解析 chatService，金鑰交換完成後即可解密
+      // 到訊當下再解析服務；依拓撲分流（Spec 012 P4：mesh 房備援已密文化，解密走房間金鑰）
       decrypt: (payload, senderId) => {
+        if (architecture.isMesh()) {
+          const meshChatService = meshTopology.getState().meshChatService;
+          if (!meshChatService) {
+            return Promise.reject(new Error('MeshChatService not ready'));
+          }
+          return meshChatService.decryptFromFallback(payload, senderId);
+        }
         const chatService = starTopology.getState().chatService;
         if (!chatService) {
           return Promise.reject(new Error('ChatService not ready'));
@@ -407,7 +414,7 @@ const ChatPage: React.FC = () => {
       },
     });
     return () => unsubscribe();
-  }, [roomId, user, addMessage, hasJoinedRoom, starTopology]);
+  }, [roomId, user, addMessage, hasJoinedRoom, starTopology, meshTopology, architecture]);
 
   // Scroll detection: track if user is near bottom
   const handleScroll = useCallback(() => {
@@ -479,11 +486,19 @@ const ChatPage: React.FC = () => {
           // 備援讓掉隊者收到；mesh 成員收到兩份同 id 由 useChatMessages 去重
           // → 仍恰好一次。人數以「房間文件」為真相來源（join 即入列），
           // 不用 mesh 鄰居發現數（對方 mesh init 卡住時會少算）。
-          const coverage = meshTopology.getState().meshChatService?.getMeshCoverage();
+          const meshChatService = meshTopology.getState().meshChatService;
+          const coverage = meshChatService?.getMeshCoverage();
           const expectedPeers = participantCountRef.current - 1;
           if (coverage && expectedPeers > 0 && coverage.connected < expectedPeers) {
-            await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
-            featureLog('chat', 'message_sent', { roomId, channel: 'firestore_bridge' });
+            // Spec 012 P4 止血：橋接一律房間金鑰密文；無金鑰不送明文
+            // （掉隊者由 mesh anti-entropy 補齊），不再明文洩漏到 Firestore。
+            const encrypted = await meshChatService?.encryptForFallback(content);
+            if (encrypted) {
+              await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
+              featureLog('chat', 'message_sent', { roomId, channel: 'firestore_bridge' });
+            } else {
+              featureLog('chat', 'fallback_skipped_no_key', { roomId });
+            }
           }
         } else if (architecture.isStar()) {
           await starTopology.sendMessage(content, tempId);
@@ -504,8 +519,14 @@ const ChatPage: React.FC = () => {
           const encrypted = await chatService.encryptForFallback(content);
           await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
         } else {
-          // mesh 房間尚未支援 E2EE（誠實標示於 UI），備援維持明文
-          await sendMessageViaFirestore(roomId, user.uid, { content }, tempId);
+          // Spec 012 P4 止血：mesh 房備援一律密文；無金鑰（或服務未起）即標失敗，
+          // 不明文出手（React 線無阻斷確認 UI——止血姿態，parity 留待切換決策）。
+          const meshChatService = meshTopology.getState().meshChatService;
+          const encrypted = await meshChatService?.encryptForFallback(content);
+          if (!encrypted) {
+            throw new Error('mesh 房間金鑰未就緒，備援不以明文傳送');
+          }
+          await sendMessageViaFirestore(roomId, user.uid, { encrypted }, tempId);
         }
         featureLog('chat', 'message_sent', { roomId, channel: 'firestore_fallback' });
       }
@@ -663,8 +684,9 @@ const ChatPage: React.FC = () => {
     setReconnectNonce((n) => n + 1);
   };
 
-  // E2EE 狀態指示（ADR-0004 決策 4）：真值來源是 ChatService 的實際金鑰狀態，
-  // 不是連線狀態。mesh 房間尚未支援 E2EE，誠實標示為傳輸層加密。
+  // E2EE 狀態指示（ADR-0004 決策 4）：真值來源是服務的實際金鑰狀態，不是連線狀態。
+  // mesh 房自 ADR-0023 P2 起有房間金鑰 E2EE；文案依 getEncryptionState 三態真值
+  // （Spec 012 P4 止血：撤下過時的「尚未支援多人拓撲」宣稱；class 名保留當測試鉤）。
   const e2eeMode: 'p2p' | 'fallback' | 'exchanging' | 'mesh-dtls' | null = (() => {
     if (architecture.isMesh()) return 'mesh-dtls';
     const chatService = starTopology.getState().chatService;
@@ -678,13 +700,19 @@ const ChatPage: React.FC = () => {
     return null;
   })();
 
+  // mesh 房加密真值（Spec 012 P4）：encrypted／exchanging／plaintext；服務未起時顯示交換中
+  const meshEncryptionState =
+    e2eeMode === 'mesh-dtls'
+      ? (meshTopology.getState().meshChatService?.getEncryptionState() ?? 'exchanging')
+      : null;
+
   // 金鑰交換完成的瞬間沒有 React 事件可觸發 re-render，以低頻輪詢補上
   const [, forceE2EERefresh] = useState(0);
   useEffect(() => {
-    if (e2eeMode !== 'exchanging') return;
+    if (e2eeMode !== 'exchanging' && !(e2eeMode === 'mesh-dtls' && meshEncryptionState !== 'encrypted')) return;
     const timer = setInterval(() => forceE2EERefresh((n) => n + 1), 1000);
     return () => clearInterval(timer);
-  }, [e2eeMode]);
+  }, [e2eeMode, meshEncryptionState]);
 
   const handleStartCall = async (type: CallType) => {
     try {
@@ -736,10 +764,29 @@ const ChatPage: React.FC = () => {
             <span
               className="e2ee-indicator e2ee-indicator-dtls"
               role="status"
-              aria-label="傳輸層加密（非端到端加密）"
-              title="多人房間目前僅有 WebRTC 傳輸層加密（DTLS）；端到端加密尚未支援多人拓撲。"
+              aria-label={
+                meshEncryptionState === 'encrypted'
+                  ? '端到端加密已啟用（房間金鑰）'
+                  : meshEncryptionState === 'plaintext'
+                    ? '此房間未端到端加密'
+                    : '端到端加密金鑰交換中'
+              }
+              title={
+                meshEncryptionState === 'encrypted'
+                  ? '房間內容以 AES-256-GCM 房間金鑰加密（keyx 分發），僅成員可解讀。詳見 docs/THREAT_MODEL.md。'
+                  : meshEncryptionState === 'plaintext'
+                    ? '此房間無法建立端到端加密（金鑰交換不可用或逾時）；訊息未加密即不送出。'
+                    : '正在分發房間金鑰；完成前訊息暫緩送出，不會以明文傳送。'
+              }
             >
-              <span aria-hidden="true">🛡️</span> 傳輸加密（非端到端）
+              <span aria-hidden="true">
+                {meshEncryptionState === 'encrypted' ? '🔒' : meshEncryptionState === 'plaintext' ? '⚠️' : '🔑'}
+              </span>{' '}
+              {meshEncryptionState === 'encrypted'
+                ? '端到端加密'
+                : meshEncryptionState === 'plaintext'
+                  ? '未加密（暫停送出）'
+                  : '金鑰交換中…'}
             </span>
           )}
         </div>
