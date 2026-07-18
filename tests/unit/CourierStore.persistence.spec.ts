@@ -13,9 +13,10 @@ import {
   type PersistedCourierRecord,
 } from '../../src/core/relay/CourierStore';
 import type { GossipMessage } from '../../src/types';
+import { enc, encSized } from './_courierFixtures';
 
 function msg(over: Partial<GossipMessage> = {}): GossipMessage {
-  return { roomId: 'r1', senderId: 's1', pubKey: 'pk', seq: 1, timestamp: 1000, content: 'ENC:x', ttl: 3, signature: 'sig', ...over };
+  return { roomId: 'r1', senderId: 's1', pubKey: 'pk', seq: 1, timestamp: 1000, content: enc('x'), ttl: 3, signature: 'sig', ...over };
 }
 
 /** 假耐久層：Map 存 + 記錄呼叫序列。 */
@@ -39,10 +40,10 @@ describe('CourierStore 持久化 — 鏡像', () => {
   it('deposit 鏡像 putRecord；flush 後耐久層有該筆', async () => {
     const { p, store } = fakePersistence();
     const s = new CourierStore(cfg(), () => 1000, p);
-    s.deposit(msg({ seq: 1, content: 'ENC:a' }));
+    s.deposit(msg({ seq: 1, content: enc('a') }));
     await s.flush();
     expect(store.size).toBe(1);
-    expect([...store.values()][0]!.msg.content).toBe('ENC:a');
+    expect([...store.values()][0]!.msg.content).toBe(enc('a'));
   });
 
   it('墓碑刪整房 → deleteRoom 鏡像', async () => {
@@ -81,8 +82,8 @@ describe('CourierStore 持久化 — 鏡像', () => {
   it('單房超上限淘汰 → deleteRecord 鏡像（耐久層與記憶體一致）', async () => {
     const { p, store } = fakePersistence();
     let t = 1000;
-    const s = new CourierStore(cfg({ maxRoomBytes: 10, maxRecordBytes: 5 }), () => t, p);
-    for (let seq = 1; seq <= 5; seq++) { t = 1000 + seq; s.deposit(msg({ senderId: 'a', seq, content: 'ab', signature: 'cde' })); } // 5 bytes each
+    const s = new CourierStore(cfg({ maxRoomBytes: 200, maxRecordBytes: 100 }), () => t, p);
+    for (let seq = 1; seq <= 5; seq++) { t = 1000 + seq; s.deposit(msg({ senderId: 'a', seq, content: encSized(100), signature: '' })); } // 100 bytes each（Spec 012：content 須為合法信封，等比放大原 5-byte 案例）
     await s.flush();
     // 記憶體與耐久層都只留最新 2 筆（房上限 10 / 每筆 5）
     expect(s.stats().recordCount).toBe(2);
@@ -95,8 +96,8 @@ describe('CourierStore 持久化 — hydrate', () => {
     const { p } = fakePersistence();
     // 先用一個 store 存兩筆
     const s1 = new CourierStore(cfg(), () => 1000, p);
-    s1.deposit(msg({ senderId: 'a', seq: 1, content: 'ENC:1' }));
-    s1.deposit(msg({ senderId: 'a', seq: 2, content: 'ENC:2' }));
+    s1.deposit(msg({ senderId: 'a', seq: 1, content: enc('1') }));
+    s1.deposit(msg({ senderId: 'a', seq: 2, content: enc('2') }));
     await s1.flush();
 
     // 新 store（模擬重載）hydrate → 記憶體重建
@@ -104,7 +105,7 @@ describe('CourierStore 持久化 — hydrate', () => {
     expect(s2.stats().recordCount).toBe(0);
     await s2.hydrate();
     expect(s2.stats().recordCount).toBe(2);
-    expect(s2.serveRoom('r1').map((m) => m.content).sort()).toEqual(['ENC:1', 'ENC:2']);
+    expect(s2.serveRoom('r1').map((m) => m.content).sort()).toEqual([enc('1'), enc('2')].sort());
   });
 
   it('hydrate 跳過並清除逾 TTL 的持久紀錄', async () => {
