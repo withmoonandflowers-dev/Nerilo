@@ -31,6 +31,7 @@ import { generateUUID } from '../../utils/uuid';
 import { startRoomHeartbeat } from '../../services/RoomHeartbeat';
 import { creditEconomy } from '../../core/incentive/CreditEconomy';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
+import { E2EEIndicator, type E2EEMode } from './E2EEIndicator';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
 import { useRoomSubscription } from './hooks/useRoomSubscription';
@@ -687,7 +688,7 @@ const ChatPage: React.FC = () => {
   // E2EE 狀態指示（ADR-0004 決策 4）：真值來源是服務的實際金鑰狀態，不是連線狀態。
   // mesh 房自 ADR-0023 P2 起有房間金鑰 E2EE；文案依 getEncryptionState 三態真值
   // （Spec 012 P4 止血：撤下過時的「尚未支援多人拓撲」宣稱；class 名保留當測試鉤）。
-  const e2eeMode: 'p2p' | 'fallback' | 'exchanging' | 'mesh-dtls' | null = (() => {
+  const e2eeMode: E2EEMode = (() => {
     if (architecture.isMesh()) return 'mesh-dtls';
     const chatService = starTopology.getState().chatService;
     const keysReady = !!chatService && chatService.isE2EEEnabled && chatService.isE2EEReady;
@@ -730,65 +731,7 @@ const ChatPage: React.FC = () => {
             ← 返回
           </button>
           <h2>{roomDisplayName({ roomName, roomId })}</h2>
-          {e2eeMode === 'p2p' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-p2p"
-              role="status"
-              aria-label="端到端加密已啟用"
-              title="訊息以 AES-256-GCM 加密，僅房間成員可解讀。詳見 docs/THREAT_MODEL.md。"
-            >
-              <span aria-hidden="true">🔒</span> 端到端加密
-            </span>
-          )}
-          {e2eeMode === 'fallback' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-fallback"
-              role="status"
-              aria-label="備援模式：訊息仍以端到端金鑰加密，但透過伺服器中繼"
-              title="P2P 未連線；訊息經由 Firestore 中繼，但內容仍以同一把 sender key 加密。"
-            >
-              <span aria-hidden="true">🔓</span> 備援模式（加密傳輸中）
-            </span>
-          )}
-          {e2eeMode === 'exchanging' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-exchanging"
-              role="status"
-              aria-label="端到端加密金鑰交換中"
-              title="正在與對方交換加密金鑰；完成前訊息會暫緩送出，不會以明文傳送。"
-            >
-              <span aria-hidden="true">🔑</span> 金鑰交換中…
-            </span>
-          )}
-          {e2eeMode === 'mesh-dtls' && (
-            <span
-              className="e2ee-indicator e2ee-indicator-dtls"
-              role="status"
-              aria-label={
-                meshEncryptionState === 'encrypted'
-                  ? '端到端加密已啟用（房間金鑰）'
-                  : meshEncryptionState === 'plaintext'
-                    ? '此房間未端到端加密'
-                    : '端到端加密金鑰交換中'
-              }
-              title={
-                meshEncryptionState === 'encrypted'
-                  ? '房間內容以 AES-256-GCM 房間金鑰加密（keyx 分發），僅成員可解讀。詳見 docs/THREAT_MODEL.md。'
-                  : meshEncryptionState === 'plaintext'
-                    ? '此房間無法建立端到端加密（金鑰交換不可用或逾時）；訊息未加密即不送出。'
-                    : '正在分發房間金鑰；完成前訊息暫緩送出，不會以明文傳送。'
-              }
-            >
-              <span aria-hidden="true">
-                {meshEncryptionState === 'encrypted' ? '🔒' : meshEncryptionState === 'plaintext' ? '⚠️' : '🔑'}
-              </span>{' '}
-              {meshEncryptionState === 'encrypted'
-                ? '端到端加密'
-                : meshEncryptionState === 'plaintext'
-                  ? '未加密（暫停送出）'
-                  : '金鑰交換中…'}
-            </span>
-          )}
+          <E2EEIndicator mode={e2eeMode} meshState={meshEncryptionState} />
         </div>
         <div className="header-right">
           <button
