@@ -15,7 +15,7 @@
 
 | 層級 | 2026-07-18 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；【合併後實測回填】 |
+| Core quality | TypeScript、ESLint gate 通過；137 test files／1542 tests 全綠（既有 7 warnings；四線合併後實測 2026-07-18） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
@@ -60,7 +60,7 @@
 
 - CI `vue-quality` 已是硬閘：`nuxt typecheck`＋`nuxt generate`。
 - CI `vue-e2e` 自 2026-07-16 起觀察，最早 2026-07-30 才可移除 `continue-on-error`。
-- `@vue-stable` 已從 2 條擴至 9 條；parity matrix 見 `docs/VUE-PARITY.md`。這不縮短既定觀察期。
+- `@vue-stable` 已從 2 條擴至 10 條（2026-07-18 新增 Spec 010 遷移窗回歸鎖 `migration-window.spec.ts`，本機連跑 3 次綠）；parity matrix 見 `docs/VUE-PARITY.md`。這不縮短既定觀察期。
 - Production 切換完整門檻見 ADR-0017：Vue E2E 硬閘、P0/P1 清零、Vue production smoke 三路全綠、視覺驗收與可回退 artifact，缺一不可。
 
 ## 目前優先序
@@ -78,3 +78,4 @@
 - 信使欠條是每信使本地權威債權簿，同瀏覽器已耐久；跨裝置備份、私鑰復原與多副本合併尚未設計。
 - TTL 欄位、rules、設定腳本與 cleanup Functions 程式已就位，但未持 GCP 權限實際套用 TTL，也未升級 Blaze／部署 Functions。
 - README 的安全摘要不能取代 `docs/THREAT_MODEL.md`；Nerilo 未經第三方安全認證，不適用高風險匿名通訊。
+- React 產線的星型→mesh 遷移窗可能無聲掉信、遲到者看不到星型時代歷史（Spec 010 拍板：不修 React，由 Vue 切 production 退役星型棧收斂）。Vue 線無此窗（ADR-0023 P2-③）且有回歸鎖 `tests/e2e-vue/migration-window.spec.ts`，該回歸鎖已列入 ADR-0017 切換門檻。
