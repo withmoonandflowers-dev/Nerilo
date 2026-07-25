@@ -49,6 +49,8 @@ module.exports = {
       // (2) 死重圍籬（ADR-0031）：不得 import 已 PARK 的休眠模組。這些模組測過但
       //     沒接進產品流，凍結中；要解凍＝從本名單移除該路徑 + 更新 ADR-0031，
       //     是有意識的決定。excludedFiles 讓 PARK 模組自身仍可內部互 import。
+      //     src/sdk 另有專屬區塊（見檔尾，Spec 013）：ESLint override 後者覆寫前者，
+      //     同一條規則不能拆兩處寫，否則後面的會把前面的整組蓋掉。
       files: ['src/core/**/*.ts', 'src/services/**/*.ts'],
       excludedFiles: [
         '**/*.spec.ts',
@@ -98,14 +100,55 @@ module.exports = {
       },
     },
     {
-      // 死重圍籬（產品/SDK 層）：features/pages/sdk 亦不得 import PARK 模組（ADR-0031）。
-      files: ['src/features/**/*.ts', 'src/features/**/*.tsx', 'src/pages/**/*.tsx', 'src/sdk/**/*.ts'],
+      // 死重圍籬（產品層）：features/pages 亦不得 import PARK 模組（ADR-0031）。
+      // sdk 移到下一個區塊統一管（它還要多擋 UI 層）。
+      files: ['src/features/**/*.ts', 'src/features/**/*.tsx', 'src/pages/**/*.tsx'],
       excludedFiles: ['**/*.spec.ts', '**/*.test.ts'],
       rules: {
         'no-restricted-imports': [
           'error',
           {
             patterns: [
+              {
+                group: [
+                  '**/core/community/**',
+                  '**/core/game/**',
+                  '**/core/transport/**',
+                  '**/core/chain/**',
+                  '**/core/ledger/**',
+                  '**/core/protocol/**',
+                ],
+                message: '此模組已 PARK（休眠，ADR-0031），不得新接線。要解凍請改 ADR-0031 + 移除圍籬。',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      // ── SDK 公開契約圍籬（Spec 013）────────────────────────────────────
+      // 公開契約不得相依應用層目錄，否則 React 產線退役（ADR-0017）會變成
+      // 「刪應用層＝刪公開契約」。本區塊必須同時列 UI 層與 PARK 兩組 pattern：
+      // ESLint 的 override 是「後者整組覆寫前者」，不是合併。
+      // 已知射程外：`firestore.ts` 對 MeshChatService 的動態 import()——
+      // no-restricted-imports 只看靜態 import 宣告，該處靠註解自律，收斂綁 ADR-0017。
+      files: ['src/sdk/**/*.ts'],
+      excludedFiles: ['**/*.spec.ts', '**/*.test.ts'],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                group: [
+                  '**/features/**',
+                  '**/pages/**',
+                  '**/components/**',
+                  '**/hooks/**',
+                  '**/contexts/**',
+                ],
+                message: 'SDK 公開契約不得相依應用層目錄（Spec 013）。純邏輯請放 src/core/。',
+              },
               {
                 group: [
                   '**/core/community/**',

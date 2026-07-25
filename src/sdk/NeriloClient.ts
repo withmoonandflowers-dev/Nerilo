@@ -1,8 +1,8 @@
 import type { ChatMessage, HLCTimestamp } from '../types';
 import type { IChatEngine } from './IChatEngine';
-import { applyReaction, hasReacted, type ReactionMap } from '../features/chat/reactions';
-import { applyRead, readCount, orderKeyOf, type ReadState } from '../features/chat/readReceipts';
-import { encodeContent, decodeContent } from '../features/chat/messageContent';
+import { applyReaction, hasReacted, type ReactionMap } from '../core/messaging/reactions';
+import { applyRead, readCount, orderKeyOf, type ReadState } from '../core/messaging/readReceipts';
+import { encodeContent, decodeContent } from '../core/messaging/messageContent';
 
 /** 已讀水位比對用的最小訊息形狀(timestamp 必有,hlc 可選)。 */
 export interface Positioned {

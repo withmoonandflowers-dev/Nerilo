@@ -4,7 +4,7 @@
  * @vitest-environment node
  */
 import { describe, it, expect } from 'vitest';
-import { applyReaction, hasReacted, type ReactionMap } from '../../src/features/chat/reactions';
+import { applyReaction, hasReacted, type ReactionMap } from '../../src/core/messaging/reactions';
 
 const ev = (messageId: string, emoji: string, from: string, op: 'add' | 'remove' = 'add') => ({ messageId, emoji, from, op });
 

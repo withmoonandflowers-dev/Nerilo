@@ -8,8 +8,8 @@
  */
 import type { IChatEngine } from '../src/sdk/index';
 import type { ChatMessage } from '../src/types';
-import type { ReactionEvent, ReactionOp } from '../src/features/chat/reactions';
-import type { ReadEvent } from '../src/features/chat/readReceipts';
+import type { ReactionEvent, ReactionOp } from '../src/core/messaging/reactions';
+import type { ReadEvent } from '../src/core/messaging/readReceipts';
 
 interface RoomBus {
   messages: ChatMessage[];

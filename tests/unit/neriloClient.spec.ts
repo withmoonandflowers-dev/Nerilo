@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { NeriloClient } from '../../src/sdk/NeriloClient';
 import type { IChatEngine } from '../../src/sdk/IChatEngine';
 import type { ChatMessage } from '../../src/types';
-import type { ReactionEvent } from '../../src/features/chat/reactions';
-import type { ReadEvent } from '../../src/features/chat/readReceipts';
-import { orderKeyOf } from '../../src/features/chat/readReceipts';
+import type { ReactionEvent } from '../../src/core/messaging/reactions';
+import type { ReadEvent } from '../../src/core/messaging/readReceipts';
+import { orderKeyOf } from '../../src/core/messaging/readReceipts';
 
 /** 無 Firebase 的假引擎:證明 NeriloClient 只靠 IChatEngine 契約即可運作、可測。 */
 class FakeEngine implements IChatEngine {
