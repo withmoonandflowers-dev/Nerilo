@@ -59,13 +59,16 @@
 ### Nuxt 接班
 
 - CI `vue-quality` 已是硬閘：`nuxt typecheck`＋`nuxt generate`。
-- CI `vue-e2e` 自 2026-07-16 起觀察，最早 2026-07-30 才可移除 `continue-on-error`。
+- CI `vue-e2e` 的觀察期起算日修正為 2026-07-18（該 job 到 CI #168 才存在，原記的 07-16 尚未建），
+  最早 2026-08-01 才可移除 `continue-on-error`。截至 07-26 共 6 次執行全綠（#168-170、#172-174），
+  但只分佈在 2 個活躍日。
 - `@vue-stable` 已從 2 條擴至 10 條（2026-07-18 新增 Spec 010 遷移窗回歸鎖 `migration-window.spec.ts`，本機連跑 3 次綠）；parity matrix 見 `docs/VUE-PARITY.md`。這不縮短既定觀察期。
 - Production 切換完整門檻見 ADR-0017：Vue E2E 硬閘、P0/P1 清零、Vue production smoke 三路全綠、視覺驗收與可回退 artifact，缺一不可。
 
 ## 目前優先序
 
-1. 觀察 React stable CI 到 2026-07-27、Vue stable CI 到 2026-07-30；期間補齊 P0/P1 parity，不提前切 production。
+1. React stable CI 已於 2026-07-26 翻硬閘（12 次執行零紅，依據見 `ci.yml` 該 step 註解）。
+   Vue stable CI 觀察到 2026-08-01；期間補齊 P0/P1 parity，不提前切 production。
 2. 規劃跨裝置加密備份、私鑰復原與多副本合併；本機重載耐久已完成，但不能把複製 JSON 當備份。
 3. 由專案擁有者套用原生 TTL policy；成本儀表板、可信總量配額與 cleanup Functions 部署仍需 Blaze／Cloud Billing 決策。
 4. 取得真實使用資料後再擴功能；避免 React、Vue、SDK 三面同時發散。
@@ -86,7 +89,8 @@
   - `mesh-diagnostic-7p`：單機 7 瀏覽器負載下連線成形失敗（8 次 ICE restart），
     維持 Spec 011 既記錄的殘留（待低負載機器/CI 重跑）。
 
-- CI 中 React stable E2E 與 Vue stable E2E 目前仍是 soft gate；Vue 觀察截止日為 2026-07-30，React 既定檢查日為 2026-07-27。
+- CI 中 React stable E2E 已是硬閘（2026-07-26 翻）；Vue stable E2E 仍是 soft gate，截止日 2026-08-01。
+  觀察期先前按日曆走、證據卻只按推送走（07-18 至 07-25 七天零樣本），已加每日 schedule 觸發解耦。
 - Nuxt 最大 bundle chunk 約 568 kB；不擋 correctness，但切 production 前應評估載入成本。
 - SDP offer/answer 尚未升級為平台級簽章身分；Firebase auth/rules 是現階段信令完整性邊界。
 - 信使欠條是每信使本地權威債權簿，同瀏覽器已耐久；跨裝置備份、私鑰復原與多副本合併尚未設計。

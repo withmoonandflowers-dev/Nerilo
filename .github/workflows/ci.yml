@@ -9,6 +9,11 @@ on:
   pull_request:
     branches: [master, develop]
   workflow_dispatch:
+  # 每日 02:17（台北）跑一次 master。觀察期原本按日曆走、證據卻只按推送走：
+  # 2026-07-18 到 07-25 七天零推送＝七天零樣本，到期日到了手上卻沒資料（實測踩到）。
+  # 排程觸發讓穩定度證據與提交節奏脫鉤，順帶抓得到「程式沒動但外部相依壞掉」這類問題。
+  schedule:
+    - cron: '17 18 * * *'
 
 env:
   # Node 24 = npm 11, matching the dev machine that generates package-lock.json.
@@ -150,14 +155,17 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
-      # 觀察期自 2026-07-13 起算（稽核 R8）：連續兩週綠 → 2026-07-27 後翻 continue-on-error: false
+      # 硬閘（2026-07-26 翻，稽核 R8 收斂）。翻閘依據＝實際發生的事，不是原註解宣稱的
+      # 「自 07-13 起連續兩週」——這個 step 到 07-16（CI #149）才存在,07-13 當下還沒建。
+      # 真實紀錄：#149/150(07-16)、#151-153(07-17)、#167-170(07-18)、#172-174(07-25)
+      # 共 12 次執行、零紅，時長穩定 52-63s；07-26 本機重跑 11/11 通過 49.6s，
+      # 時長對得上＝CI 的綠是真的跑完 11 條，不是零測試假綠。
+      # 覆蓋期間誠實揭露：10 天跨度但只有 4 個活躍日（推送觸發的先天限制,已加 schedule 補）。
       - name: Run E2E stable subset against emulators
         run: npm run test:e2e:stable
         env:
           CI: 'true'
-        continue-on-error: true
-        # Now emulator-backed, so anonymous-auth tests can actually pass.
-        # Once green for a few weeks: flip to continue-on-error: false to gate merges.
+        continue-on-error: false
 
       - name: Upload Playwright report
         if: always()
@@ -205,7 +213,12 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
-      # 2026-07-16 起觀察；2026-07-30 後若連續綠，移除 continue-on-error 才具備切換資格。
+      # 觀察期依實際起算日順延（2026-07-26 修正）：原註解寫 07-16 起算、07-30 到期，
+      # 但這個 job 到 07-18（CI #168）才存在。截至 07-26 只有 6 次執行（#168-170、#172-174），
+      # 全綠、時長 175-222s，但只分佈在 2 個活躍日，離「連續兩週」還差很遠。
+      # 新到期日 2026-08-01（07-18 起算兩週）。已加每日 schedule 觸發，屆時樣本才會是
+      # 每天各自獨立的一次，而不是同一天連推三筆湊出來的三次。
+      # 移除 continue-on-error 是 ADR-0017 切 production 的門檻之一，不可提前。
       - name: Run Vue stable E2E against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo

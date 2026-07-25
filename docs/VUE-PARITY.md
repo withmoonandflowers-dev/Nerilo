@@ -20,7 +20,9 @@
 
 ## 尚未取得的切換證據
 
-- `@vue-stable` 必須從 2026-07-16 連續觀察到 2026-07-30，之後才能移除 soft gate。
+- `@vue-stable` 的觀察期起算日修正為 2026-07-18（該 CI job 到 #168 才存在），到 2026-08-01
+  才能移除 soft gate。截至 07-26 為 6 次全綠、2 個活躍日；已加每日 schedule，之後樣本才會是
+  每天各自獨立一次，而非同日連推湊數。
 - Vue build 的 production smoke 尚需直連、強制 TURN、誠實 fallback 三路全綠。
 - 產品負責人尚未完成視覺驗收；hosting 仍應保留 React artifact 與一鍵回退。
 - 正式環境身份、網路與 Firebase 配額行為不能由 emulator 結果代替。
