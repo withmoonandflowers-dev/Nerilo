@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../types';
-import type { ReactionEvent, ReactionOp } from '../features/chat/reactions';
-import type { ReadEvent } from '../features/chat/readReceipts';
+import type { ReactionEvent, ReactionOp } from '../core/messaging/reactions';
+import type { ReadEvent } from '../core/messaging/readReceipts';
 
 /**
  * 傳輸中立的聊天引擎契約(SDK 注入縫)。

@@ -24,6 +24,10 @@ export async function createChatClient(config: {
   directory?: IRoomDirectory;   // 省略＝Firestore（延遲）
   storage?: IChatStorage;       // 省略＝IndexedDB（瀏覽器）
 }): Promise<NeriloClient> {
+  // 已知殘留（Spec 013）：MeshChatService 是 mesh 聊天引擎本體，卻還放在 features/ 底下。
+  // 這是 SDK 唯一穿過應用層目錄的相依。注意圍籬抓不到它——no-restricted-imports 只看
+  // 靜態 import 宣告，動態 import() 不在其射程內，所以這裡是靠註解自律而非機器強制。
+  // 收斂綁 ADR-0017：React 產線退役時把 MeshChatService 一併搬進 core，屆時這條註解可刪。
   const { MeshChatService } = await import('../features/chat/MeshChatService');
   const engine: IChatEngine = new MeshChatService(
     config.roomId, config.userId, config.storage, config.signaling, config.directory

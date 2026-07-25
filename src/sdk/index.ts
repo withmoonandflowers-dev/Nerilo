@@ -22,13 +22,13 @@ export { InMemoryChatStorage } from '../core/storage/InMemoryChatStorage';
 
 // 公開資料型別
 export type { ChatMessage, HLCTimestamp } from '../types';
-export type { ReactionEvent, ReactionOp, ReactionMap } from '../features/chat/reactions';
-export type { ReadEvent, ReadState } from '../features/chat/readReceipts';
+export type { ReactionEvent, ReactionOp, ReactionMap } from '../core/messaging/reactions';
+export type { ReadEvent, ReadState } from '../core/messaging/readReceipts';
 
 // 純邏輯(第三方若要自建 UI 聚合可直接用,零依賴、可測)
-export { applyReaction, hasReacted } from '../features/chat/reactions';
-export { applyRead, readCount, readersOf, orderKeyOf } from '../features/chat/readReceipts';
-export { encodeContent, decodeContent } from '../features/chat/messageContent';
+export { applyReaction, hasReacted } from '../core/messaging/reactions';
+export { applyRead, readCount, readersOf, orderKeyOf } from '../core/messaging/readReceipts';
+export { encodeContent, decodeContent } from '../core/messaging/messageContent';
 
 // turnkey Firestore 工廠（createChatClient / createFirestoreChatClient）在 subpath：
 //   import { createChatClient } from 'nerilo/firestore'

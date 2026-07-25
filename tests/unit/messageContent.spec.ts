@@ -4,7 +4,7 @@
  * @vitest-environment node
  */
 import { describe, it, expect } from 'vitest';
-import { encodeContent, decodeContent } from '../../src/features/chat/messageContent';
+import { encodeContent, decodeContent } from '../../src/core/messaging/messageContent';
 
 describe('messageContent', () => {
   it('純文字 encode 原樣返回（向下相容）', () => {

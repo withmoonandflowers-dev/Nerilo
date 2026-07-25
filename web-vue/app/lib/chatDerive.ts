@@ -3,9 +3,9 @@
  * reactions 聚合 → 顯示 chips；已讀水位 → 顯示文字；加密狀態 → 標籤。
  * 全部是無副作用的純函數，方便單測與跨頁複用。
  */
-import { readCount, orderKeyOf } from '@legacy/features/chat/readReceipts'
-import type { ReadState } from '@legacy/features/chat/readReceipts'
-import type { ReactionMap } from '@legacy/features/chat/reactions'
+import { readCount, orderKeyOf } from '@legacy/core/messaging/readReceipts'
+import type { ReadState } from '@legacy/core/messaging/readReceipts'
+import type { ReactionMap } from '@legacy/core/messaging/reactions'
 import type { ChatMessage } from '@legacy/types'
 import type { EncryptionState } from '@legacy/features/chat/encryptionGate'
 

@@ -5,7 +5,7 @@ import {
   readersOf,
   orderKeyOf,
   type ReadState,
-} from '../../src/features/chat/readReceipts';
+} from '../../src/core/messaging/readReceipts';
 
 describe('readReceipts.orderKeyOf', () => {
   it('數值序 == 字典序（wallTime 零填，避免 "9" > "10"）', () => {

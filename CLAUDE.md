@@ -57,6 +57,7 @@ src/core/
 ├── chain/          # Append-only log sync & merge
 ├── clock/          # Hybrid Logical Clock (HLC)
 ├── ordering/       # Message ordering (HLC-based)
+├── messaging/      # 訊息層純邏輯 reducer：reactions / 已讀水位 / 回覆編碼（SDK 公開契約，Spec 013）
 ├── transport/      # Multi-channel bus, store-and-forward, DHT storage
 ├── ledger/         # Shared ledger engine
 ├── metrics/        # Performance metrics + remote telemetry (opt-out)
