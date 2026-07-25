@@ -10,6 +10,7 @@
 import { NeriloClient } from './NeriloClient';
 import type { IChatEngine } from './IChatEngine';
 import type { SignalingFactory } from '../core/p2p/SignalingTransport.types';
+import { createLazySignalingTransport } from '../core/p2p/lazySignalingTransport';
 import type { IRoomDirectory, IChatStorage } from '../ports';
 
 /**
@@ -33,6 +34,30 @@ export async function createChatClient(config: {
     config.roomId, config.userId, config.storage, config.signaling, config.directory
   );
   return new NeriloClient(engine);
+}
+
+/**
+ * Firestore signaling 工廠（Spec 015 T2）——只要牽線、不要整個聊天客戶端的人用這個。
+ *
+ * 情境：第三方已經有自己的 P2P 應用（遊戲、協作白板），只缺一套「交換 SDP/ICE」的
+ * 後端。在此之前 SDK 只公開 `SignalingTransport` **介面**，實作得自己寫一份；
+ * Nerilo 明明有一份跑在 production 的卻拿不到（block-brawl 2026-07-25 實測撞到）。
+ *
+ * 誠實邊界（憲法第 10 條，勿刪）：
+ * - 這條通道傳的是 SDP/ICE，**不是**訊息內容；它不提供端到端加密。
+ * - 內容對你的 Firestore 後端可見。
+ * - SDP 尚未簽章（GOAL-ANALYSIS GS2 未做，風險登記 R9）：signaling 的完整性邊界
+ *   是你自己的 Firebase auth/rules，不是密碼學。
+ *
+ * 需自備 Firebase 專案與對應 rules／索引，見 docs/SDK-QUICKSTART.md。
+ */
+export function createFirestoreSignaling(): SignalingFactory {
+  return (roomId, channelLabel) =>
+    createLazySignalingTransport(async () => {
+      // 動態載入：主入口 `nerilo` 的 eager 圖不得靜態帶進 firebase（qa:sdk-isolation 硬閘）。
+      const m = await import('../core/p2p/SignalingTransport');
+      return new m.RoomSignalingTransport(roomId, channelLabel);
+    });
 }
 
 /** Firestore 便利工廠（＝createChatClient 省略後端 → 延遲載入 Firestore/IndexedDB 預設）。 */
