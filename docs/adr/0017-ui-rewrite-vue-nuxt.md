@@ -32,8 +32,10 @@ ADR-0016 以多主題設計系統（五組調色盤＋動效）回應視覺不�
 以下全部成立才可把 Firebase Hosting 從 React `dist/` 切到 Nuxt `.output/public`：
 
 1. `vue-quality`（`nuxt typecheck` + `nuxt generate`）是 PR／master 硬閘且持續為綠。
-2. `@vue-stable` emulator E2E 自 2026-07-16 起連續兩週綠；2026-07-30 後先移除
-   `continue-on-error` 變硬閘，再談切換。
+2. `@vue-stable` emulator E2E 連續兩週綠；先移除 `continue-on-error` 變硬閘，再談切換。
+   〔日期更正 2026-07-26〕原文寫「自 2026-07-16 起、07-30 到期」，但實測該 CI job 到
+   2026-07-18（CI #168）才存在，07-16 當下尚未建。起算日更正為 07-18、到期日 08-01。
+   決策本身不變，只更正一個查證後不成立的日期；現況數字以 CURRENT-STATUS 為準。
 3. Vue 既有 E2E 涵蓋註冊、建房、加入、雙向恰好一次、E2EE、重進、好友、房間管理、
    persistent rooms、遊戲與信使欠條；`@vue-stable` 九條旅程與尚待正式環境驗證項目
    以 [Vue parity matrix](../VUE-PARITY.md) 追蹤，所有 P0/P1 失敗清零。
