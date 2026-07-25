@@ -10,12 +10,27 @@
  *   - dispose flushes pending samples
  *   - rate-limited: many records within window → one send
  *
- * @vitest-environment jsdom
+ * @vitest-environment node
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RemoteTelemetry } from '../../src/core/metrics/RemoteTelemetry';
 import type { MetricsSnapshot } from '../../src/core/metrics/MetricsCollector';
+
+/**
+ * Map-backed localStorage stub（同 ConnectionStats.spec 慣例）。
+ * 原本靠 jsdom 提供，但 Node 22+ 在 globalThis 上自帶一顆實驗性 localStorage getter，
+ * 未給 --localstorage-file 時回 undefined 且蓋過 jsdom 注入的那顆 → 測試在 Node 26 炸。
+ * 自備 stub 讓這支測試不再相依 runtime 版本。
+ */
+function installLocalStorageStub(): void {
+  const store = new Map<string, string>();
+  (globalThis as Record<string, unknown>).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+  };
+}
 
 function makeSnapshot(overrides: Partial<MetricsSnapshot> = {}): MetricsSnapshot {
   return {
@@ -32,15 +47,12 @@ function makeSnapshot(overrides: Partial<MetricsSnapshot> = {}): MetricsSnapshot
 
 describe('RemoteTelemetry', () => {
   beforeEach(() => {
-    // jsdom localStorage clean between tests
-    try {
-      localStorage.clear();
-    } catch {
-      /* ignore */
-    }
+    // 每支測試一顆乾淨的 store
+    installLocalStorageStub();
   });
 
   afterEach(() => {
+    delete (globalThis as Record<string, unknown>).localStorage;
     vi.useRealTimers();
   });
 
