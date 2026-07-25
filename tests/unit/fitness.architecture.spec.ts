@@ -135,6 +135,10 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
     expect(exportedNames('src/sdk/firestore.ts')).toEqual([
       'createChatClient',
       'createFirestoreChatClient',
+      // Spec 015 T2（2026-07-26 顯性擴充公開表面）：只要 signaling、不要整個聊天客戶端的
+      // 第三方拿得到 Firestore 實作。誠實邊界（非 E2EE、內容對後端可見、SDP 未簽章）
+      // 寫在該函式的 doc comment 與 SDK-QUICKSTART，不得只在這裡加個名字就上架。
+      'createFirestoreSignaling',
     ]);
   });
 });

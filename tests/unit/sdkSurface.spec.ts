@@ -18,7 +18,7 @@ import {
   type ChatMessage,
 } from '../../src/sdk';
 // turnkey 工廠在 subpath（架構收斂 2026-07）：主 barrel 保持純契約、型別表面乾淨
-import { createChatClient } from '../../src/sdk/firestore';
+import { createChatClient, createFirestoreSignaling } from '../../src/sdk/firestore';
 
 describe('SDK 公開表面（P3 publishable surface）', () => {
   it('barrel 匯出門面/純函式/記憶體 adapter/型別，全可用（無 Firebase）', () => {
@@ -29,6 +29,17 @@ describe('SDK 公開表面（P3 publishable surface）', () => {
     expect(typeof applyReaction).toBe('function');
     expect(typeof encodeContent).toBe('function');
     expect(typeof decodeContent).toBe('function');
+  });
+
+  it('subpath 匯出 createFirestoreSignaling：同步回傳 transport，且建構當下不載 Firestore（Spec 015 T2）', () => {
+    const factory = createFirestoreSignaling();
+    const t = factory('room-1', 'ch-a');
+    // SignalingFactory 契約是同步的——延遲載入不得把它變成 Promise
+    expect(typeof t.subscribe).toBe('function');
+    expect(typeof t.send).toBe('function');
+    expect(typeof t.cleanupOwn).toBe('function');
+    // 只造不用 → 不該碰到 Firestore（否則沒有 Firebase 設定的環境會炸在這裡）
+    expect(() => factory('room-2', 'ch-b')).not.toThrow();
   });
 
   it('三顆記憶體參考後端可獨立運作（signaling / directory / storage）', async () => {

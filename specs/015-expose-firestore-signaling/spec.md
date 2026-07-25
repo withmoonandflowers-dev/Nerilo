@@ -126,7 +126,19 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
       故不將該 flake 歸因於本次重構；但也不宣稱已解釋它。附帶查明：
       `mesh-diagnostic.spec.ts` 沒有 `@stable` 標籤，不在 CI 硬閘子集內，
       所以 CI 全綠與這個 flake 並不矛盾——它是 harden-tests 要求的人工護欄，不是閘門。
-- [ ] T2：在 `src/sdk/firestore.ts` 加 `createFirestoreSignaling`（動態載入，維持入口隔離）。
+- [x] T2：在 `src/sdk/firestore.ts` 加 `createFirestoreSignaling`（動態載入，維持入口隔離）。
+      **2026-07-26 完成。**
+
+      〔實作期發現：一個契約對撞〕`SignalingFactory` 要求**同步**回傳 transport，
+      但動態 `import()` 是非同步的（不動態載就會讓 eager 進入點靜態帶進 firebase，
+      `qa:sdk-isolation` 直接紅）。解法是新增 `core/p2p/lazySignalingTransport.ts`
+      當接縫。最容易寫錯的一點已寫進該檔註解並補測試：`subscribe()` 必須當下回傳
+      取消函式，而此時真 transport 還沒載完——取消函式得能取消「尚未成立的訂閱」，
+      否則會留下拆不掉的 Firestore `onSnapshot`（持續計費 + 房間關了還投遞）。
+      7 條單元覆蓋延遲、單次載入、載入前後取消、轉呼叫、載入失敗不炸呼叫端。
+
+      適應度函數如預期咬人：`tests/unit/fitness.architecture.spec.ts` 的公開表面快照
+      因新匯出而紅，依其設計「動它＝改公開契約，需顯性 review」——快照已顯性更新並附理由。
 - [ ] T3：加 `createWarmColdSignaling(deps)`，缺 mesh 相依時明示退化為 cold。
 - [ ] T4：`sdkSurface` 測試納入新匯出；`prune-sdk-types --max=30` 確認不爆。
 - [ ] T5：SDK-QUICKSTART 新章節 + rules／索引範本 + 誠實邊界三句。
