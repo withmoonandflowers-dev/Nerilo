@@ -98,8 +98,34 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1：定義 `WarmSignalingDeps` 公開型別，並把 `buildWarmColdFactory` 的內部組裝
-      重構成可從外部注入的形狀（⚠ 動運作中路徑：mesh 現行 signaling 走同一條，先走 harden-tests）。
+- [x] T1：定義 `WarmSignalingDeps` 型別，並把 `buildWarmColdFactory` 的內部組裝
+      重構成可從外部注入的形狀（⚠ 動運作中路徑，已走 harden-tests）。**2026-07-26 完成。**
+
+      落地位置：`src/core/p2p/warmColdSignalingFactory.ts`（型別 + 純組裝函式）。
+      `MeshGossipManager.buildWarmColdFactory` 只剩「把 mesh 內部狀態翻譯成 deps」，
+      金鑰檢查、router 建立、resolver、耐心策略都留在 manager（那些是 mesh 專屬狀態）。
+
+      刻意只吃結構型別（`SignalRelayBus`／`PeerKeyResolver`／`LocalSignalIdentity`／`SignalClock`，
+      皆為既有 exported interface），不吃 `SigRelayRouter` 具體類別——T3 要把這個型別
+      放進公開表面，先綁死類別之後就拆不開。
+
+      〔實作期發現〕這條路徑原本**零測試覆蓋**：`MeshGossipManager.spec.ts` 的
+      IdentityManager mock 沒有 `getEcdhPrivateKey`，既有測試只走得到「無金鑰 → 退原
+      factory」那一支，warm 組裝從未被任何測試碰過。先補了 10 條 characterization
+      （`tests/unit/MeshWarmColdFactory.spec.ts`）釘住 C1-C7 現行行為，並以突變驗證
+      （改耐心窗、反轉介紹人判斷）確認會紅 3 條，才動手重構。重構後該檔一字未改仍全綠。
+
+      T1 驗證紀錄（2026-07-26）：type-check、lint（0 error／7 warnings 同基線）、
+      全單元 138 檔 1554 tests、`qa:sdk-isolation`（MeshChatService 靜態圖仍 0 firebase）、
+      `build:sdk`、React 護欄 E2E（golden-path + mesh-diagnostic 7/7）全綠。
+
+      〔誠實記錄：一段未能解釋的 flake〕`mesh-diagnostic` 連跑時出現 1 過 2 敗 3 敗 4 過。
+      當下的指令把輸出丟給 grep 過濾掉，**兩次失敗的實際訊息沒有留存**，無法事後歸因——
+      這是操作疏失。補做對照實驗：未改動基線連跑 3 次 3/3 綠；重構後以**完全相同的 loop
+      形狀**連跑 3 次亦 3/3 綠（另加 run4-6 共 6 次連綠）。兩者在同條件下無差異，
+      故不將該 flake 歸因於本次重構；但也不宣稱已解釋它。附帶查明：
+      `mesh-diagnostic.spec.ts` 沒有 `@stable` 標籤，不在 CI 硬閘子集內，
+      所以 CI 全綠與這個 flake 並不矛盾——它是 harden-tests 要求的人工護欄，不是閘門。
 - [ ] T2：在 `src/sdk/firestore.ts` 加 `createFirestoreSignaling`（動態載入，維持入口隔離）。
 - [ ] T3：加 `createWarmColdSignaling(deps)`，缺 mesh 相依時明示退化為 cold。
 - [ ] T4：`sdkSurface` 測試納入新匯出；`prune-sdk-types --max=30` 確認不爆。

@@ -47,7 +47,6 @@ import { MeshGossipManager } from '../../src/core/mesh/MeshGossipManager';
 const LOCAL_UID = 'uid-local';
 
 /** 造一個未 initialize 的 manager，並把身分金鑰換成可控的 stub。 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function makeManager(opts: { keys: boolean; introducerUid?: string; baseFactory?: any } = { keys: true }) {
   const m = new MeshGossipManager(
     'room-1',
@@ -56,7 +55,6 @@ function makeManager(opts: { keys: boolean; introducerUid?: string; baseFactory?
     undefined,
     opts.introducerUid
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (m as any).identityManager = {
     getEcdhPrivateKey: () => {
       if (!opts.keys) throw new Error('no ecdh key');
@@ -70,7 +68,6 @@ function makeManager(opts: { keys: boolean; introducerUid?: string; baseFactory?
   return m;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const build = (m: MeshGossipManager) => (m as any).buildWarmColdFactory(LOCAL_UID);
 
 describe('buildWarmColdFactory 現況釘子（Spec 015 T1 characterization）', () => {
@@ -158,7 +155,6 @@ describe('buildWarmColdFactory 現況釘子（Spec 015 T1 characterization）', 
 
   it('C6 我不是被邀請者：對端由「別人」介紹 → 等 warm；由我介紹 → 立即 cold', async () => {
     const m = makeManager({ keys: true });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (m as any).latestDirectorySnapshot = {
       meshIdentities: {
         'uid-byother': { userId: 'u1', pubKey: 'p1', introducedBy: 'uid-someone-else' },

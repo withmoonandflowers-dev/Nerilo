@@ -13,8 +13,7 @@ import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
 import { SigRelayRouter, type SigRelayWire } from '../p2p/SigRelayRouter';
-import { PeerRelaySignalingTransport } from '../p2p/PeerRelaySignalingTransport';
-import { WarmColdSignalingTransport } from '../p2p/WarmColdSignalingTransport';
+import { createWarmColdSignalingFactory } from '../p2p/warmColdSignalingFactory';
 import { createDirectoryPeerKeyResolver } from '../p2p/DirectoryPeerKeyResolver';
 import { arrayBufferToBase64 } from '../../utils/crypto';
 import { RoomAdvertCache, type RoomAdvert } from '../relay/RoomDirectoryGossip';
@@ -370,31 +369,26 @@ export class MeshGossipManager {
       return m ? { pubKey: m.pubKey, ecdhPubKey: m.ecdhPubKey } : undefined;
     });
 
-    const base = this.signalingFactory;
-    return (roomId, channelLabel, remoteUid) => {
-      const cold = () =>
-        base
-          ? base(roomId, channelLabel, remoteUid)
-          : import('../p2p/SignalingTransport').then(
-              (m) => new m.RoomSignalingTransport(roomId, channelLabel)
-            );
-      if (!remoteUid) {
-        // 呼叫端沒帶對端 uid → 封不了加密信封，無 warm 語義，純 cold。
-        return new WarmColdSignalingTransport(null, cold, () => false, channelLabel);
-      }
-      const warm = new PeerRelaySignalingTransport(
-        router,
-        { nodeId: firebaseUid, ecdhPrivateKey, epoch: 0, sign },
-        resolver,
-        roomId,
-        channelLabel,
-        { now: () => Date.now(), nonce: () => crypto.randomUUID() },
-        remoteUid
-      );
-      // 介紹加入的耐心（T4）：對「被介紹的對端」或「自己被介紹、對端非介紹人」的 pair，
-      // warm NACK 先重試一會兒（介紹人可能還在接他），窗盡才退 Firestore。有界不失活。
-      const patience = {
-        applies: async () => {
+    // 組裝本身已抽到 core/p2p/warmColdSignalingFactory（Spec 015 T1），這裡只負責
+    // 「把 mesh 的內部狀態翻譯成 deps」。行為與抽出前一字不變，釘子見
+    // tests/unit/MeshWarmColdFactory.spec.ts。
+    return createWarmColdSignalingFactory({
+      nodeId: firebaseUid,
+      relayBus: router,
+      hasWarmPath: () => router.hasOpenNeighbors(),
+      identity: { ecdhPrivateKey, epoch: 0, sign },
+      peerKeys: resolver,
+      cold: this.signalingFactory,
+      // 未注入 cold → 動態載入 Firestore adapter，對齊 P2PConnectionManager 預設
+      //（本檔靜態圖仍無 firebase）。
+      coldFallback: (roomId, channelLabel) =>
+        import('../p2p/SignalingTransport').then(
+          (m) => new m.RoomSignalingTransport(roomId, channelLabel)
+        ),
+      // 介紹加入的耐心（Spec 005 T4）：對「被介紹的對端」或「自己被介紹、對端非介紹人」
+      // 的 pair，warm NACK 先重試一會兒（介紹人可能還在接他），窗盡才退 Firestore。有界不失活。
+      patience: {
+        applies: async (remoteUid: string) => {
           // 我是被邀請者：對「介紹人以外」的 pair 等 warm；對介紹人本身＝bootstrap 第一跳，立即 cold。
           if (this.introducerUid) return remoteUid !== this.introducerUid;
           // 對方是被介紹者：等介紹人把他接進 mesh——但若介紹人就是我，我即會合點，立即 cold。
@@ -408,11 +402,8 @@ export class MeshGossipManager {
         // 內留 18s 給 cold 收尾）。
         totalMs: 12_000,
         retryDelayMs: 1_000,
-      };
-      return new WarmColdSignalingTransport(
-        warm, cold, () => router.hasOpenNeighbors(), channelLabel, patience
-      );
-    };
+      },
+    });
   }
 
   /**
