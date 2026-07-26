@@ -13,7 +13,11 @@
  *   logger.error('[Chat] send failed', error);
  */
 
-const IS_DEV = import.meta.env.DEV;
+// `import.meta.env` 是 Vite 注入的，非 Vite 消費者（Node／webpack／rollup）拿到 undefined。
+// 這支 logger 幾乎被 core 全體 import，裸讀會讓整包在別人的環境**載入即炸**——
+// 2026-07-26 以真實 npm 安裝實測到：`import('nerilo/firestore')` 直接 TypeError。
+// 預設 false＝走 production 行為（會遮罩敏感欄位），對函式庫消費者是安全的那一邊。
+const IS_DEV = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV ?? false;
 
 /** 需要遮罩的欄位名稱（不分大小寫） */
 const SENSITIVE_KEYS = new Set([

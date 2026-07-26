@@ -20,9 +20,13 @@ import { logger } from '../utils/logger';
 // test 判定兩用：vite `--mode test`（React E2E 既有路徑），或顯式
 // `VITE_USE_EMULATOR=true`（nuxt/web-vue 的 dev server 無法自訂 vite mode，
 // Vue 版 E2E 走此開關）。兩者行為完全相同：假 config + 連本機 emulator。
-const IS_TEST_MODE =
-  import.meta.env.MODE === 'test' || import.meta.env.VITE_USE_EMULATOR === 'true';
-const IS_DEV = import.meta.env.DEV;
+// 非 Vite 消費者（Node／webpack／rollup）沒有 import.meta.env，裸讀會載入即炸。
+// 統一取一次並容許缺席；缺席時所有旗標為 undefined → 走 production 分支，
+// 而 Firebase 設定為空字串會在 initializeApp 時給出明確錯誤，比 TypeError 好診斷。
+const ENV: Record<string, string | boolean | undefined> =
+  (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env ?? {};
+const IS_TEST_MODE = ENV['MODE'] === 'test' || ENV['VITE_USE_EMULATOR'] === 'true';
+const IS_DEV = Boolean(ENV['DEV']);
 
 const REQUIRED_VARS = [
   'VITE_FIREBASE_API_KEY',
@@ -44,18 +48,18 @@ const firebaseConfig = IS_TEST_MODE
       appId: '1:000000000000:web:0000000000000000',
     }
   : {
-      apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            ?? '',
-      authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        ?? '',
-      projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         ?? '',
-      storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     ?? '',
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? '',
-      appId:             import.meta.env.VITE_FIREBASE_APP_ID             ?? '',
+      apiKey:            (ENV['VITE_FIREBASE_API_KEY'] as string)            ?? '',
+      authDomain:        (ENV['VITE_FIREBASE_AUTH_DOMAIN'] as string)        ?? '',
+      projectId:         (ENV['VITE_FIREBASE_PROJECT_ID'] as string)         ?? '',
+      storageBucket:     (ENV['VITE_FIREBASE_STORAGE_BUCKET'] as string)     ?? '',
+      messagingSenderId: (ENV['VITE_FIREBASE_MESSAGING_SENDER_ID'] as string) ?? '',
+      appId:             (ENV['VITE_FIREBASE_APP_ID'] as string)             ?? '',
     };
 
 // 開發模式（非 test）下檢查環境變數是否齊全
 if (IS_DEV && !IS_TEST_MODE) {
   const missing = REQUIRED_VARS.filter(
-    (key) => !import.meta.env[key] || import.meta.env[key] === `your-${key.toLowerCase()}`
+    (key) => !ENV[key] || ENV[key] === `your-${key.toLowerCase()}`
   );
   if (missing.length > 0) {
     logger.warn(
