@@ -1,8 +1,7 @@
 /**
  * Nerilo SDK — Firestore turnkey 工廠出口（subpath：`nerilo/firestore`）。
  *
- * 這裡是唯一動態載入 Firestore-backed `MeshChatService` 的地方，故本入口的型別圖含
- * mesh/relay/crypto。想要「純注入、零 Firebase 型別」的消費者請改用主入口 `nerilo`
+ * 這裡是唯一動態載入 `MeshChatService` 的地方，故本入口的型別圖含 mesh/crypto。想要「純注入、零 Firebase 型別」的消費者請改用主入口 `nerilo`
  * （NeriloClient + ports + InMemory 參考實作 + 純 reducer），本檔留給要 turnkey 的人。
  *
  * 架構收斂 2026-07：把重型工廠從主 barrel 拆出，讓 `nerilo` 的公開型別表面乾淨。
@@ -32,11 +31,10 @@ export async function createChatClient(config: {
   directory?: IRoomDirectory;   // 省略＝Firestore（延遲）
   storage?: IChatStorage;       // 省略＝IndexedDB（瀏覽器）
 }): Promise<NeriloClient> {
-  // 已知殘留（Spec 013）：MeshChatService 是 mesh 聊天引擎本體，卻還放在 features/ 底下。
-  // 這是 SDK 唯一穿過應用層目錄的相依。注意圍籬抓不到它——no-restricted-imports 只看
-  // 靜態 import 宣告，動態 import() 不在其射程內，所以這裡是靠註解自律而非機器強制。
-  // 收斂綁 ADR-0017：React 產線退役時把 MeshChatService 一併搬進 core，屆時這條註解可刪。
-  const { MeshChatService } = await import('../features/chat/MeshChatService');
+  // Spec 013 的已知殘留已於 2026-07-26 收斂：MeshChatService 已搬進 core/messaging，
+  // SDK 不再有任何路徑（含動態 import）穿過 src/features。由
+  // tests/unit/fitness.architecture.spec.ts 的動態 import 檢查釘住。
+  const { MeshChatService } = await import('../core/messaging/MeshChatService');
   const engine: IChatEngine = new MeshChatService(
     config.roomId, config.userId, config.storage, config.signaling, config.directory
   );

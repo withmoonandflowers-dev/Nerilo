@@ -7,7 +7,7 @@ import { readCount, orderKeyOf } from '@legacy/core/messaging/readReceipts'
 import type { ReadState } from '@legacy/core/messaging/readReceipts'
 import type { ReactionMap } from '@legacy/core/messaging/reactions'
 import type { ChatMessage } from '@legacy/types'
-import type { EncryptionState } from '@legacy/features/chat/encryptionGate'
+import type { EncryptionState } from '@legacy/core/messaging/encryptionGate'
 
 /** 單則訊息的表情 chips（emoji、數量、我是否按過）。 */
 export function reactionChipsFor(

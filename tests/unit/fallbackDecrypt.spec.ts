@@ -3,7 +3,7 @@
  * 服務晚就緒／金鑰晚就緒 → 輪詢等到成功；逾時仍不行才拋錯。
  */
 import { describe, it, expect } from 'vitest';
-import { boundedFallbackDecrypt } from '../../src/features/chat/fallbackDecrypt';
+import { boundedFallbackDecrypt } from '../../src/core/messaging/fallbackDecrypt';
 import type { FallbackEncryptedContent } from '../../src/services/FirestoreChatFallback';
 
 const payload: FallbackEncryptedContent = { ciphertext: 'ct', iv: 'iv', senderKeyEpoch: 0 };

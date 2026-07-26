@@ -58,7 +58,7 @@ function firebaseReachable(entry) {
 let failed = false;
 
 // ── 檢查 1：MeshChatService 靜態圖 ──
-const ENTRY = 'src/features/chat/MeshChatService.ts';
+const ENTRY = 'src/core/messaging/MeshChatService.ts';
 const { hits, scanned } = firebaseReachable(ENTRY);
 if (hits.length > 0) {
   failed = true;

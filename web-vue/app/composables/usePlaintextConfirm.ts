@@ -9,7 +9,7 @@
  * 確認後的送出走 allowDegraded=true（MeshChatService 出口閘的顯式降級參數）。
  */
 import { ref, computed, type Ref } from 'vue'
-import { sendDecisionFor, type EncryptionState } from '@legacy/features/chat/encryptionGate'
+import { sendDecisionFor, type EncryptionState } from '@legacy/core/messaging/encryptionGate'
 import { e2eeLabelFor } from '~/lib/chatDerive'
 
 export function usePlaintextConfirm(opts: {

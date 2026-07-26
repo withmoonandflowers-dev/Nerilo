@@ -7,7 +7,7 @@
  *   → fail-visible 提示「請雙方更新」，不靜默降級。
  */
 import { useEffect, useState } from 'react';
-import type { MeshChatService } from '../MeshChatService';
+import type { MeshChatService } from '../../../core/messaging/MeshChatService';
 import type { ConnectionState, EncryptionState } from '../../../types';
 import type { E2EEMode } from '../E2EEIndicator';
 

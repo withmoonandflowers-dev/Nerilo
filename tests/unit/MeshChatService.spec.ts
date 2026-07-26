@@ -5,7 +5,7 @@
  * - 歷史訊息載入
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MeshChatService } from '../../src/features/chat/MeshChatService';
+import { MeshChatService } from '../../src/core/messaging/MeshChatService';
 import type { IChatStorage } from '../../src/ports';
 import type { ChatMessage, GossipMessage } from '../../src/types';
 

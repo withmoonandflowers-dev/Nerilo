@@ -5,8 +5,8 @@
  *  - reaction/read 未達等級靜默略過；game 與 chat 同閘。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MeshChatService } from '../../src/features/chat/MeshChatService';
-import { PlaintextConfirmRequiredError } from '../../src/features/chat/encryptionGate';
+import { MeshChatService } from '../../src/core/messaging/MeshChatService';
+import { PlaintextConfirmRequiredError } from '../../src/core/messaging/encryptionGate';
 import type { EncryptionState } from '../../src/types';
 
 type ManagerStub = {

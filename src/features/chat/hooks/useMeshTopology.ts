@@ -3,7 +3,7 @@
  */
 
 import { useRef, useCallback, useMemo } from 'react';
-import { MeshChatService } from '../MeshChatService';
+import { MeshChatService } from '../../../core/messaging/MeshChatService';
 import type { IChatStorage } from '../../../ports';
 import type { ChatMessage, ConnectionState } from '../../../types';
 import { logger } from '../../../utils/logger';

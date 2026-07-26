@@ -6,7 +6,7 @@
  * - 畸形 game envelope 不炸（skip）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MeshChatService } from '../../src/features/chat/MeshChatService';
+import { MeshChatService } from '../../src/core/messaging/MeshChatService';
 import type { GossipMessage, P2PEnvelope } from '../../src/types';
 
 let capturedOnMessage: ((msg: GossipMessage) => void) | null = null;
