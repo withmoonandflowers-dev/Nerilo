@@ -4,10 +4,11 @@ This document describes what Nerilo's privacy and security guarantees mean in pr
 
 ## TL;DR — what "資料隱私" actually means
 
-Nerilo provides **end-to-end encrypted (E2EE) group messaging** with **best-effort sender anonymity** via simplified onion routing (Sphinx-Lite). Specifically:
+Nerilo provides **end-to-end encrypted (E2EE) group messaging**. It provides **no sender anonymity**. Specifically:
 
 - Message **content** is encrypted with AES-256-GCM under per-room sender keys distributed via ECDH P-256. Only group members can decrypt.
-- For multi-hop relays, messages travel through **2–3 onion-routed hops**, so an intermediate relay can see neither sender, receiver, nor plaintext — only "I received an opaque blob; pass it to the next hop."
+- **Sender identity is visible** to whoever carries your traffic. An onion-routing stack (Sphinx-Lite) exists in `src/core/relay/` and is unit-tested, but it is **not wired into any send path**: `RelayManager.sendViaRelay()` has zero callers repo-wide (verified 2026-07-26). Earlier revisions of this document described those hops as if they were active. They were not. Treat every anonymity property below as **design intent, not deployed defence**, until this line is removed.
+- The **blind courier** path (store-and-forward for offline recipients) *is* wired: the courier holds ciphertext, can verify authenticity, and cannot read content. That protects *content*, not *who sent it*.
 - **Metadata** (who is in which room, when messages flow, how big they are) is **not** end-to-end-protected against the Firebase signaling layer or a global passive observer.
 
 If you need strong anonymity (e.g. journalism, activism in adversarial jurisdictions), use a dedicated tool like Tor / SecureDrop / Signal. Nerilo is a **chat application with strong content confidentiality and modest metadata protection** — not an anonymity network.
@@ -16,11 +17,11 @@ If you need strong anonymity (e.g. journalism, activism in adversarial jurisdict
 
 | Adversary | Capabilities | What we defend against | What we don't |
 |---|---|---|---|
-| **Passive network observer** (ISP, café Wi-Fi sniffer) | Can read all bytes on the wire | TLS everywhere (Firebase HTTPS, WebRTC DTLS-SRTP), plus E2EE inside | Cannot read message content, but **can observe timing, packet sizes, peer IPs**. Cover traffic and 256-byte block padding mitigate but do not eliminate this. |
-| **Malicious relay node** (a peer carrying onion-routed traffic for others) | Decrypts only its own layer, sees ciphertext + next hop | Sphinx-Lite layered encryption: a relay learns nothing about sender, receiver, or content | A relay can **refuse to forward** (denial of service), drop packets, or attempt timing correlation. PeerScoring + multi-path routing partially compensate. |
+| **Passive network observer** (ISP, café Wi-Fi sniffer) | Can read all bytes on the wire | TLS everywhere (Firebase HTTPS, WebRTC DTLS-SRTP), plus E2EE inside | Cannot read message content, but **can observe timing, packet sizes, peer IPs**. Cover traffic and block padding are implemented but **not active**, so they mitigate nothing today. |
+| **Malicious relay / courier node** (a peer carrying traffic for others) | Sees ciphertext plus the sender and recipient identifiers on the envelope | Content confidentiality only: the courier cannot read the payload and can verify it was not tampered with | **Not defended: sender/recipient anonymity.** The Sphinx-Lite layering that would provide it is unwired (see TL;DR). A courier also can refuse to forward, drop, or attempt timing correlation. PeerScoring mitigates only the availability side. |
 | **Compromised signaling server** (Firebase Auth + Firestore breach) | Reads all WebRTC SDP/ICE, user identities, room membership | Cannot decrypt P2P traffic (DTLS-SRTP keys never touch Firebase). Cannot decrypt E2EE message content (sender keys never touch Firebase). | **Can deanonymize** room membership, link Firebase Auth UID → IP addresses (from ICE candidates), tamper with signaling to facilitate a MITM at WebRTC handshake (mitigated by ECDH TOFU on first message, see below). |
 | **Malicious peer** (someone you let into a room) | Full E2EE access — they are a legitimate group member | Nothing prevents a member from screenshotting / forwarding content out of band. We provide **forward secrecy** so past sessions remain confidential after key rotation. | Trust is symmetric within a room. Do not invite people you don't trust. |
-| **Global passive adversary** (nation-state with backbone access) | Sees all traffic, timing, sizes | The 256-byte padding + Poisson-distributed cover traffic raise the cost of size correlation | We do **not** claim resistance to a global passive adversary. With only 2–3 hops and no decoy guarantees, correlation attacks remain feasible. |
+| **Global passive adversary** (nation-state with backbone access) | Sees all traffic, timing, sizes | **Nothing.** Padding and cover-traffic generators exist in the codebase but are not active (`enableCoverTraffic` defaults to false and no caller enables it). | We do **not** claim any resistance to a global passive adversary. |
 
 ## Cryptographic primitives
 
@@ -70,15 +71,18 @@ mesh／gossip 房（Vue 線含 2 人房）不走 per-sender key，而是**單一
 - ❌ **Endpoint compromise** — if your device is malware-infected or someone shoulder-surfs, no encryption helps.
 - ❌ **Out-of-band leakage** — a recipient can copy/paste/screenshot.
 
-### Sphinx-Lite (onion routing)
+### Sphinx-Lite (onion routing) — NOT DEPLOYED
 
-Implementation: [src/core/relay/SphinxPacket.ts](../src/core/relay/SphinxPacket.ts).
+> **Status: design study.** Implemented in [src/core/relay/SphinxPacket.ts](../src/core/relay/SphinxPacket.ts)
+> and unit-tested, but **not reachable from any send path**. `SphinxPacket` has zero non-test imports and
+> `RelayManager.sendViaRelay()` has zero callers (verified 2026-07-26). Everything in this section describes
+> what the code *would* provide once wired. **None of it is protecting you today.**
 
-**What it protects against:**
+**What it would protect against (once wired):**
 - A single relay node cannot identify both the sender and the receiver — it knows only the previous and next hop. So **no single intermediary** can link sender→receiver.
 - Fixed 4096-byte payload + 256-byte block padding (see [MessagePadding.ts](../src/core/relay/MessagePadding.ts)) defeats size-based traffic analysis between hops.
 
-**What it does NOT protect against — be explicit:**
+**What it would still NOT protect against, even once wired:**
 - **Only 2–3 hops** vs Nym/Loopix's 5+. A determined adversary running 2 of those 3 nodes can fully deanonymize. Mitigated by `MultiPathSelector` (2–4 independent paths, greedy construction to avoid shared nodes) and `RelayScorer` peer reputation, but **not eliminated**.
 - **No SURBs** (Single-Use Reply Blocks). Reply paths require the recipient to know an onion route back, which leaks more metadata than a full Sphinx implementation.
 - **No timing decoys at the packet level** beyond `CoverTrafficGenerator`'s Poisson dummy stream, which is **battery-aware** (throttled on low battery) and therefore not constant-rate. A patient observer can correlate bursts.
@@ -142,5 +146,11 @@ The following are **not** part of Nerilo's threat model:
 
 ## Changelog
 
+- 2026-07-26 — **更正**：先前版本把 Sphinx-Lite 洋蔥路由寫成已部署的防護（TL;DR、對手表的
+  「惡意中繼」與「全球被動對手」兩格、以及 Sphinx 專節皆為現在式）。實測查證
+  `SphinxPacket` 零非測試 import、`RelayManager.sendViaRelay()` 零呼叫，該機制**從未接線**；
+  cover traffic 與 padding 同樣未啟用（`enableCoverTraffic` 預設 false 且無呼叫端開啟）。
+  已全面改為「未部署」並移除相關匿名性宣稱。本文件此前高估了自身的防護能力，這是文件錯誤，
+  不是實作退步。
 - 2026-07-18 — Spec 012：新增 mesh 房間金鑰（keyx）節與 Q4 輪替口徑（在籍者可解全歷史為刻意取捨）；known limitations 補第 9 點；出口閘／信使拒收明文入列。
 - 2026-05-27 — initial draft. Covers Sphinx-Lite, ECDH+AES-GCM sender keys, Firebase trust boundary. Tracking gaps: cover-traffic battery side-channel; IndexedDB at-rest encryption; per-tenant Firebase isolation.

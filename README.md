@@ -10,16 +10,20 @@ Current implementation status, verified test baselines, active work and known ga
 |---|---|
 | E2EE group chat (AES-256-GCM, ECDH P-256 key exchange) | A polished consumer product |
 | 2–20 peers, mesh + gossip topology auto-selected | A drop-in Signal/Slack replacement |
-| Best-effort sender anonymity via 2–3-hop onion routing | A strong anonymity network (see [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)) |
+| Blind-courier store-and-forward: offline recipients get ciphertext held by a passing peer | Anonymous. **Onion routing is written and unit-tested but NOT wired** — see below |
 | Honest about its limits — read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before relying on it | Audited / certified for high-stakes use |
 
 ## Core features
 
 - 🔒 **E2EE messages** — AES-256-GCM sender keys, distributed per-recipient via ECDH P-256. Auto-rotates every 100 messages or 1 hour.
 - 🕸️ **Mesh + gossip** — 2-peer direct, 3–6 full mesh, 7–20 partial mesh (wired & tested to 10-person rooms; upgrades on join, never downgrades mid-session), >20 super-node (dormant).
-- 🛰️ **Sphinx-Lite onion routing** — 2–3 hops, fixed 4 KB packets, Poisson cover traffic. Defeats single-relay deanonymization (not global passive adversaries).
+- 🤝 **Blind-courier store-and-forward** — when the recipient is offline, a passing peer holds the ciphertext and hands it over on reconnect. The courier verifies authenticity but cannot read content, and earns credit against a co-signed receipt. Wired and covered by end-to-end tests.
 - 📦 **Firestore as signaling + fallback** — message content is encrypted before any Firestore write.
 - 📝 **IndexedDB** persistence — clear browser data to forget everything.
+
+### Written but not wired
+
+Be aware before you rely on it: `src/core/relay/` contains a Sphinx-Lite onion-routing and Kademlia DHT stack that is implemented and unit-tested but **not connected to any send path**. `RelayManager.sendViaRelay()` has zero callers repo-wide; only the inbound handler is reachable. Nerilo therefore provides **no sender anonymity today**. Treat that code as a design study, not a shipped capability (verified 2026-07-26).
 
 ## Quick start
 
@@ -108,7 +112,7 @@ Older zh-TW design docs in [docs/](docs/) (架構文件, 協議文件, 新功能
 src/core/
 ├── p2p/          # WebRTC connections, channel bus, signaling, capability negotiation
 ├── mesh/         # Gossip protocol, topology selection, heartbeat, identity (ECDSA P-256)
-├── relay/        # Sphinx-Lite onion routing + Kademlia DHT + peer scoring
+├── relay/        # Blind-courier store-and-forward (wired) + onion/DHT stack (NOT wired)
 ├── crypto/       # ECDH P-256 key exchange + AES-256-GCM sender keys
 ├── transport/    # Multi-channel bus, store-and-forward, lifecycle
 ├── ordering/     # Causal ordering + HLC
@@ -123,7 +127,7 @@ E2EE flow: ECDH P-256 between peers → derive AES-256-GCM sender key → AES-25
 
 - ✅ **Content** is unreadable to Firebase, relays, and passive observers.
 - ⚠️ **Metadata** (who is in which room, when, message sizes) leaks to whoever runs the signaling layer.
-- ⚠️ **2–3 onion hops** is not strong anonymity. Don't use this for activism in adversarial jurisdictions.
+- ❌ **No sender anonymity.** The onion-routing stack is unwired (see "Written but not wired"). Anyone carrying your traffic sees who sent it. Do not use this for activism in adversarial jurisdictions.
 - ⚠️ **IndexedDB private keys** are stored at-rest — physical device access or same-origin XSS can extract them.
 - ✅ **Firestore rules** enforce: only-self meshIdentity writes, participant-only signaling reads, ±30 s anti-replay on fallback messages.
 

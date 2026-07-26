@@ -70,22 +70,26 @@ modules** — fully tested but not yet wired into app flows (mined from PR #5).
 
 ### Relay Infrastructure (`src/core/relay/`)
 
-Dual-layer design: Sphinx-Lite onion routing + Kademlia DHT.
+Dual-layer design **on paper**。實測（2026-07-26）：**出站路徑整條死的**——
+`RelayManager.sendViaRelay()` 全 repo 零呼叫，只有入站 `handleRelayPacket` 被
+`MeshGossipManager:478` 接。但 `MeshGossipManager.initialize()` 仍每場 `new RelayManager()`
+並 `initialize()`，所以下列多數元件**有被實例化並啟動、只是服務一條沒有出口的路徑**。
+標記口徑：**[未實例化]**＝連 new 都沒有；**[空轉]**＝有啟動但只服務死的出站路徑。
 
 | Component | Purpose |
 |---|---|
-| `RelayManager` | Orchestrator — coordinates all relay sub-components |
-| `SphinxPacket` | 2-3 hop onion routing (ECDH + AES-GCM per hop) |
-| `KademliaRouter` | XOR-distance DHT, S/Kademlia diversified routing |
+| `RelayManager` **[半接線]** | Orchestrator；每場 mesh 建構並 initialize（NAT 偵測＋3 組計時器），但送出 API 無呼叫端 |
+| `SphinxPacket` **[未實例化]** | 2-3 hop onion routing (ECDH + AES-GCM per hop) |
+| `KademliaRouter` **[空轉]** | XOR-distance DHT, S/Kademlia diversified routing |
 | `PeerScoring` | GossipSub v1.1 multi-dimensional behavior scoring (-100 to +100) |
-| `RateLimiter` | Sliding window per-peer + global rate limits |
-| `RelayScorer` | Node quality: 0.35 latency + 0.25 reliability + 0.20 bandwidth + 0.10 uptime + 0.10 diversity |
-| `MultiPathSelector` | 2-4 independent paths, greedy construction avoiding shared nodes |
-| `MessageAssembler` | First-arrival-wins dedup, 5min TTL, 10K LRU |
-| `PathQualityTracker` | Rolling window feedback loop (50 samples) |
-| `CoverTrafficGenerator` | Poisson-distributed dummy packets, battery-aware |
-| `NATDetector` | ICE candidate analysis for NAT classification |
-| `MessagePadding` | 256-byte block padding to prevent size analysis |
+| `RateLimiter` **[空轉]** | Sliding window per-peer + global rate limits |
+| `RelayScorer` **[空轉]** | Node quality: 0.35 latency + 0.25 reliability + 0.20 bandwidth + 0.10 uptime + 0.10 diversity |
+| `MultiPathSelector` **[空轉]** | 2-4 independent paths, greedy construction avoiding shared nodes |
+| `MessageAssembler` **[空轉]** | First-arrival-wins dedup, 5min TTL, 10K LRU |
+| `PathQualityTracker` **[空轉]** | Rolling window feedback loop (50 samples) |
+| `CoverTrafficGenerator` **[未啟用]** | Poisson dummy packets；`enableCoverTraffic` 預設 false 且無呼叫端開啟 |
+| `NATDetector` **[空轉]** | ICE candidate analysis for NAT classification |
+| `MessagePadding` **[空轉]** | 256-byte block padding to prevent size analysis |
 
 ### E2EE Flow
 
@@ -127,7 +131,7 @@ Use `import { logger } from '@/utils/logger'` instead of `console.log`:
 
 - **No blockchain yet** — relay incentives use local credits; blockchain is a future option
 - **Firestore as fallback** — when P2P connections fail, messages relay through Firestore
-- **Fixed-size packets** — 4096-byte relay payloads prevent traffic analysis
+- ~~**Fixed-size packets** — 4096-byte relay payloads prevent traffic analysis~~ 未生效：該路徑未接線（2026-07-26 查證）
 - **Score-based peer selection** — PeerScoring gates relay eligibility, gossip participation, and disconnect decisions
 
 ## CI/CD
