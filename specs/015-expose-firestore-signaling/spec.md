@@ -1,7 +1,7 @@
 # Spec 015：把 Firestore signaling 開成可單獨取用的公開出口
 
 - 軌別：feature
-- 狀態：implementing（T1-T5 完成；T6／V1 待 block-brawl 跨設定檔實測）
+- 狀態：blocked（T1-T5 完成；T6／V1 卡 Spec 014——第三方要用 signaling 得先有房，而匿名不能建房）
 - 建立：2026-07-25／最後更新：2026-07-26
 - 關聯：ADR-0025（可嵌入 SDK）、ADR-0032／Spec 005（p2p2p warm 中繼）、
   `src/core/p2p/SignalingTransport.ts`（`RoomSignalingTransport`／`RelaySignalingTransport`）、
@@ -160,13 +160,40 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
 - [x] T5：SDK-QUICKSTART 新章節「只要 signaling，不要整個聊天客戶端」，含可複製的
       rules 片段（依實際 `firestore.rules:198-219` 節錄）、`signals` 複合索引、TTL 建議、
       誠實邊界四點，以及 warm 的前提與退化說明。**2026-07-26 完成。**
-- [ ] T6：block-brawl 端把 signaling 工廠換成 `createFirestoreSignaling`，跑跨設定檔對戰（V1）。
+- [~] T6：block-brawl 端把 signaling 工廠換成 `createFirestoreSignaling`，跑跨設定檔對戰（V1）。
+      **2026-07-26 查證後判定：如原樣不可達成，範圍已調整並記錄理由。**
+
+      **硬阻礙（實測 rules 原文，非推論）**：
+      1. `firestore.rules:144` — 建房必須是**非匿名**帳號
+         （`request.auth.token.firebase.sign_in_provider != "anonymous"`）。
+      2. `firestore.rules:198-204` — 讀寫 `signals` 必須是該房 `participants` 或 `ownerUid`，
+         rules 會 `get()` 父層房間文件。
+      3. 合起來：任何第三方要用這個 signaling，**得先有一個 Nerilo 房間，且房主是註冊帳號**。
+         匿名玩家可以「加入」既有房（`isAuthenticated()` 只檢查 `request.auth != null`），
+         但不能開房。遊戲大廳的玩家全是匿名的，這條路走不通。
+
+      **這正是 Spec 014 的缺口，而且它比原本評估的更嚴重**：014 不是「有了更好」，
+      是 015 對非 Nerilo-app 嵌入者可用的**前置條件**。原本排序（先 015、014 等回饋）
+      在此被實測推翻——回饋來了，結論是兩者相依。
+
+      **已交付的可達成部分**：`tests/integration/sdk-signaling.spec.ts`，在 emulator 上
+      以**真實 rules** 驗證出口本身可用：SDK 出口送出的 signal 被另一個 FirebaseApp／
+      另一個帳號讀到；對端寫入的 signal 被 SDK 的 `subscribe` 收到；非參與者被 rules 擋下。
+      3 例全綠。
+
+      **它沒有證明什麼（不得引用為已完成）**：沒有證明跨實體裝置對戰、沒有證明
+      block-brawl 能用（因為上述阻礙）、沒有碰 production Firestore。
+
+      〔實作期教訓〕反向那條一度紅，`received` 收到的是前一支測試的 offer：
+      admin SDK 刪除文件後，web SDK 的本地快取仍會在 `onSnapshot` 首次快照回放已刪文件。
+      改成每支測試一間新房。差點誤判成產品 bug。
 
 ## 6. 驗收（黃金判準）
 
-- [ ] V1 外部嵌入者實證：block-brawl 把 signaling 工廠從自製 BroadcastChannel 換成本 spec 的
-      Firestore 出口後，**跨瀏覽器設定檔（不同 Firebase 匿名帳號）對戰可成立**，
-      且 `connection.js` 零改動。不能用單元測試代替。
+- [ ] V1 外部嵌入者實證：**未達成，卡 Spec 014**（見 T6）。原條件「block-brawl 跨設定檔對戰」
+      在現行 rules 下不可能：匿名帳號不能建房，而 signals 需要房間 participants 身分。
+      已交付的替代證據（`tests/integration/sdk-signaling.spec.ts`，真實 rules、emulator、3 例綠）
+      只證明「出口本身可用」，**不等於** V1。V1 維持未打勾，等 014 落地後重跑。
 - [x] V2 warm 的誠實性：**綠**。省略 `warm` 時直接回傳 cold 工廠本身，等價以
       `expect(createWarmColdSignaling({cold})).toBe(cold)` 的 identity 斷言驗證，
       並另有「完全不建 warm 傳輸」一條擋空殼（`WarmColdSignalingExport.spec.ts` 8 例）。
