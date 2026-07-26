@@ -11,7 +11,7 @@
  * All factors are normalized to [0, 1] before weighting.
  */
 
-import type { RelayNodeMetrics, ScoredRelayNode, NATType } from './types';
+import type { RelayNodeMetrics, ScoredRelayNode, NATType } from '../types';
 
 /** Scoring weight configuration */
 export interface ScoringWeights {

@@ -7,7 +7,6 @@ import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
-import { RelayManager } from '../relay/RelayManager';
 import { PeerScoring } from '../relay/PeerScoring';
 import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
@@ -31,7 +30,6 @@ export class MeshGossipManager {
   private topologyManager: MeshTopologyManager | null = null;
   private messageHandler: GossipMessageHandler | null = null;
   private heartbeatService: HeartbeatService | null = null;
-  private relayManager: RelayManager | null = null;
   private peerScoring: PeerScoring | null = null;
   private initialized = false;
   private neighborCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -196,13 +194,10 @@ export class MeshGossipManager {
         this.topologyManager.updateParticipantCount(participantCount);
       }
 
-      // 4. 初始化 PeerScoring & RelayManager
+      // 4. 初始化 PeerScoring（gossip 與 GossipMessageHandler 都在用）。
+      // RelayManager 已於 2026-07-26 移除：它的送出 API sendViaRelay() 全 repo 零呼叫，
+      // 卻每場 mesh 都跑一次 NAT 偵測與三組計時器——付成本換零功能（ADR-0031 修訂二）。
       this.peerScoring = new PeerScoring();
-      this.relayManager = new RelayManager({
-        localNodeId: userId,
-        roomId: this.roomId,
-      });
-      await this.relayManager.initialize();
 
       // 5. 初始化訊息處理器（注入 PeerScoring + 複本持久化，ADR-0023 P1）。
       // 持久層不可用（node 測試/Safari 隱私模式）時為 null → 記憶體模式。
@@ -412,8 +407,6 @@ export class MeshGossipManager {
   private setupNeighborMessageHandlers(): void {
     if (!this.topologyManager || !this.messageHandler) return;
 
-    /** 已註冊到 RelayManager 的 peer 集合 */
-    const registeredRelayPeers = new Set<string>();
     /**
      * 已接線（onMessage/onDigest）的連線實例。必須以「實例」為鍵：
      * - 以 peerId 為鍵會漏掉重連後的新實例（新連線沒有監聽器 → 收不到訊息）；
@@ -426,17 +419,9 @@ export class MeshGossipManager {
       if (!this.topologyManager || !this.messageHandler) return;
 
       const neighbors = this.topologyManager.getNeighbors();
-      const currentIds = new Set<string>();
 
       neighbors.forEach(neighbor => {
         const peerId = neighbor.getId();
-        currentIds.add(peerId);
-
-        // 註冊新鄰居到 RelayManager
-        if (this.relayManager && !registeredRelayPeers.has(peerId)) {
-          this.relayManager.registerPeer(peerId);
-          registeredRelayPeers.add(peerId);
-        }
 
         if (!wiredConnections.has(neighbor)) {
           wiredConnections.add(neighbor);
@@ -472,12 +457,11 @@ export class MeshGossipManager {
           }
 
           neighbor.onMessage(async (message: GossipMessage) => {
-            // 處理 relay 封包
+            // relay:forward 封包：出站路徑已隨 RelayManager 移除，本端不再處理。
+            // 仍保留這道早退——不能讓它落到 messageHandler（那預期的是 gossip 訊息）。
+            // 釘子：tests/unit/MeshRelayDispatch.spec.ts C1。
             const raw = message as unknown as Record<string, unknown>;
-            if (raw.type === 'relay:forward') {
-              await this.relayManager?.handleRelayPacket(peerId, JSON.stringify(raw));
-              return;
-            }
+            if (raw.type === 'relay:forward') return;
 
             if (this.messageHandler) {
               await this.messageHandler.handleReceivedMessage(message, peerId);
@@ -512,14 +496,6 @@ export class MeshGossipManager {
           void this.messageHandler!.sendDigestTo(neighbor);
         }
       });
-
-      // 取消註冊已離開的鄰居
-      for (const peerId of registeredRelayPeers) {
-        if (!currentIds.has(peerId)) {
-          this.relayManager?.unregisterPeer(peerId);
-          registeredRelayPeers.delete(peerId);
-        }
-      }
 
       // 卸除已換代/離場連線的目錄 gossip（清 announce timer）
       const liveConnections = new Set(neighbors);
@@ -740,10 +716,6 @@ export class MeshGossipManager {
       this.heartbeatService.stop();
       this.heartbeatService = null;
     }
-    if (this.relayManager) {
-      this.relayManager.shutdown();
-      this.relayManager = null;
-    }
     if (this.peerScoring) {
       this.peerScoring.destroy();
       this.peerScoring = null;
@@ -769,12 +741,5 @@ export class MeshGossipManager {
     this.mismatchNotifiedPeers.clear();
     this.initialized = false;
     logger.info('[MeshGossipManager] Cleaned up', { roomId: this.roomId });
-  }
-
-  /**
-   * 取得 RelayManager 實例（供 ChatService 等外部模組使用）
-   */
-  getRelayManager(): RelayManager | null {
-    return this.relayManager;
   }
 }

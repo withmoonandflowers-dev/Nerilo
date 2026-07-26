@@ -12,7 +12,7 @@
  * - Exponential backoff proof-of-life checks
  */
 
-import type { KBucketEntry, KBucket } from './types';
+import type { KBucketEntry, KBucket } from '../types';
 
 /** Number of entries per bucket */
 const K = 8;

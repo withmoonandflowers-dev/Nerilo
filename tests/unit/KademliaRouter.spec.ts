@@ -3,7 +3,7 @@ import {
   KademliaRouter,
   xorDistance,
   compareDistance,
-} from '../../src/core/relay/KademliaRouter';
+} from '../../src/core/relay/onion/KademliaRouter';
 
 describe('KademliaRouter', () => {
   describe('xorDistance', () => {

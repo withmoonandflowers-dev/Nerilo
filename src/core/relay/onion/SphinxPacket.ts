@@ -16,7 +16,7 @@
  *   → decrypted routing info reveals: { nextHop, nextHeader, delayHint }
  */
 
-import type { SphinxHeader, RoutingInfo, SphinxPacket as SphinxPacketType, RouteHop } from './types';
+import type { SphinxHeader, RoutingInfo, SphinxPacket as SphinxPacketType, RouteHop } from '../types';
 import { padMessage, unpadMessage } from './MessagePadding';
 
 /** Maximum hops supported */

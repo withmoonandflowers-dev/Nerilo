@@ -6,7 +6,7 @@ import {
   unpadString,
   getPaddedSize,
   getBlockSize,
-} from '../../src/core/relay/MessagePadding';
+} from '../../src/core/relay/onion/MessagePadding';
 
 describe('MessagePadding', () => {
   describe('padMessage / unpadMessage', () => {

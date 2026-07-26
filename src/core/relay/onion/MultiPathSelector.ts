@@ -12,7 +12,7 @@
  * - 4 paths: Unstable network, many unreliable nodes
  */
 
-import type { RelayPath, MultiPathSelection, ScoredRelayNode } from './types';
+import type { RelayPath, MultiPathSelection, ScoredRelayNode } from '../types';
 
 /** Minimum paths to select */
 const MIN_PATHS = 2;

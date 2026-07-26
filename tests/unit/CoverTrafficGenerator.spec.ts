@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { CoverTrafficGenerator } from '../../src/core/relay/CoverTrafficGenerator';
+import { CoverTrafficGenerator } from '../../src/core/relay/onion/CoverTrafficGenerator';
 
 describe('CoverTrafficGenerator', () => {
   let generator: CoverTrafficGenerator;

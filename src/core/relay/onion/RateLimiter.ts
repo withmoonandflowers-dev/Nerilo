@@ -11,7 +11,7 @@
  * - Global rate limit for total relay throughput
  */
 
-import type { RateLimitConfig, RateLimitStatus } from './types';
+import type { RateLimitConfig, RateLimitStatus } from '../types';
 
 const DEFAULT_CONFIG: RateLimitConfig = {
   maxMessages: 100,

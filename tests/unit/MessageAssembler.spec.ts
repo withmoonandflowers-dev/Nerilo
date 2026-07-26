@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { MessageAssembler } from '../../src/core/relay/MessageAssembler';
+import { MessageAssembler } from '../../src/core/relay/onion/MessageAssembler';
 
 describe('MessageAssembler', () => {
   let assembler: MessageAssembler;

@@ -22,7 +22,7 @@
 
 import { NATDetector } from './NATDetector';
 import { KademliaRouter } from './KademliaRouter';
-import { PeerScoring } from './PeerScoring';
+import { PeerScoring } from '../PeerScoring';
 import { RateLimiter } from './RateLimiter';
 import { RelayScorer } from './RelayScorer';
 import { MultiPathSelector } from './MultiPathSelector';
@@ -30,14 +30,14 @@ import { MessageAssembler } from './MessageAssembler';
 import { PathQualityTracker } from './PathQualityTracker';
 import { CoverTrafficGenerator } from './CoverTrafficGenerator';
 import { padMessage, unpadMessage } from './MessagePadding';
-import { LocalCreditProvider } from '../incentive/LocalCreditProvider';
+import { LocalCreditProvider } from '../../incentive/LocalCreditProvider';
 import type {
   RelaySystemState,
   RelayEvent,
   RelayEventType,
   RelayNodeMetrics,
   RelayPath,
-} from './types';
+} from '../types';
 
 /** Relay system configuration */
 export interface RelayManagerConfig {
