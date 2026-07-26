@@ -22,9 +22,7 @@ const PARKED = [
   { name: 'community', alias: '**/core/community/**', rel: '../community/**' },
   { name: 'game', alias: '**/core/game/**', rel: '../game/**' },
   { name: 'transport', alias: '**/core/transport/**', rel: '../transport/**' },
-  { name: 'chain', alias: '**/core/chain/**', rel: '../chain/**' },
   { name: 'ledger', alias: '**/core/ledger/**', rel: '../ledger/**' },
-  { name: 'protocol', alias: '**/core/protocol/**', rel: '../protocol/**' },
   { name: 'features', alias: '**/core/features/**', rel: '../features/**' },
   { name: 'relay/onion', alias: '**/core/relay/onion/**', rel: '../relay/onion/**' },
 ];

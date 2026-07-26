@@ -11,7 +11,6 @@ export default defineConfig({
       '**/node_modules/**',
       // game/ 於 ADR-0015 解凍（遊戲資料流成為第二參考應用），測試恢復
       'tests/unit/CommunityManager.spec.ts',
-      'tests/unit/ChainMerge.spec.ts',
       'tests/unit/SharedLedgerEngine.spec.ts',
     ],
     pool: 'forks',

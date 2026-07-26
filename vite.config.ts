@@ -57,7 +57,6 @@ export default defineConfig(({ mode }) => ({
         // P2P 與傳輸層
         'src/core/p2p/P2PConnectionManager.ts',
         'src/core/transport/MultiChannelBus.ts',
-        'src/core/protocol/AckManager.ts',
         // Mesh 網路與安全
         'src/core/mesh/MeshTopologyManager.ts',
         'src/core/mesh/SecurityManager.ts',
@@ -67,8 +66,6 @@ export default defineConfig(({ mode }) => ({
         // Ledger 與 Chain
         'src/core/ledger/SharedLedgerEngine.ts',
         'src/core/ledger/ForkResolver.ts',
-        'src/core/chain/ChainMergeService.ts',
-        'src/core/chain/ChainSyncService.ts',
         // Feature 系統
         'src/core/features/FeatureRegistry.ts',
         'src/core/features/built-in/ChatFeature.ts',

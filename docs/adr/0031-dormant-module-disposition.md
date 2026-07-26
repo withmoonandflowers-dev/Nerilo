@@ -70,3 +70,13 @@ PARK 合計約 8684 行。**PARK ≠ 刪**：程式與測試保留（可稽核�
 
 - `MeshChatService` 靜態相依圖：**56 檔 → 44 檔**。
 - core 死重佔比從約 43% 降下來，但 PARK 不等於刪除；程式與測試都保留，可稽核、可解凍。
+
+### 本輪刪除（2026-07-26）
+
+| 模組 | 行數 | 依據 |
+|---|---|---|
+| `core/chain`（ChainMergeService／ChainSyncService） | 936 | 產品流與測試外零引用；功能與 ADR-0023 的 mesh 複寫日誌重疊，修訂一已標「傾向未來 DELETE」 |
+| `core/protocol`（AckManager） | 91 | 疑似殘留，修訂一已標「傾向 DELETE」 |
+
+一併清掉：兩者的 spec、`vite.config.ts` 的 coverage include 條目、`vitest.unit.config.mjs`
+的排除條目、圍籬名單與 fence 探針名單。程式碼在 git 歷史裡可追回，PARK 名單不再背它們。
