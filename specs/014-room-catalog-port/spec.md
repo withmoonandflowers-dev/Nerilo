@@ -1,10 +1,20 @@
 # Spec 014：補一個輕量的「可加入房間目錄」契約
 
 - 軌別：feature
-- 狀態：planned
+- 狀態：planned（優先序提高：2026-07-26 實測確認它是 Spec 015 對外可用的前置條件，不是加分項）
 - 建立：2026-07-25／最後更新：2026-07-25
 - 關聯：ADR-0025（可嵌入 SDK）、ADR-0027（room directory gossip）、`src/ports/IRoomDirectory.ts`、
   `src/services/RoomService.ts:901`（`getPublicRooms`）、block-brawl `docs/nerilo-integration.md`（缺口 1）
+
+> **2026-07-26 更新：本 spec 的必要性已由實測證實，不再是「沒有被擋住的使用者」。**
+> Spec 015 的 T6 查出：第三方要用 signaling 出口，得先有 Nerilo 房間、且房主須為
+> 非匿名帳號（`firestore.rules:144`、`:198-204`）。純匿名情境（遊戲大廳）因此完全
+> 過不去。本 spec 補的正是那個缺口——它是 015 對外可用的**前置條件**，
+> 而非原本評估的「有了更好」。
+>
+> 注意：真正的阻礙不只是「缺一個目錄契約」，還包含「匿名能不能建房」這個**安全模型
+> 決策**（CROSS-MACHINE-HANDOFF 已列為待使用者拍板、勿自動實作）。本 spec 進 plan
+> 之前必須先解那一題。
 
 ## 1. 要做什麼、為什麼（specify）
 
