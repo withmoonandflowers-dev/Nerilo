@@ -11,7 +11,14 @@ import { NeriloClient } from './NeriloClient';
 import type { IChatEngine } from './IChatEngine';
 import type { SignalingFactory } from '../core/p2p/SignalingTransport.types';
 import { createLazySignalingTransport } from '../core/p2p/lazySignalingTransport';
+import { createWarmColdSignalingFactory } from '../core/p2p/warmColdSignalingFactory';
+import type { SignalRelayBus, PeerKeyResolver } from '../core/p2p/PeerRelaySignalingTransport';
+import type { SignFn, SignalEnvelope } from '../core/p2p/SignalEnvelope';
 import type { IRoomDirectory, IChatStorage } from '../ports';
+
+// warm 後端的實作者需要這些型別來寫自己的 relayBus / peerKeys（Spec 015 T3）。
+// 信封本身是不透明的：中繼只依 `to` 轉密文，不解讀內容。
+export type { SignalRelayBus, PeerKeyResolver, SignalEnvelope, SignFn };
 
 /**
  * 通用工廠：建一個 NeriloClient。三個後端全可注入（signaling / directory / storage）。
@@ -58,6 +65,68 @@ export function createFirestoreSignaling(): SignalingFactory {
       const m = await import('../core/p2p/SignalingTransport');
       return new m.RoomSignalingTransport(roomId, channelLabel);
     });
+}
+
+/**
+ * warm 中繼 signaling 的後端（Spec 015 T3）。
+ *
+ * **先讀這段再決定要不要用**：warm 不是一個可以獨立安裝的傳輸，它是架在**你已經有的
+ * mesh 鄰居連線**上的中繼——`relayBus` 得把信封送進那些連線，`hasWarmPath()` 回報
+ * 現在有沒有連線可用。沒有 mesh 就沒有這個底材，`hasWarmPath()` 恆 false，
+ * 整條路徑等同純 cold。這種情況請直接用 `createFirestoreSignaling()`，不要繞這裡。
+ *
+ * 有 mesh 時的收益：新成員的 signaling 走既有鄰居加密轉送，不落伺服器
+ * （「第三人零 Firestore 寫入」，Spec 005）。
+ */
+export interface WarmSignalingBackend {
+  /** 本端 signaling 身分 id（進信封的 nodeId）。 */
+  nodeId: string;
+  /** 中繼匯流排：把信封交給你的 mesh 遞送，並訂閱寄給自己的入站信封。 */
+  relayBus: SignalRelayBus;
+  /** 現在有沒有暖路徑可試。每次呼叫實時求值。 */
+  hasWarmPath: () => boolean;
+  /** 本端身分材料。`epoch` 省略＝0（金鑰世代，供收端選鑰）。 */
+  identity: { ecdhPrivateKey: CryptoKey; epoch?: number; sign: SignFn };
+  /** 對端公鑰解析（你的名冊）。 */
+  peerKeys: PeerKeyResolver;
+  /**
+   * 對特定對端多等一會兒 warm 再退 cold。省略＝warm 一敗即退。
+   * 這是內部啟發式的注入點，語義可能隨版本調整，不建議依賴細節。
+   */
+  patience?: {
+    applies: (remoteUid: string) => Promise<boolean> | boolean;
+    totalMs: number;
+    retryDelayMs: number;
+  };
+}
+
+/**
+ * 造一個 warm/cold signaling 工廠（Spec 015 T3）。
+ *
+ * **省略 `warm` 時直接回傳 cold 工廠本身**——不是包一層看起來像 warm 的殼。
+ * 這是刻意的：讓「沒有 mesh 就沒有 warm」在程式上是可驗證的事實，而不是文件上的
+ * 但書（驗收 V2 有測試釘住這個等價）。
+ */
+export function createWarmColdSignaling(
+  options: { cold?: SignalingFactory; warm?: WarmSignalingBackend } = {}
+): SignalingFactory {
+  const cold = options.cold ?? createFirestoreSignaling();
+  const warm = options.warm;
+  if (!warm) return cold; // 明示退化：無 warm 後端＝就是 cold，不加殼
+
+  return createWarmColdSignalingFactory({
+    nodeId: warm.nodeId,
+    relayBus: warm.relayBus,
+    hasWarmPath: warm.hasWarmPath,
+    identity: {
+      ecdhPrivateKey: warm.identity.ecdhPrivateKey,
+      epoch: warm.identity.epoch ?? 0,
+      sign: warm.identity.sign,
+    },
+    peerKeys: warm.peerKeys,
+    cold,
+    patience: warm.patience,
+  });
 }
 
 /** Firestore 便利工廠（＝createChatClient 省略後端 → 延遲載入 Firestore/IndexedDB 預設）。 */

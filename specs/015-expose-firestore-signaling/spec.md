@@ -1,8 +1,8 @@
 # Spec 015：把 Firestore signaling 開成可單獨取用的公開出口
 
 - 軌別：feature
-- 狀態：planned
-- 建立：2026-07-25／最後更新：2026-07-25
+- 狀態：implementing（T1-T5 完成；T6／V1 待 block-brawl 跨設定檔實測）
+- 建立：2026-07-25／最後更新：2026-07-26
 - 關聯：ADR-0025（可嵌入 SDK）、ADR-0032／Spec 005（p2p2p warm 中繼）、
   `src/core/p2p/SignalingTransport.ts`（`RoomSignalingTransport`／`RelaySignalingTransport`）、
   `src/core/p2p/WarmColdSignalingTransport.ts`、block-brawl `docs/nerilo-integration.md`（缺口 2）
@@ -80,7 +80,11 @@ createFirestoreSignaling(): SignalingFactory
 createWarmColdSignaling(deps: WarmSignalingDeps): SignalingFactory
 ```
 
-`WarmSignalingDeps` 是新的公開型別，明列 warm 需要的四件事（本端 uid、身分金鑰來源、
+〔實作期修訂〕型別最後拆成兩個：內部組裝吃 `WarmSignalingDeps`（`core/p2p/warmColdSignalingFactory.ts`），
+公開表面吃 `WarmSignalingBackend`（`sdk/firestore.ts`，`epoch` 選填、無 coldFallback／clock）。
+內外分家的理由：公開型別不該逼嵌入者認識 `coldFallback` 這種只有 mesh 內部會用的參數。
+
+原計畫的單一型別明列 warm 需要的四件事（本端 uid、身分金鑰來源、
 對端公鑰解析、鄰居就緒判定）。這四件事目前散在 `IdentityManager`／`SigRelayRouter`／
 directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型別——這是本 spec 最大的
 設計工作量，也是「表面拉大」的具體代價。
@@ -139,9 +143,23 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
 
       適應度函數如預期咬人：`tests/unit/fitness.architecture.spec.ts` 的公開表面快照
       因新匯出而紅，依其設計「動它＝改公開契約，需顯性 review」——快照已顯性更新並附理由。
-- [ ] T3：加 `createWarmColdSignaling(deps)`，缺 mesh 相依時明示退化為 cold。
-- [ ] T4：`sdkSurface` 測試納入新匯出；`prune-sdk-types --max=30` 確認不爆。
-- [ ] T5：SDK-QUICKSTART 新章節 + rules／索引範本 + 誠實邊界三句。
+- [x] T3：加 `createWarmColdSignaling(deps)`，缺 mesh 相依時明示退化為 cold。**2026-07-26 完成。**
+
+      「明示退化」的落實方式：省略 `warm` 時**直接回傳 cold 工廠本身**，不包任何看起來
+      像 warm 的殼。這讓 V2 的等價可以用 identity 斷言（`toBe(cold)`）驗證，而不是
+      靠讀文件相信。8 條單元覆蓋：無 warm 的兩種等價、有 warm 帶／不帶 remoteUid、
+      epoch 預設 0 與顯式值、`hasWarmPath` 恆 false 仍可建。
+
+      公開表面代價（spec §4.1 已預先記帳，此處結算）：除了 `createWarmColdSignaling`
+      與 `WarmSignalingBackend`，還要一併公開實作者寫自己 relayBus／peerKeys 所需的
+      `SignalRelayBus`／`PeerKeyResolver`／`SignalEnvelope`／`SignFn` 四個型別。
+      `nerilo/firestore` 的匯出從 2 個變成 9 個。
+- [x] T4：`sdkSurface` 測試納入新匯出；`prune-sdk-types --max=30` 確認不爆（`build:sdk` 通過）。
+      適應度函數 `fitness.architecture.spec.ts` 的表面快照兩度如設計般擋下（T2 一次、T3 一次），
+      皆顯性更新並附理由，未繞過。
+- [x] T5：SDK-QUICKSTART 新章節「只要 signaling，不要整個聊天客戶端」，含可複製的
+      rules 片段（依實際 `firestore.rules:198-219` 節錄）、`signals` 複合索引、TTL 建議、
+      誠實邊界四點，以及 warm 的前提與退化說明。**2026-07-26 完成。**
 - [ ] T6：block-brawl 端把 signaling 工廠換成 `createFirestoreSignaling`，跑跨設定檔對戰（V1）。
 
 ## 6. 驗收（黃金判準）
@@ -149,12 +167,17 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
 - [ ] V1 外部嵌入者實證：block-brawl 把 signaling 工廠從自製 BroadcastChannel 換成本 spec 的
       Firestore 出口後，**跨瀏覽器設定檔（不同 Firebase 匿名帳號）對戰可成立**，
       且 `connection.js` 零改動。不能用單元測試代替。
-- [ ] V2 warm 的誠實性：對「無 mesh」的嵌入者，`createWarmColdSignaling` 的行為與
-      `createFirestoreSignaling` 等價，且有測試釘住這個等價（避免文件說得比程式好聽）。
-- [ ] V3 隔離閘門不退：`npm run qa:sdk-isolation` 續過——主入口 `nerilo` 仍不得靜態帶進 Firebase。
-- [ ] V4 公開表面受控：`sdkSurface` 顯性納入新匯出；`prune-sdk-types --max=30` 不爆。
-- [ ] V5 既有 mesh 零回歸：T1 重構後，mesh 既有 signaling 單元與 E2E 不紅（characterization-first）。
-- [ ] V6 誠實邊界落地：文件三句到位並與 `docs/THREAT_MODEL.md` 一致，不得只寫好處。
+- [x] V2 warm 的誠實性：**綠**。省略 `warm` 時直接回傳 cold 工廠本身，等價以
+      `expect(createWarmColdSignaling({cold})).toBe(cold)` 的 identity 斷言驗證，
+      並另有「完全不建 warm 傳輸」一條擋空殼（`WarmColdSignalingExport.spec.ts` 8 例）。
+- [x] V3 隔離閘門不退：**綠**。`qa:sdk-isolation` 兩道皆過（MeshChatService 靜態圖 0 firebase、
+      `dist/index.js` eager 進入點無 firebase 靜態 import）。
+- [x] V4 公開表面受控：**綠**。表面快照兩度擋下並顯性更新；`build:sdk`（含
+      `prune-sdk-types --max=30`）通過。
+- [x] V5 既有 mesh 零回歸：**綠**。characterization 一字未改仍全綠；全單元 1570 tests；
+      React 護欄 golden-path + mesh-diagnostic 7/7（另見 T1 的 flake 誠實記錄）。
+- [x] V6 誠實邊界落地：**綠**。四點（非 E2EE／內容對後端可見／SDP 未簽章 R9／warm 需既有 mesh）
+      同時寫在 `src/sdk/firestore.ts` 的 doc comment 與 SDK-QUICKSTART，並指回 THREAT_MODEL。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 

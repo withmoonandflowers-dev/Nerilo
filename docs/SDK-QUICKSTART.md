@@ -113,6 +113,104 @@ const client = await createChatClient({
 });
 ```
 
+## 只要 signaling，不要整個聊天客戶端
+
+你已經有自己的 P2P 應用（遊戲、協作白板、檔案傳輸），只缺一套「交換 SDP／ICE」的後端。
+自帶 Firebase 專案即可直接用 Nerilo 那份跑在 production 的實作：
+
+```ts
+import { createFirestoreSignaling } from 'nerilo/firestore';
+
+const signaling = createFirestoreSignaling();
+const transport = signaling(roomId, 'my-channel');
+
+// 訂閱：cutoffMs 之後寫入的 signal（回傳取消訂閱）
+const off = transport.subscribe(Date.now(), (raw) => {
+  if (raw.from === myUid) return; // 契約規定自己送的也會收到，收端自行過濾
+  if (raw.type === 'sdp') { /* raw.payload */ }
+});
+
+// 送出：from / to / type / payload / channelLabel / createdAt 由你組
+await transport.send({
+  from: myUid, to: peerUid, type: 'sdp',
+  payload: { desc }, channelLabel: 'my-channel', createdAt: Date.now(),
+});
+```
+
+`createdAt` 傳毫秒數字即可，內部會轉 Firestore `Timestamp`；`expiresAt`（5 分鐘）由
+transport 自動補上，你不用管。工廠是同步的，Firestore 到第一次真正用到才載入。
+
+### 你必須自備的 rules
+
+signaling 的完整性邊界是**你的** rules，不是密碼學（見下方誠實邊界）。最小可用版本：
+
+```
+match /p2pRooms/{roomId}/signals/{signalId} {
+  // 只有房間參與者能讀；否則任何登入者都能爬全站 SDP／ICE 建使用者圖譜
+  allow read: if request.auth != null && (
+    request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants ||
+    request.auth.uid == get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.ownerUid
+  );
+  allow create: if request.auth != null
+    && request.resource.data.from == request.auth.uid          // 不能冒名
+    && request.resource.data.type in ['offer', 'answer', 'ice']
+    && request.resource.size() < 10 * 1024
+    && request.resource.data.expiresAt is timestamp
+    && request.resource.data.expiresAt > request.time
+    && request.resource.data.expiresAt <= request.time + duration.value(10, 'm')
+    && (request.resource.data.createdAt is number || request.resource.data.createdAt is timestamp);
+  allow update: if false;                                      // append-only
+  allow delete: if request.auth != null && resource.data.from == request.auth.uid;
+}
+```
+
+### 所需索引
+
+`cleanupOwn()` 會用到，加進 `firestore.indexes.json`：
+
+```json
+{
+  "collectionGroup": "signals",
+  "queryScope": "COLLECTION",
+  "fields": [
+    { "fieldPath": "from", "order": "ASCENDING" },
+    { "fieldPath": "createdAt", "order": "DESCENDING" }
+  ]
+}
+```
+
+建議一併設 `expiresAt` 的原生 TTL policy，讓過期 signal 自動清掉。
+
+### 誠實邊界（請先讀完再決定要不要用）
+
+- 這條通道傳的是 **SDP／ICE，不是訊息內容**；它本身不提供端到端加密。
+- 內容對**你的** Firestore 後端可見。要保護訊息內容請用 `NeriloClient`（E2EE 在那一層）。
+- **SDP 尚未簽章**（GOAL-ANALYSIS GS2 未做，風險登記 R9）。signaling 的完整性靠你的
+  Firebase auth 與上面那份 rules，不是密碼學。有能力偽造已認證寫入的攻擊者可以做 MITM。
+- 詳細威脅模型見 [THREAT_MODEL.md](THREAT_MODEL.md)。
+
+### warm 中繼（進階，且有前提）
+
+如果你的應用**已經在跑 Nerilo mesh**，新成員的 signaling 可以走既有鄰居的加密轉送、
+完全不落伺服器（Spec 005 的「第三人零 Firestore 寫入」）：
+
+```ts
+import { createWarmColdSignaling } from 'nerilo/firestore';
+
+const signaling = createWarmColdSignaling({
+  warm: { nodeId, relayBus, hasWarmPath, identity: { ecdhPrivateKey, sign }, peerKeys },
+});
+```
+
+**沒有 mesh 就不要用這個。** warm 不是可獨立安裝的傳輸，而是架在你**已有的鄰居連線**
+上的中繼：`relayBus` 得把信封送進那些連線，`hasWarmPath()` 回報現在有沒有連線可用。
+沒有底材時 `hasWarmPath()` 恆 false，整條路徑等同純 cold，這種情況直接用
+`createFirestoreSignaling()` 更清楚。
+
+省略 `warm` 時，`createWarmColdSignaling` **直接回傳 cold 工廠本身**，不包任何看起來
+像 warm 的殼。這個等價有測試釘住（`tests/unit/WarmColdSignalingExport.spec.ts`），
+不是文件上的但書。
+
 ## 版本與相容承諾
 
 ### 什麼算「公開表面」
