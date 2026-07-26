@@ -50,6 +50,12 @@ export async function createChatClient(config: {
  * 後端。在此之前 SDK 只公開 `SignalingTransport` **介面**，實作得自己寫一份；
  * Nerilo 明明有一份跑在 production 的卻拿不到（block-brawl 2026-07-25 實測撞到）。
  *
+ * **使用前提（2026-07-26 實測確認，勿當作純選配）**：讀寫 `p2pRooms/{roomId}/signals`
+ * 的 rules 要求呼叫者在該房 `participants` 內，而建房又要求非匿名帳號
+ * （`firestore.rules:144`、`:198-204`）。因此目前**只有已採用 Nerilo 房間模型的應用**
+ * 能用它；純匿名情境（例如遊戲大廳）還缺一個輕量建房／目錄契約（Spec 014，未實作）。
+ * 詳見 Spec 015 的 T6。
+ *
  * 誠實邊界（憲法第 10 條，勿刪）：
  * - 這條通道傳的是 SDP/ICE，**不是**訊息內容；它不提供端到端加密。
  * - 內容對你的 Firestore 後端可見。

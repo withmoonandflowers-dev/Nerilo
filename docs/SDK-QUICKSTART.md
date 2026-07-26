@@ -115,8 +115,21 @@ const client = await createChatClient({
 
 ## 只要 signaling，不要整個聊天客戶端
 
-你已經有自己的 P2P 應用（遊戲、協作白板、檔案傳輸），只缺一套「交換 SDP／ICE」的後端。
-自帶 Firebase 專案即可直接用 Nerilo 那份跑在 production 的實作：
+> **先確認你符合前提，否則現在還用不了。** 這個出口讀寫的是
+> `p2pRooms/{roomId}/signals`，而該路徑的 rules 要求：
+>
+> 1. **房間必須已存在**，且你在它的 `participants` 裡；
+> 2. **建立房間的帳號必須是非匿名的**（`sign_in_provider != "anonymous"`）。
+>
+> 換句話說，目前只有「已經用 Nerilo 房間模型」的應用能用它。純匿名的使用情境
+> （例如遊戲大廳，玩家不註冊就想開房）**還不行**——缺一個輕量的房間目錄／建房契約，
+> 那是 Spec 014，尚未實作。2026-07-26 以第一個外部嵌入者實測確認，記錄於
+> `specs/015-expose-firestore-signaling/spec.md` 的 T6。
+>
+> 已驗證的部分：出口本身在真實 rules 下可用（emulator，`tests/integration/sdk-signaling.spec.ts`）。
+> 未驗證：跨實體裝置、以及非 Nerilo-app 的嵌入情境。
+
+前提符合的話，自帶 Firebase 專案即可直接用 Nerilo 那份跑在 production 的實作：
 
 ```ts
 import { createFirestoreSignaling } from 'nerilo/firestore';

@@ -1,11 +1,29 @@
 # Spec 015：把 Firestore signaling 開成可單獨取用的公開出口
 
 - 軌別：feature
-- 狀態：blocked（T1-T5 完成；T6／V1 卡 Spec 014——第三方要用 signaling 得先有房，而匿名不能建房）
+- 狀態：done（範圍降級，2026-07-26 使用者拍板）
+- 交付定位：**內部重構 + 未來預留**，不是「對外可嵌入」。原目標（第三方拿得到現成
+  signaling）在現行授權模型下不可達成，證據見 T6；改以 Spec 014 為前置，未來再解封。
 - 建立：2026-07-25／最後更新：2026-07-26
 - 關聯：ADR-0025（可嵌入 SDK）、ADR-0032／Spec 005（p2p2p warm 中繼）、
   `src/core/p2p/SignalingTransport.ts`（`RoomSignalingTransport`／`RelaySignalingTransport`）、
   `src/core/p2p/WarmColdSignalingTransport.ts`、block-brawl `docs/nerilo-integration.md`（缺口 2）
+
+> **範圍降級註記（2026-07-26，使用者拍板）**
+>
+> 本 spec 原本要解決「第三方拿不到現成 signaling」。T6 實測查出這在現行 rules 下
+> 不可達成：建房要非匿名帳號、讀寫 signals 要房間 participants 身分，兩者疊起來讓
+> 非 Nerilo-app 的嵌入者過不去。解法需要動 `firestore.rules` 的安全模型
+> （允許匿名建房），那是獨立的產品決策，成本高且目前無使用者在等。
+>
+> 因此本 spec 的交付重新定位為：
+> - **已落袋（內部價值）**：warm/cold 組裝從 `MeshGossipManager` 抽出、可注入化，
+>   並補上原本完全沒有的測試覆蓋（T1）；signaling 的延遲載入接縫（T2）；
+>   warm 的誠實退化語義（T3）。這些對可維運與未來解封都是淨賺。
+> - **預留（未來）**：兩個公開工廠與型別已在表面上，等 Spec 014 補齊建房／目錄契約後，
+>   對外宣稱才成立。在那之前**不得**把「第三方可嵌入 signaling」寫進對外文件或提案。
+>
+> 已依此修正 `docs/SDK-QUICKSTART.md` 與 `src/sdk/firestore.ts` 的措辭，加上前提警語。
 
 ## 1. 要做什麼、為什麼（specify）
 
