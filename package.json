@@ -1,7 +1,7 @@
 {
   "name": "nerilo",
   "version": "0.9.0",
-  "description": "Firebase + WebRTC P2P 即時互動平台",
+  "description": "Embeddable P2P E2EE messaging layer for the browser (WebRTC mesh + gossip, pluggable signaling/directory/storage).",
   "license": "Apache-2.0",
   "type": "module",
   "//sdk": "可嵌入 SDK 公開出口（主入口 nerilo=純契約；turnkey 工廠在 nerilo/firestore）。JS 由 esbuild --splitting 產雙進入點；tsc 產 .d.ts 後由 prune-sdk-types 修剪為可達公開型別。",
@@ -31,7 +31,7 @@
     "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
     "example:minimal": "npm run build:sdk && vite --config examples/minimal-chat/vite.config.ts",
     "example:minimal:build": "npm run build:sdk && vite build --config examples/minimal-chat/vite.config.ts",
-    "prepublishOnly": "npm run build:sdk",
+    "prepublishOnly": "npm run build:sdk && npm run qa:sdk-isolation && npm run qa:pack-smoke",
     "dev": "vite",
     "dev:test": "vite --port 4173 --strictPort --mode test",
     "build": "tsc && vite build",
@@ -71,7 +71,8 @@
     "test:property": "vitest run --config vitest.unit.config.mjs tests/unit/**/*.property.spec.ts",
     "test:mutation": "stryker run",
     "mcp:build": "esbuild mcp/main.ts --bundle --format=esm --platform=node --packages=external --outfile=dist-mcp/nerilo-mcp.mjs",
-    "mcp": "npm run mcp:build && node dist-mcp/nerilo-mcp.mjs"
+    "mcp": "npm run mcp:build && node dist-mcp/nerilo-mcp.mjs",
+    "qa:pack-smoke": "node scripts/check-pack-consumable.mjs"
   },
   "dependencies": {
     "@netlify/functions": "^5.3.0",
@@ -122,5 +123,28 @@
     "vite": "^5.0.8",
     "vitest": "^4.1.8",
     "zod": "^4.4.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/withmoonandflowers-dev/Nerilo.git"
+  },
+  "homepage": "https://github.com/withmoonandflowers-dev/Nerilo#readme",
+  "bugs": {
+    "url": "https://github.com/withmoonandflowers-dev/Nerilo/issues"
+  },
+  "keywords": [
+    "p2p",
+    "webrtc",
+    "e2ee",
+    "mesh",
+    "gossip",
+    "signaling",
+    "datachannel",
+    "decentralized",
+    "offline-first",
+    "sdk"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }
