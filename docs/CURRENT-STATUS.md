@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-07-18（四線合併：Spec 009/010/011/012）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-07-26（架構收斂：死重下架、圍籬修復、文件誠實化）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -13,14 +13,51 @@
 
 ## 已驗證基線
 
-| 層級 | 2026-07-18 基線 |
+| 層級 | 2026-07-26 基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；137 test files／1544 tests 全綠（既有 7 warnings；四線合併後實測 2026-07-18） |
-| SDK | build 通過；入口 Firebase isolation 硬閘通過 |
+| Core quality | TypeScript、ESLint gate 通過；**1547 tests** 全綠（既有 7 warnings；實測 2026-07-26） |
+| SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入兩個進入點 |
 | React stable E2E | 2026-07-15 emulator-backed 11/11 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
 | Nuxt stable E2E | `@vue-stable` 9/9 本機基線，固定 1 worker 隔離 spec；兩週 CI 觀察尚未完成 |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
+
+## 2026-07-26 架構收斂（本日重點）
+
+三件「被相信著、但沒人驗證過」的事被查出來，各自修掉並補上機器檢查：
+
+1. **洋蔥路由從未接線，但文件當成已部署防護在賣。** `RelayManager.sendViaRelay()` 全 repo
+   零呼叫、`SphinxPacket` 零非測試 import、cover traffic 預設關閉且無呼叫端開啟。
+   README 與 THREAT_MODEL 原本把 Sphinx-Lite 列為「惡意中繼」與「全球被動對手」的緩解措施
+   ——等於宣稱了不存在的安全屬性。已全面改為未部署、加更正紀錄、風險登記新增 **R11(High)**。
+   **Nerilo 目前不提供寄件者匿名性**，對外任何說法不得再暗示有。
+2. **ADR-0031 的死重圍籬擋不住相對路徑。** `no-restricted-imports` 比對 import 字串而非
+   解析路徑，`**/core/game/**` 擋不住 `../game/X`，而 docs/DEVELOPMENT.md 慣例正是 core 用相對路徑。
+   圍籬自 2026-07-16 立起，在最該生效的 core→core 方向上一直是裝飾品。已補相對 pattern，
+   並加 `tests/unit/fitness.fence.spec.ts` 直接斷言設定有效性。
+3. **套件在非 Vite 環境載入即炸**（前一日 2026-07-25 發現）：`import.meta.env` 裸讀。
+   repo 內全部測試跑在 Vitest 下所以看不見。已加 `qa:pack-smoke` 掛進 `prepublishOnly`。
+
+下架與歸位：
+
+- `core/relay/onion/`（11 檔，約 2,900 行）移出並凍結——出站路徑死的，卻每場 mesh 跑一次
+  NAT 偵測＋三組計時器。留下 `types`／`PeerScoring`／`RelayDirectory`／`CongestionPricing`
+  與整組 courier 寄存經濟（各有活的呼叫端，查證後不可一起搬）。
+- `core/chain`(936)、`core/protocol`(91) **刪除**；`core/features`(447) 補進 PARK 圍籬。
+- `MeshChatService`／`encryptionGate`／`fallbackDecrypt` 從 `features/chat` 搬進
+  `core/messaging`。SDK 不再有任何路徑（含動態 import）穿過 `src/features`，
+  由 `fitness.architecture.spec.ts` 的動態 import 掃描把關（ESLint 射程外）。
+
+## 待辦：React 產線退役（2026-08-01 之後）
+
+使用者 2026-07-26 決定延到 Vue 硬閘期滿再處理。**前置條件今日已清乾淨**：
+
+- 引擎已搬離 `src/features`，刪 React 產線不會打斷 SDK 公開契約（這是原本最大的風險）。
+- 動態 import 圍籬已補，刪除後若有殘留引用會被測試抓到。
+- 尚待：Vue `@vue-stable` 觀察期至 2026-08-01、P0/P1 parity 清零、Vue production smoke
+  三路全綠、視覺驗收與可回退 artifact（ADR-0017 門檻，缺一不可）。
+- 屆時可刪：`src/features`（React UI 部分）、`src/pages`、`src/components`、`src/contexts`、
+  `src/hooks` 共約 7,000 行，以及 `tests/e2e/` 的 React 專屬 spec。
 
 ## 目前完成度
 
@@ -42,7 +79,9 @@
   因 WebRTC 遭 CPU 排擠尚未穩定轉綠——殘留與重跑指引見 Spec 011 V1；
   super-node（>20）維持凍結。
 - SDK 已抽出公開入口、quickstart 與 minimal example，且不會從 eager import 偷帶 Firebase。
-- `game/`、`community/` 與部分 relay/transport 能力仍有「已測但未完整接入產品流」的模組；不可把單元測試等同 production 接線。
+- PARK 模組（`game/`、`community/`、`transport/`、`ledger/`、`core/features/`、`relay/onion/`）
+  皆「已測但未接進產品流」，由 ESLint 圍籬凍結；**不可把單元測試等同 production 接線**——
+  2026-07-26 的洋蔥路由事件正是這個誤判的實例。
 
 ### 信使寄存經濟（Spec 001）
 
@@ -95,5 +134,7 @@
 - SDP offer/answer 尚未升級為平台級簽章身分；Firebase auth/rules 是現階段信令完整性邊界。
 - 信使欠條是每信使本地權威債權簿，同瀏覽器已耐久；跨裝置備份、私鑰復原與多副本合併尚未設計。
 - TTL 欄位、rules、設定腳本與 cleanup Functions 程式已就位，但未持 GCP 權限實際套用 TTL，也未升級 Blaze／部署 Functions。
+- **Nerilo 不提供寄件者匿名性**（2026-07-26 查證，R11）。洋蔥路由已實作已測但從未接線，
+  cover traffic 與 padding 亦未啟用。對外文件、提案、demo 一律不得暗示具備匿名或抗流量分析能力。
 - README 的安全摘要不能取代 `docs/THREAT_MODEL.md`；Nerilo 未經第三方安全認證，不適用高風險匿名通訊。
 - React 產線的星型→mesh 遷移窗可能無聲掉信、遲到者看不到星型時代歷史（Spec 010 拍板：不修 React，由 Vue 切 production 退役星型棧收斂）。Vue 線無此窗（ADR-0023 P2-③）且有回歸鎖 `tests/e2e-vue/migration-window.spec.ts`，該回歸鎖已列入 ADR-0017 切換門檻。
