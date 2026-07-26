@@ -32,7 +32,7 @@ import { startRoomHeartbeat } from '../../services/RoomHeartbeat';
 import { creditEconomy } from '../../core/incentive/CreditEconomy';
 import { useP2PArchitecture } from './hooks/useP2PArchitecture';
 import { E2EEIndicator } from './E2EEIndicator';
-import { boundedFallbackDecrypt } from './fallbackDecrypt';
+import { boundedFallbackDecrypt } from '../../core/messaging/fallbackDecrypt';
 import { useStarTopology } from './hooks/useStarTopology';
 import { useMeshTopology } from './hooks/useMeshTopology';
 import { useE2eeMode, useProtocolMismatch } from './hooks/useChatIndicators';

@@ -153,3 +153,42 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
     ]);
   });
 });
+
+// ── 動態 import 圍籬（Spec 013 收斂，2026-07-26）────────────────────────────
+//
+// ESLint 的 no-restricted-imports **只看靜態 import 宣告**，`await import('...')`
+// 完全在它射程外。SDK 曾靠一行註解自律避免碰 src/features（見該檔 git 歷史），
+// 但註解擋不住下一個人。這組測試用文字掃描補上機器強制。
+//
+// 為什麼重要：ADR-0017 要刪 src/features（React 退役）。若 SDK 還有任何路徑穿過去，
+// 刪的當下 turnkey 工廠會直接斷，而所有靜態檢查都不會事先警告。
+describe('適應度：動態 import 不得穿過應用層（ESLint 射程外）', () => {
+  const UI_DIRS = ['features', 'pages', 'components', 'hooks', 'contexts'];
+  /** 抓 `import('...')` / `import("...")`，含 await 與 .then 兩種寫法。 */
+  const DYNAMIC = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+  const scan = (roots: string[]) => {
+    const hits: string[] = [];
+    for (const root of roots) {
+      for (const file of walk(join(ROOT, root))) {
+        if (/\.(spec|test)\.tsx?$/.test(file)) continue;
+        const src = readFileSync(file, 'utf8');
+        for (const m of src.matchAll(DYNAMIC)) {
+          const spec = m[1]!;
+          if (UI_DIRS.some((d) => spec.includes(`/${d}/`) || spec.startsWith(`./${d}/`))) {
+            hits.push(`${file.replace(ROOT + '/', '')} → ${spec}`);
+          }
+        }
+      }
+    }
+    return hits;
+  };
+
+  it('src/sdk 不得以動態 import 碰應用層目錄', () => {
+    expect(scan(['src/sdk'])).toEqual([]);
+  });
+
+  it('src/core 與 src/services 不得以動態 import 碰應用層目錄', () => {
+    expect(scan(['src/core', 'src/services'])).toEqual([]);
+  });
+});

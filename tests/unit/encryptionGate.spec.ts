@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sendDecisionFor, isEncryptedState } from '../../src/features/chat/encryptionGate';
+import { sendDecisionFor, isEncryptedState } from '../../src/core/messaging/encryptionGate';
 
 describe('encryptionGate（ADR-0026 R2 明文降級 fail-visible）', () => {
   it('只有真明文房需要確認；encrypted/exchanging 直接放行', () => {

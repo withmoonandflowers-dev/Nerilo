@@ -9,7 +9,7 @@
  *  - 回合制事件走可靠管線 → MOVE/RESTART 不掉（比星型 lossy bus 更穩）。
  */
 import type { P2PEnvelope } from '@legacy/types'
-import type { MeshChatService } from '@legacy/features/chat/MeshChatService'
+import type { MeshChatService } from '@legacy/core/messaging/MeshChatService'
 import type { GameBus } from './gameBus'
 
 export class MeshGameBus implements GameBus {

@@ -66,9 +66,15 @@
    `--report-unused-disable-directives` 判定為無用而報錯）。改為就地留註解說明它是靠自律不是靠機器，
    不假裝圍籬涵蓋它。這也是本 spec 唯一的已知殘留。
 
-**已知殘留**：`MeshChatService`（mesh 聊天引擎本體）仍在 `src/features/chat/`，是 SDK 唯一
-穿過應用層目錄的相依。搬它屬另一量級的改動（引擎本體、運作中路徑），依第 2 節邊界不在本 spec 內，
-收斂綁 ADR-0017 的 React 退役。
+**已知殘留**：~~`MeshChatService`（mesh 聊天引擎本體）仍在 `src/features/chat/`~~
+**已於 2026-07-26 收斂**（不必等 ADR-0017）：`MeshChatService`、`encryptionGate`、
+`fallbackDecrypt` 三檔已搬進 `src/core/messaging/`，SDK 不再有任何路徑（含動態 import）
+穿過 `src/features`。
+
+同時補上本 spec 當時明確承認擋不住的那個缺口：`tests/unit/fitness.architecture.spec.ts`
+新增動態 import 掃描，涵蓋 `src/sdk`／`src/core`／`src/services`。探針驗證——把
+SDK 的動態 import 改回 `../features/chat/MeshChatService`，測試立刻紅並指名該行。
+ESLint 射程外的部分，現在由這組測試接手。
 
 ## 5. 任務分解（tasks）
 
