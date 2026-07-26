@@ -5,7 +5,7 @@ import {
   decryptFinalPayload,
   getMaxHops,
   getPacketPayloadSize,
-} from '../../src/core/relay/SphinxPacket';
+} from '../../src/core/relay/onion/SphinxPacket';
 import type { RouteHop } from '../../src/core/relay/types';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

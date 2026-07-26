@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { RateLimiter } from '../../src/core/relay/RateLimiter';
+import { RateLimiter } from '../../src/core/relay/onion/RateLimiter';
 
 describe('RateLimiter', () => {
   let limiter: RateLimiter;

@@ -14,7 +14,7 @@
  * - open/full-cone → prefer direct connections
  */
 
-import type { NATType } from './types';
+import type { NATType } from '../types';
 
 /** ICE candidate analysis result */
 interface CandidateAnalysis {

@@ -62,6 +62,8 @@ module.exports = {
         'src/core/chain/**',
         'src/core/ledger/**',
         'src/core/protocol/**',
+        'src/core/features/**',
+        'src/core/relay/onion/**',
       ],
       rules: {
         'no-restricted-imports': [
@@ -85,12 +87,30 @@ module.exports = {
               },
               {
                 group: [
+                  // 別名路徑（@/core/... 與 src/core/... 深層相對）
                   '**/core/community/**',
                   '**/core/game/**',
                   '**/core/transport/**',
                   '**/core/chain/**',
                   '**/core/ledger/**',
                   '**/core/protocol/**',
+                  '**/core/features/**',
+                  '**/core/relay/onion/**',
+                  // ⚠ 相對路徑同樣要列（2026-07-26 實測發現的圍籬漏洞）：
+                  // no-restricted-imports 比對的是「import 字串」不是解析後的路徑，
+                  // 而 docs/DEVELOPMENT.md 慣例要求 core 模組用相對路徑 → `../game/X` 完全繞過
+                  // 上面那組 `**/core/game/**`。圍籬自 2026-07-16 立起後，在它最該生效的
+                  // core→core 方向上一直是裝飾品。
+                  // 只放在本區塊：在 src/features 底下 `../game/` 指的是「活著的」
+                  // features/game 薄層（ADR-0015），列進去會誤擋。探針：tests/unit/fitness.fence.spec.ts。
+                  '../community/**', '../../community/**',
+                  '../game/**', '../../game/**',
+                  '../transport/**', '../../transport/**',
+                  '../chain/**', '../../chain/**',
+                  '../ledger/**', '../../ledger/**',
+                  '../protocol/**', '../../protocol/**',
+                  '../features/**', '../../features/**',
+                  './onion/**', '../relay/onion/**', '../../relay/onion/**',
                 ],
                 message: '此模組已 PARK（休眠，ADR-0031），不得新接線。要解凍請改 ADR-0031 + 移除圍籬。',
               },
@@ -111,12 +131,15 @@ module.exports = {
             patterns: [
               {
                 group: [
+                  // 別名路徑（@/core/... 與 src/core/... 深層相對）
                   '**/core/community/**',
                   '**/core/game/**',
                   '**/core/transport/**',
                   '**/core/chain/**',
                   '**/core/ledger/**',
                   '**/core/protocol/**',
+                  '**/core/features/**',
+                  '**/core/relay/onion/**',
                 ],
                 message: '此模組已 PARK（休眠，ADR-0031），不得新接線。要解凍請改 ADR-0031 + 移除圍籬。',
               },
@@ -151,12 +174,15 @@ module.exports = {
               },
               {
                 group: [
+                  // 別名路徑（@/core/... 與 src/core/... 深層相對）
                   '**/core/community/**',
                   '**/core/game/**',
                   '**/core/transport/**',
                   '**/core/chain/**',
                   '**/core/ledger/**',
                   '**/core/protocol/**',
+                  '**/core/features/**',
+                  '**/core/relay/onion/**',
                 ],
                 message: '此模組已 PARK（休眠，ADR-0031），不得新接線。要解凍請改 ADR-0031 + 移除圍籬。',
               },

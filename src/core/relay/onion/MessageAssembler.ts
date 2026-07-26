@@ -13,7 +13,7 @@
  * across multiple packets by FragmentManager.
  */
 
-import type { MessageFragment, AssemblyStatus } from './types';
+import type { MessageFragment, AssemblyStatus } from '../types';
 
 /** TTL for seen message cache entries (ms) */
 const SEEN_TTL_MS = 300_000; // 5 minutes

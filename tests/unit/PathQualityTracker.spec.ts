@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { PathQualityTracker } from '../../src/core/relay/PathQualityTracker';
+import { PathQualityTracker } from '../../src/core/relay/onion/PathQualityTracker';
 
 describe('PathQualityTracker', () => {
   let tracker: PathQualityTracker;

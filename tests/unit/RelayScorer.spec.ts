@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { RelayScorer } from '../../src/core/relay/RelayScorer';
+import { RelayScorer } from '../../src/core/relay/onion/RelayScorer';
 
 describe('RelayScorer', () => {
   let scorer: RelayScorer;

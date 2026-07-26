@@ -36,3 +36,37 @@ PARK 合計約 8684 行。**PARK ≠ 刪**：程式與測試保留（可稽核�
 ## 後果
 
 消費者/agent 看到的 `src/core` 從「一坨分不清死活的東西」變成「KEEP-CORE + 明確凍結的 PARK」。稽核 §3 收斂決策落地；§6 適應度函數再添一條。
+
+---
+
+## 修訂二（2026-07-26）：補兩塊死重，並修好圍籬本身
+
+### 新增處置
+
+| 模組 | 行數 | 處置 | 依據 |
+|---|---|---|---|
+| `core/relay/onion/`（RelayManager + Sphinx + Kademlia + MultiPath + Assembler + PathQuality + NAT + CoverTraffic + Padding + RateLimiter + RelayScorer） | ~2,900 | **移出並 PARK** | `RelayManager.sendViaRelay()` 全 repo 零呼叫、`SphinxPacket` 零非測試 import。出站路徑整條死的，但 `MeshGossipManager.initialize()` 每場仍 new 一顆並跑 NAT 偵測＋三組計時器——**付成本換零功能**。已從 mesh 拆線並移進 `onion/` 子目錄。 |
+| `core/features` | 447 | **PARK（補列）** | 引用 0，且唯一提及者是同樣 PARK 的 `core/game`。修訂一漏列。 |
+
+留在 `core/relay/` 的（**不可一起搬**，已查證）：`types.ts`（PeerScoring 與 RelayDirectory 都在用）、
+`PeerScoring`（mesh 與 GossipMessageHandler 真的在用）、`RelayDirectory`／`FirestoreRelayDirectory`
+（Vue 的 `useNodePresence`／`useCourierNode` 在用）、`CongestionPricing`（`core/incentive/CourierIOU` 在用）、
+以及整組 courier 寄存經濟（Spec 001-004，補助敘事的資產）。
+
+### 圍籬本身是壞的（比上面兩塊更重要）
+
+實測發現：`no-restricted-imports` 比對的是 **import 字串**，不是解析後的路徑。
+所以修訂一寫的 `**/core/game/**` 只擋得住 `@/core/game/X`，**擋不住 `../game/X`**——
+而 docs/DEVELOPMENT.md 的慣例正是「core 模組用相對路徑，feature/page 用 `@/`」。
+
+結論：這道圍籬自 2026-07-16 立起，在它**最該生效的 core→core 方向上一直是裝飾品**，
+而且沒有任何測試會發現。已補上相對形式 pattern，並加 `tests/unit/fitness.fence.spec.ts`
+直接對設定做斷言（斷的是「圍籬有沒有效」，不是「有沒有人違規」）。
+
+相對形式只放在 core/services 區塊：在 `src/features` 底下 `../game/` 指的是**活著的**
+`features/game` 薄層（ADR-0015），列進去會誤擋 ChatPage（實測踩到）。
+
+### 量測
+
+- `MeshChatService` 靜態相依圖：**56 檔 → 44 檔**。
+- core 死重佔比從約 43% 降下來，但 PARK 不等於刪除；程式與測試都保留，可稽核、可解凍。

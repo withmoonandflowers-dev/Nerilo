@@ -21,7 +21,7 @@
  * 5. Drop message at final hop (or self-delivery as keep-alive)
  */
 
-import type { CoverTrafficConfig } from './types';
+import type { CoverTrafficConfig } from '../types';
 
 const DEFAULT_CONFIG: CoverTrafficConfig = {
   enabled: false,

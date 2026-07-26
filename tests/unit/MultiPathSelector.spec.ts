@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MultiPathSelector } from '../../src/core/relay/MultiPathSelector';
+import { MultiPathSelector } from '../../src/core/relay/onion/MultiPathSelector';
 import type { ScoredRelayNode } from '../../src/core/relay/types';
 
 function makeNode(
