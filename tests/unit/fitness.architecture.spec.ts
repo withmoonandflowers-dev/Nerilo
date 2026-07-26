@@ -132,13 +132,24 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
   });
 
   it('nerilo/firestore（turnkey 工廠）匯出名單', () => {
+    // Spec 015（2026-07-26 顯性擴充公開表面，使用者拍板 warm+cold 一起開）：
+    // T2 加 createFirestoreSignaling——只要 signaling、不要整個聊天客戶端的第三方，
+    //    拿得到已在 production 跑的 Firestore 實作。
+    // T3 加 createWarmColdSignaling + WarmSignalingBackend，以及實作者寫自己的
+    //    relayBus/peerKeys 所需的四個型別。這四個型別就是「warm 一起開」的表面代價，
+    //    當時已在 spec §4.1 記帳，不是意外長出來的。
+    // 誠實邊界（非 E2EE、內容對後端可見、SDP 未簽章、warm 需既有 mesh 才有意義）
+    // 寫在各函式的 doc comment 與 SDK-QUICKSTART；不得只在這裡加個名字就上架。
     expect(exportedNames('src/sdk/firestore.ts')).toEqual([
+      'PeerKeyResolver',
+      'SignFn',
+      'SignalEnvelope',
+      'SignalRelayBus',
+      'WarmSignalingBackend',
       'createChatClient',
       'createFirestoreChatClient',
-      // Spec 015 T2（2026-07-26 顯性擴充公開表面）：只要 signaling、不要整個聊天客戶端的
-      // 第三方拿得到 Firestore 實作。誠實邊界（非 E2EE、內容對後端可見、SDP 未簽章）
-      // 寫在該函式的 doc comment 與 SDK-QUICKSTART，不得只在這裡加個名字就上架。
       'createFirestoreSignaling',
+      'createWarmColdSignaling',
     ]);
   });
 });
