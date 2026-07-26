@@ -53,7 +53,6 @@ src/core/
 ├── relay/          # Dual-layer relay infrastructure (see below)
 ├── crypto/         # SenderKeyManager (E2EE), ECDH（TreeKEM/GroupKeyManager 已退役，ADR-0034）
 ├── incentive/      # Relay credit system (LocalCreditProvider)
-├── chain/          # Append-only log sync & merge
 ├── clock/          # Hybrid Logical Clock (HLC)
 ├── ordering/       # Message ordering (HLC-based)
 ├── messaging/      # 訊息層純邏輯 reducer：reactions / 已讀水位 / 回覆編碼（SDK 公開契約，Spec 013）
@@ -65,8 +64,9 @@ src/core/
 └── adapters/       # Browser/Node runtime abstraction
 ```
 
-Note: `game/`, `community/`, `adapters/`, and DHT storage are **dormant
-modules** — fully tested but not yet wired into app flows (mined from PR #5).
+Note: `game/`、`community/`、`transport/`、`ledger/`、`features/`（core 底下那個）與
+`relay/onion/` 是 **PARK 模組**——已測但沒接進產品流，由 ESLint 圍籬凍結（ADR-0031）。
+`chain/` 與 `protocol/` 已於 2026-07-26 刪除（引用 0，功能與 mesh 複寫日誌重疊）。
 
 ### Relay Infrastructure (`src/core/relay/`)
 
