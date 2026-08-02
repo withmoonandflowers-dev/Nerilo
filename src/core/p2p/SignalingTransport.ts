@@ -40,7 +40,15 @@ export class RoomSignalingTransport implements SignalingTransport {
   private static readonly SIGNAL_TTL_MS = 5 * 60 * 1000;
   constructor(
     private readonly roomId: string,
-    private readonly channelLabel: string
+    private readonly channelLabel: string,
+    /**
+     * 收件人範圍（Spec 016 實作期修訂）：帶值時訂閱只看 `to == scopeToUid` 的 signal。
+     * 整房訂閱在 7 人房成形風暴期會超過 limit(50) 的升冪視窗——自己那對的
+     * offer/answer 排在 50 筆之後就永遠讀不到（重試再寫入使其更糟，實測 106 次
+     * bus 逾時）。逐收件人範圍化後每訂閱者只看自己的份（~k×每對十餘筆）。
+     * 所有 signal 寫入皆帶 to（per-pair 雙方互知 uid）。需複合索引 (to, createdAt)。
+     */
+    private readonly scopeToUid?: string
   ) {}
 
   private signalsRef() {
@@ -48,13 +56,26 @@ export class RoomSignalingTransport implements SignalingTransport {
   }
 
   subscribe(cutoffMs: number, onAdded: (raw: RawSignalDoc) => void): () => void {
-    // asc 排序確保因果：offer/answer 先、ICE 後。limit 50 同重構前。
-    const q = query(
-      this.signalsRef(),
-      where('createdAt', '>=', Timestamp.fromMillis(cutoffMs)),
-      orderBy('createdAt', 'asc'),
-      limit(50)
-    );
+    // asc 排序確保因果：offer/answer 先、ICE 後。
+    // limit 50→400（Spec 016 實作期修訂）：7-10 人房成形風暴期一房可達數百筆
+    // signal，50 的升冪視窗會把晚寫入的 offer/answer 永遠擋在窗外（實測 106 次
+    // bus 逾時、成形 12/28）。400 覆蓋 10 人房尖峰（14 邊 × 每邊 offer/answer/ICE
+    // 十餘筆 × 重試），3 人房行為不變（本來就 <50）。
+    const SUBSCRIBE_LIMIT = 400;
+    const q = this.scopeToUid
+      ? query(
+          this.signalsRef(),
+          where('to', '==', this.scopeToUid),
+          where('createdAt', '>=', Timestamp.fromMillis(cutoffMs)),
+          orderBy('createdAt', 'asc'),
+          limit(SUBSCRIBE_LIMIT)
+        )
+      : query(
+          this.signalsRef(),
+          where('createdAt', '>=', Timestamp.fromMillis(cutoffMs)),
+          orderBy('createdAt', 'asc'),
+          limit(SUBSCRIBE_LIMIT)
+        );
     return onSnapshot(q, (snapshot) => {
       for (const change of snapshot.docChanges()) {
         if (change.type !== 'added') continue;

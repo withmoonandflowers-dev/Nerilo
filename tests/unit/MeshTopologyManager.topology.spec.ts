@@ -150,22 +150,24 @@ describe('MeshTopologyManager 拓撲政策（Spec 011）', () => {
     expect(m.getGossipConfig()).toEqual({ fanout: 3, ttl: 3 });
   });
 
-  it('accept-slack（R-a）：新成員放寬到 k+2 且有上界', async () => {
+  it('確定性互選（Spec 016，取代 R-a slack 語義）：連的是 circulant 目標集，晚到者立即互選', async () => {
     const { dir, push } = makeDirectory();
     const m = makeManager(dir);
     managers.push(m);
     await m.initialize(); // 空名冊：無初始連線；掛上 watch
-    m.updateParticipantCount(9); // partial：k=3 → acceptLimit=5
+    m.updateParticipantCount(9); // partial：k=3
 
     const flush = () => new Promise((r) => setTimeout(r, 0)); // 讓逐一 await 的連線迴圈跑完
 
-    push(identities(8)); // 8 個新成員同時可見
+    push(identities(8)); // 8 個成員同時可見 → 環 n=9
     await flush();
-    // 嚴格 k=3 會拒收第 4 條起的新連線（對側 offer 無人接）；slack 放寬到 5
-    expect(m.getNeighborCount()).toBe(5);
+    // circulant 目標 = 環上偏移 ±1..±2 = 恰 4 條（user-01/02/07/08），
+    // 不再是「隨機選 3＋slack 補位」；每條邊對端也算得出同一條邊（互選）。
+    expect(m.getNeighborCount()).toBe(4);
 
-    push(identities(9)); // 第 9 人到場：已達 acceptLimit → 不再擴
+    push(identities(9)); // 第 9 人（user-09）到場 → 環重排，user-09 進我的 ±1 窗
     await flush();
+    // 舊邊不拆（只升不降），新目標 user-09 補連 → 4+1
     expect(m.getNeighborCount()).toBe(5);
   });
 });

@@ -22,6 +22,19 @@
 | Nuxt stable E2E | `@vue-stable` 9/9 本機基線，固定 1 worker 隔離 spec；兩週 CI 觀察尚未完成 |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
 
+## 2026-08-02 mesh 正確性收斂（Spec 016/017）
+
+- **Spec 017（done）**：rejoin flake 根因＝產生方 keyx 不封給自己，重進後 hydrate 開不回
+  金鑰 → epoch 0 重發撞代。修：封裝對象含 self。rejoin E2E 修前 10 輪 6 紅、修後 10/10。
+- **Spec 016（implementing）**：7p 連線成形三層修復——確定性互選（circulant，
+  `circulantTopology.ts`）、入站 offer 反應式應答、signaling 訂閱視窗 50→400。
+  成形層確定性模擬 1600 seed 落地（補 Spec 011 只驗擴散層的證據缺口）。
+  迴歸全綠（單元 1558、3 人矩陣×3、@vue-stable、React @stable）；7p 單機量測顯著
+  改善但未全綠（R-g 資源上限），驗收移至 `e2e-7p.yml`（手動＋每日排程）。ADR-0037。
+- 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
+- 未裁定：mesh-e2ee 本機 4/4 紅（stash 對照證實與以上修復無關；當時機器被論文重跑
+  程序佔核＋睡眠干擾；該 spec 不在 @vue-stable 與 E2E Full 涵蓋內——覆蓋缺口待補）。
+
 ## 2026-07-26 架構收斂（本日重點）
 
 三件「被相信著、但沒人驗證過」的事被查出來，各自修掉並補上機器檢查：

@@ -168,6 +168,11 @@ export class IceServerProvider {
       const servers = await this.communityFetchPromise;
       this.cachedCommunity = { servers, expiresAt: Date.now() + this.config.cacheTtlMs };
       return servers;
+    } catch (err) {
+      // 失敗也快取（空清單，Spec 016 順手修）：端點掛掉時每次建線都重抓一輪
+      //（7 人房實測一輪 59 次），TTL 內不再重試，成功路徑不受影響。
+      this.cachedCommunity = { servers: [], expiresAt: Date.now() + this.config.cacheTtlMs };
+      throw err;
     } finally {
       this.communityFetchPromise = null;
     }

@@ -1,5 +1,7 @@
 import { MeshConnection, REJOIN_READY_TIMEOUT_MS } from './MeshConnection';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
+import type { SignalingTransport } from '../p2p/SignalingTransport.types';
+import { computeCirculantTargets } from './circulantTopology';
 import { logger } from '../../utils/logger';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { AdaptiveTopologyManager, type TopologyStrategy, type GossipConfig } from './AdaptiveTopologyManager';
@@ -20,6 +22,14 @@ export class MeshTopologyManager {
   private identityMap: Map<string, string> = new Map(); // firebaseUid -> userId
   /** Firestore 實時訂閱（用於動態發現新加入的節點） */
   private discoveryUnsubscribe: (() => void) | null = null;
+  /** 入站 offer 觀察者取消函式（Spec 016 B：房級 signaling 訂閱） */
+  private inboundWatchUnsubscribe: (() => void) | null = null;
+  /** 身分尚未進 identityMap 的入站 offer 寄件者（firebaseUid），識別後應答 */
+  private pendingInboundFrom: Set<string> = new Set();
+  /** 入站觀察者的 transport label（只讀不寫；label 不參與 signal 過濾語義） */
+  private static readonly INBOUND_WATCH_LABEL = 'mesh-inbound-watch';
+  /** 入站觀察回看窗（signals TTL 5 分鐘，取同值） */
+  private static readonly INBOUND_LOOKBACK_MS = 5 * 60 * 1000;
 
   /** 重連重試設定 */
   private static readonly MAX_RECONNECT_ATTEMPTS = 5;
@@ -101,6 +111,9 @@ export class MeshTopologyManager {
     // 啟動 Firestore 實時訂閱：監聽房間 meshIdentities 變化
     this.startReactiveDiscovery();
 
+    // 入站 offer 反應式應答（Spec 016 B）：醫治名冊視圖分歧窗的單邊嘗試
+    void this.startInboundOfferWatch();
+
     // 延遲啟動鄰居旋轉（15 秒後，給所有節點時間建立初始連線）
     this.rotationStartTimeout = setTimeout(() => {
       this.rotationStartTimeout = null;
@@ -167,19 +180,26 @@ export class MeshTopologyManager {
         }
       }
 
-      // Spec 011 R-a：全新成員的連線允許上限放寬到 k+ACCEPT_SLACK（見常數註解）。
-      const acceptLimit = this.k + MeshTopologyManager.ACCEPT_SLACK;
-      if (newCandidates.length > 0 && this.neighbors.size < acceptLimit) {
-        logger.info('[MeshTopologyManager] Reactive discovery: new candidates found', {
+      // Spec 016：以最新視圖重算確定性目標集，連上缺的邊（互選由構造保證，
+      // 不再需要 acceptLimit slice——目標集本身有界 ≤ 2⌈k/2⌉）。
+      const missing = this.deterministicMissingTargets().filter(
+        (userId) => !this.reconnectAttempts.has(userId)
+      );
+      if (newCandidates.length > 0 || missing.length > 0) {
+        logger.info('[MeshTopologyManager] Reactive discovery', {
           roomId: this.roomId,
           newCandidates,
+          missingTargets: missing,
           currentNeighbors: this.neighbors.size,
         });
-        const toConnect = this.prioritize(newCandidates).slice(0, acceptLimit - this.neighbors.size);
-        this.connectToNeighbors(toConnect, acceptLimit).catch(error => {
+      }
+      if (missing.length > 0) {
+        this.connectToNeighbors(this.prioritize(missing)).catch(error => {
           logger.error('[MeshTopologyManager] Reactive connect error', { error });
         });
       }
+      // 入站 offer 觀察者可能有「身分未知」的暫存 offer，識別到身分即應答（Spec 016 B）
+      this.drainPendingInboundOffers();
     });
   }
 
@@ -188,7 +208,10 @@ export class MeshTopologyManager {
    * @param limit 連線數上限；預設 k。reactive discovery 接新成員時放寬到
    *   k+ACCEPT_SLACK（Spec 011 R-a），其餘路徑（補滿/旋轉/重連）維持嚴格 k。
    */
-  async connectToNeighbors(targetUserIds: string[], limit: number = this.k): Promise<void> {
+  async connectToNeighbors(targetUserIds: string[], limit: number = Number.POSITIVE_INFINITY): Promise<void> {
+    // Spec 016：目標集已由確定性推導有界（≤ 2⌈k/2⌉），預設不再以 size>=limit 提前
+    // break——升級窗「既有 full-mesh 邊 + 新 partial 目標」並存時，break 會攔掉
+    // 必要的互選邊（對端在等這條）。呼叫端仍可傳 limit 收緊（目前無人需要）。
     for (const userId of targetUserIds) {
       if (this.neighbors.size >= limit) break;
       if (this.neighbors.has(userId)) continue;
@@ -203,7 +226,12 @@ export class MeshTopologyManager {
    * readyTimeoutMs 供 rejoin 首次重建傳較短逾時（快速讓乾淨重試接手）；退避重試不帶，
    * 回到 MeshConnection 預設的耐心 30s。
    */
-  private async connectToSingleNeighbor(userId: string, readyTimeoutMs?: number): Promise<void> {
+  private async connectToSingleNeighbor(
+    userId: string,
+    readyTimeoutMs?: number,
+    /** Spec 016 B：入站 offer 應答端——對向已發起，強制以 answerer 建線，跳過發起方裁決 */
+    forceAnswerer = false
+  ): Promise<void> {
     try {
       // ── 防止資源洩漏：若已有連線物件，先關閉它 ──
       const existing = this.neighbors.get(userId);
@@ -238,7 +266,9 @@ export class MeshTopologyManager {
       let isInitiator = this.localUserId < userId;
       const remoteIntroducer = this.introducedByMap.get(remoteFirebaseUid);
       const selfIntroduced = !!this.preferredFirstUid;
-      if (selfIntroduced && remoteFirebaseUid !== this.preferredFirstUid) {
+      if (forceAnswerer) {
+        isInitiator = false; // 對向的 offer 已在 signaling（lookback 內），直接應答
+      } else if (selfIntroduced && remoteFirebaseUid !== this.preferredFirstUid) {
         isInitiator = true;
         // 延後發起到介紹人連上（每秒重評，有上限）：發起當下 warm 路徑已可用。
         const deferrals = this.introducedDeferrals.get(userId) ?? 0;
@@ -369,6 +399,74 @@ export class MeshTopologyManager {
   }
 
   /**
+   * 入站 offer 觀察者（Spec 016 B）：訂閱整房 signals，看到「給我、但我方無對應
+   * 連線物件」的 offer 即建應答端。醫治確定性互選在名冊視圖分歧窗的暫時單邊嘗試
+   * （對向已建物件在等 answer）。transport 的 subscribe 本就回整房 signals（label
+   * 只用於清理過濾），此處純讀。無注入 factory 時沿用既有動態 import 模式，
+   * 維持 SDK eager 圖零 Firebase。
+   */
+  private async startInboundOfferWatch(): Promise<void> {
+    if (this.inboundWatchUnsubscribe) return;
+    try {
+      let transport: SignalingTransport;
+      if (this.signalingFactory) {
+        transport = this.signalingFactory(this.roomId, MeshTopologyManager.INBOUND_WATCH_LABEL);
+      } else {
+        const { RoomSignalingTransport } = await import('../p2p/SignalingTransport');
+        transport = new RoomSignalingTransport(
+          this.roomId,
+          MeshTopologyManager.INBOUND_WATCH_LABEL,
+          this.localFirebaseUid // 只看寄給我的 offer（Spec 016 實作期修訂）
+        );
+      }
+      this.inboundWatchUnsubscribe = transport.subscribe(
+        Date.now() - MeshTopologyManager.INBOUND_LOOKBACK_MS,
+        (raw) => {
+          if (raw.type !== 'offer') return;
+          if (raw.to !== this.localFirebaseUid) return;
+          const from = raw.from;
+          if (!from || from === this.localFirebaseUid) return;
+          this.answerInboundOffer(from);
+        }
+      );
+    } catch (error) {
+      logger.warn('[MeshTopologyManager] inbound offer watch failed to start', { error });
+    }
+  }
+
+  /** 應答一筆入站 offer；身分未知先暫存（reactive discovery 識別後 drain） */
+  private answerInboundOffer(fromFirebaseUid: string): void {
+    const userId = this.identityMap.get(fromFirebaseUid);
+    if (!userId) {
+      this.pendingInboundFrom.add(fromFirebaseUid);
+      return;
+    }
+    this.pendingInboundFrom.delete(fromFirebaseUid);
+    if (userId === this.localUserId) return;
+    if (this.neighbors.has(userId)) return; // 已有物件（含我方已發起），signals 由它消費
+    if (this.neighbors.size >= this.k + MeshTopologyManager.ACCEPT_SLACK) return; // 讓位上限
+    logger.info('[MeshTopologyManager] Answering inbound offer', {
+      roomId: this.roomId,
+      remoteUserId: userId,
+    });
+    const timer = this.reconnectTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(userId);
+    }
+    this.connectToSingleNeighbor(userId, undefined, /* forceAnswerer */ true).catch((error) => {
+      logger.error('[MeshTopologyManager] Inbound answer error', { error });
+    });
+  }
+
+  /** 名冊更新後，應答先前身分未知的入站 offer */
+  private drainPendingInboundOffers(): void {
+    for (const from of [...this.pendingInboundFrom]) {
+      if (this.identityMap.has(from)) this.answerInboundOffer(from);
+    }
+  }
+
+  /**
    * 解析 joinedAt：RoomService 寫入的是 Date.now() number，但保險起見也接受
    * Firestore Timestamp（{ toMillis() } 或 { seconds }）。無法解析回 null。
    */
@@ -429,13 +527,15 @@ export class MeshTopologyManager {
    * 補滿鄰居
    */
   private async fillNeighbors(): Promise<void> {
-    if (this.neighbors.size >= this.k) return;
-    
+    // Spec 016：補的是「確定性目標集裡缺的邊」而非補到 k 條為止。
+    // 不再以 size>=k 提前返回——升級窗可能 size 高於 k 但仍缺互選邊；
+    // 非目標的多餘邊由旋轉拆除後自然不再重建（收斂向 circulant 集）。
     const candidates = await this.discoverNodes();
-    const needed = this.k - this.neighbors.size;
-    const selected = await this.selectNeighbors(candidates, needed);
-    
-    await this.connectToNeighbors(selected);
+    const missing = (await this.selectNeighbors(candidates, this.k)).filter(
+      (userId) => !this.reconnectAttempts.has(userId)
+    );
+    if (missing.length === 0) return;
+    await this.connectToNeighbors(this.prioritize(missing));
   }
 
   /**
@@ -509,17 +609,19 @@ export class MeshTopologyManager {
    */
   private async selectNeighbors(
     candidates: string[],
-    count: number
+    _count: number
   ): Promise<string[]> {
-    // 過濾掉已經是鄰居的節點
-    const available = candidates.filter(
-      userId => !this.neighbors.has(userId) && userId !== this.localUserId
-    );
-    
-    // 簡單策略：隨機選擇
-    // 未來可以加入連線品質評估
-    const shuffled = [...available].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, Math.min(count, available.length));
+    // 確定性互選（Spec 016）：兩端從同一名冊推導同一邊集，互選由構造保證。
+    // 舊隨機洗牌使互選純屬機率（7 人 k=3 實測 101 次發起僅 17 次成形）。
+    // full mesh 檔（k ≥ n-1）回傳全體其他人，≤6 人房行為與改動前一致。
+    return this.deterministicMissingTargets(candidates);
+  }
+
+  /** 由候選名冊算確定性目標集，過濾掉已是鄰居者（circulant 環，見 circulantTopology.ts） */
+  private deterministicMissingTargets(candidates?: string[]): string[] {
+    const roster = candidates ?? Array.from(new Set(this.identityMap.values()));
+    return computeCirculantTargets([...roster, this.localUserId], this.localUserId, this.k)
+      .filter((userId) => !this.neighbors.has(userId));
   }
 
   /**
@@ -609,6 +711,11 @@ export class MeshTopologyManager {
       this.discoveryUnsubscribe();
       this.discoveryUnsubscribe = null;
     }
+    if (this.inboundWatchUnsubscribe) {
+      this.inboundWatchUnsubscribe();
+      this.inboundWatchUnsubscribe = null;
+    }
+    this.pendingInboundFrom.clear();
 
     // 清除所有重連/延後 timer
     for (const timer of this.reconnectTimers.values()) {
