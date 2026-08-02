@@ -105,6 +105,14 @@ r 數據顯示選擇層已修（發起 101→78、單邊 offer 0）但 bus 逾�
 - [x] T7 文件收尾：CURRENT-STATUS、QA-REPORT 已知限制、ADR-0037 回填、
   Spec 011 V1 註記、docs/DEVELOPMENT.md Relay/Topology 表不變（拓撲策略表無用詞變更）。
 
+**〔實作期發現 2026-08-03〕D. 分島殘留（獨立工項，本 spec 記錄不修）**：CI 第三輪實證
+「鄰居健全 ≠ 全房可達」盲點（Spec 011 Q4）首次真實現身——房主被測試 goto 重載後，
+向 circulant 目標重建的邊在網路抖動下耗盡 MAX_RECONNECT_ATTEMPTS=5 即永久放棄，
+與最後加入者形成雙人孤島（兩頁 accepted=0 但「已連線」為真），rotation 2 分鐘
+週期來不及自癒。修復方向（下一 spec）：重試耗盡後的低頻長期重試（或由 anti-entropy
+偵測「已知 sender 長期零進帳」觸發重連）＋連線狀態的圖級誠實化。測試側的
+自傷 goto 已移除（joinRoom 冪等化），emulator 假象恢復（reload 一次）已落地。
+
 ## 6. 驗收（黃金判準）
 
 - `tests/unit/meshFormation.simulation.spec.ts` 多 seed 全綠（成形層證明落地）。

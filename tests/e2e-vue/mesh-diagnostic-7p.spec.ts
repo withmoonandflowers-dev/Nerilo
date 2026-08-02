@@ -78,8 +78,10 @@ test.describe('Vue 版 7 人 mesh 診斷（partial mesh，Spec 011）', () => {
         await joinRoom(u.page, roomId);
         await expect(u.page).toHaveURL(/\/chat\/.+/, { timeout: 20_000 });
       }
-      // 房主由 waiting 進 chat（第 2 人加入時房間轉 open）
-      await joinRoom(owner.page, roomId);
+      // 房主：waiting 頁在第 2 人加入時已自動導進 chat——無條件再 goto 會整頁重載，
+      // 造成 session renew 與全房 rejoin churn（CI 三輪實證：恆定第 8 次 chat:init 之源，
+      // 且曾引發 {房主, 最後加入者} 與主元件斷開的孤島）。只在尚未進 chat 時才導航。
+      if (!/\/chat\//.test(owner.page.url())) await joinRoom(owner.page, roomId);
 
       // 等 7 人都進 mesh 且 ≥1 鄰居連上；不等 full mesh（partial 下也不存在連滿 n-1）。
       // emulator 韌性（CI 首兩輪實證，2026-08-03）：Firestore emulator 的 Listen stream
