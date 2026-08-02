@@ -218,8 +218,10 @@ describe('金鑰晚到補顯示（Spec 009×012 合流修復）', () => {
 
     // keyx 後到 → 金鑰安裝 → 同一則以解密內容重派（UI 以同 id upsert）
     await handler.handleReceivedMessage(keyxWire(payload, 1), 'n1');
-    await new Promise((r) => setTimeout(r, 0)); // 補顯示是非阻塞派發
-    expect(shown).toHaveLength(2);
+    // 補顯示是非阻塞派發（void redisplayForKeyEpoch 內含 await 解密），契約是「最終重派」，
+    // 不保證單一 tick 內完成——固定 setTimeout(0) 在 CI 2 核擠壓下輸給解密（2026-08-01 排程紅單，
+    // 本機滿載重現 1/20）。改輪詢等到重派為止；內容斷言維持精確。
+    await vi.waitFor(() => expect(shown).toHaveLength(2));
     expect(shown[1]!.seq).toBe(5);
     expect(shown[1]!.content).toBe('晚到金鑰的訊息');
   });
