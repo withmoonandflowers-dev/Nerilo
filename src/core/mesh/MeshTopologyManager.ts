@@ -35,6 +35,12 @@ export class MeshTopologyManager {
   private static readonly MAX_RECONNECT_ATTEMPTS = 5;
   private static readonly BASE_RECONNECT_DELAY_MS = 1_000;
   private static readonly MAX_RECONNECT_DELAY_MS = 30_000;
+  /**
+   * 慢車道週期（Spec 019）：快車道耗盡後的持久重試間隔。
+   * ≪ rotation 2min（分島自癒主力）、≥ 快車道上限（不搶快車道資源）；
+   * 每 peer 每輪至多一次 signaling 寫入，成本可忽略。
+   */
+  private static readonly SLOW_RETRY_MS = 30_000;
 
   /**
    * accept 側讓位餘裕（Spec 011 R-a）：reactive discovery 對「全新成員」的連線
@@ -349,27 +355,38 @@ export class MeshTopologyManager {
   }
 
   /**
-   * 以指數退避排程重連
+   * 排程重連：快車道（指數退避 ×MAX）耗盡後降慢車道持久重試（Spec 019）。
+   * 舊行為是耗盡即永久放棄——churn 下互選邊重建失敗會靜默分島
+   * （CI 7p R3 實證：雙人孤島整場不癒合，anti-entropy 連通前提破裂）。
+   * 慢車道 30s±10% 一輪、attempts 飽和不再增；觸發時僅對「仍在確定性互選
+   * 目標集內」的 peer 重試（離開者/環重排出局者出列，資源有界）。
    */
   private scheduleReconnect(userId: string): void {
     const attempts = this.reconnectAttempts.get(userId) ?? 0;
-    if (attempts >= MeshTopologyManager.MAX_RECONNECT_ATTEMPTS) {
-      logger.warn('[MeshTopologyManager] Max reconnect attempts reached, giving up', {
+    const slowLane = attempts >= MeshTopologyManager.MAX_RECONNECT_ATTEMPTS;
+
+    let delay: number;
+    if (slowLane) {
+      const jitter = (Math.random() - 0.5) * MeshTopologyManager.SLOW_RETRY_MS * 0.2;
+      delay = MeshTopologyManager.SLOW_RETRY_MS + jitter;
+      logger.warn('[MeshTopologyManager] Fast-lane retries exhausted — slow-lane persistent retry', {
         roomId: this.roomId,
         remoteUserId: userId,
         attempts,
+        slowRetryMs: MeshTopologyManager.SLOW_RETRY_MS,
       });
-      this.reconnectAttempts.delete(userId);
-      return;
+    } else {
+      // 指數退避 + jitter：delay = min(base * 2^attempts + jitter, max)
+      // jitter 取 ±10% 避免 thundering herd（#32），原本 jitter 等於 base delay 過大
+      const baseDelay = MeshTopologyManager.BASE_RECONNECT_DELAY_MS * Math.pow(2, attempts);
+      const jitter = (Math.random() - 0.5) * baseDelay * 0.2;
+      delay = Math.min(baseDelay + jitter, MeshTopologyManager.MAX_RECONNECT_DELAY_MS);
     }
 
-    // 指數退避 + jitter：delay = min(base * 2^attempts + jitter, max)
-    // jitter 取 ±10% 避免 thundering herd（#32），原本 jitter 等於 base delay 過大
-    const baseDelay = MeshTopologyManager.BASE_RECONNECT_DELAY_MS * Math.pow(2, attempts);
-    const jitter = (Math.random() - 0.5) * baseDelay * 0.2;
-    const delay = Math.min(baseDelay + jitter, MeshTopologyManager.MAX_RECONNECT_DELAY_MS);
-
-    this.reconnectAttempts.set(userId, attempts + 1);
+    this.reconnectAttempts.set(
+      userId,
+      Math.min(attempts + 1, MeshTopologyManager.MAX_RECONNECT_ATTEMPTS)
+    );
 
     logger.info('[MeshTopologyManager] Scheduling reconnect', {
       roomId: this.roomId,
@@ -387,11 +404,23 @@ export class MeshTopologyManager {
       this.reconnectTimers.delete(userId);
       // 如果已經有這個鄰居了（可能透過其他路徑連上），跳過
       if (this.neighbors.has(userId)) return;
-      // 如果已達上限，跳過
-      if (this.neighbors.size >= this.k) return;
 
       // 重新發現節點以更新 identityMap（peer 可能在等待期間才註冊身分）
-      await this.discoverNodes();
+      const freshCandidates = await this.discoverNodes();
+
+      // Spec 019：以「仍在確定性互選目標集」取代舊的 size>=k 跳過——
+      // 確定性互選下 size 可高於 k 而仍缺互選邊（升級窗），舊檢查會誤殺必要重試。
+      // 目標集用「當下 snapshot」計算（identityMap 只增不減，離開者會殘留）：
+      // 離開者/環重排出局者在此出列，慢車道資源有界。
+      const currentTargets = this.deterministicMissingTargets(freshCandidates);
+      if (!currentTargets.includes(userId)) {
+        this.reconnectAttempts.delete(userId);
+        logger.info('[MeshTopologyManager] Reconnect target no longer in mutual-selection set — dropping', {
+          roomId: this.roomId,
+          remoteUserId: userId,
+        });
+        return;
+      }
       await this.connectToSingleNeighbor(userId);
     }, delay);
 

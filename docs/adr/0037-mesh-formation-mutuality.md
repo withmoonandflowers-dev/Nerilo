@@ -33,3 +33,12 @@ Spec 011 的 1100 組 seed 模擬假設 k-圖已成形，只驗擴散層，成�
   但單機仍未全綠——開發機 7 瀏覽器併發即 Spec 011 R-g 資源上限。
   驗收移至專用 workflow `e2e-7p.yml`（乾淨 runner，手動＋每日排程）。
 - 順手修：IceServerProvider 社群 TURN 清單失敗不快取（風暴期一輪 59 次重抓）。
+
+## 補註（2026-08-03，Spec 019）：重連耗盡改降慢車道
+
+殘留 D 收口：scheduleReconnect 快車道（指數退避 ×5）耗盡後不再永久放棄，
+降 30s±10% 慢車道持久重試；每輪以「當下 snapshot」重算確定性互選目標集，
+不在集內即出列（identityMap 只增不減，不可作此判準）。舊計時器的 size>=k
+跳過在互選語義下會誤殺升級窗的必要重試，由目標集檢查取代。
+分島最壞自癒時間從「永不」變 ~30s。證據：meshReconnectSlowLane 三性質
+（fake timers，jitter 上下界推演；stash 對照修前紅）。

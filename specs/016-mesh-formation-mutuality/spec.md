@@ -105,7 +105,7 @@ r 數據顯示選擇層已修（發起 101→78、單邊 offer 0）但 bus 逾�
 - [x] T7 文件收尾：CURRENT-STATUS、QA-REPORT 已知限制、ADR-0037 回填、
   Spec 011 V1 註記、docs/DEVELOPMENT.md Relay/Topology 表不變（拓撲策略表無用詞變更）。
 
-**〔實作期發現 2026-08-03〕D. 分島殘留（獨立工項，本 spec 記錄不修）**：CI 第三輪實證
+**〔實作期發現 2026-08-03〕D. 分島殘留（已由 Spec 019 收口：慢車道持久重試）**：CI 第三輪實證
 「鄰居健全 ≠ 全房可達」盲點（Spec 011 Q4）首次真實現身——房主被測試 goto 重載後，
 向 circulant 目標重建的邊在網路抖動下耗盡 MAX_RECONNECT_ATTEMPTS=5 即永久放棄，
 與最後加入者形成雙人孤島（兩頁 accepted=0 但「已連線」為真），rotation 2 分鐘
