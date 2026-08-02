@@ -51,8 +51,12 @@ export async function setupUser(browser: Browser): Promise<User> {
   const page = await ctx.newPage();
   await page.goto('/login');
   // Switch the login form into register mode, then submit a unique account.
-  await page.locator('.auth-toggle-link').click();
-  await expect(page.locator('.login-form button[type="submit"]')).toHaveText('註冊');
+  // 單次 click 可能落在 hydration 完成前（handler 未掛上，點了無效，之後等再久也不會切）——
+  // CI 2 核下實際踩到（2026-08-02 run #200 P0.3）。重試「點擊到生效」而非拉長盲等。
+  await expect(async () => {
+    await page.locator('.auth-toggle-link').click();
+    await expect(page.locator('.login-form button[type="submit"]')).toHaveText('註冊', { timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
   await page.fill('#email', uniqueEmail());
   await page.fill('#password', TEST_PASSWORD);
   await page.locator('.login-form button[type="submit"]').click();
