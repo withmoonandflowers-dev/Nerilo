@@ -113,6 +113,15 @@ r 數據顯示選擇層已修（發起 101→78、單邊 offer 0）但 bus 逾�
 偵測「已知 sender 長期零進帳」觸發重連）＋連線狀態的圖級誠實化。測試側的
 自傷 goto 已移除（joinRoom 冪等化），emulator 假象恢復（reload 一次）已落地。
 
+**〔實作期發現 2026-08-03 之二〕E. 產生方交接 epoch 碰撞（獨立工項 → Spec 018）**：
+CI 第五輪（成形全健康：chat:init=7、全員 accepted 54-60、無孤島）暴露新變種——
+逐一加入使「合法完整名冊」隨時間有多個版本，min-uid 隨人數換人；新任 min-uid
+（晚加入者）在消費到前任 keyx 之前金鑰環為空（maxKnownEpoch=-1）→ 以 epoch 0
+再發新鑰 → 同代異鑰碰撞（實證：U5 於 rosterSize 5 發 epoch 0、U7 於 rosterSize 7
+再發 epoch 0；U6/U7 各 14 次解密失敗）。三道閘門防殘缺名冊、防不了跨時間交接；
+Spec 017 self-seal 不涉跨產生方。修法方向（Spec 018）：第四道閘門——金鑰環空但
+store 已有他人紀錄 → 延遲 N tick 等既有 keyx 到達再分發（有界等待保 liveness）。
+
 ## 6. 驗收（黃金判準）
 
 - `tests/unit/meshFormation.simulation.spec.ts` 多 seed 全綠（成形層證明落地）。
