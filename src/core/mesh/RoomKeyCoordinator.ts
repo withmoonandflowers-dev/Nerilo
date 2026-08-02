@@ -109,9 +109,11 @@ export class RoomKeyCoordinator {
     const epoch = this.deps.getMaxKnownEpoch() + 1;
     try {
       const roomKey = await generateRoomKey();
-      const others = eligible.filter((m) => m.userId !== this.deps.localUserId);
+      // 封給全體 eligible 含自己（Spec 017）：產生方重進後 hydrate 只能從自己 store 的
+      // keyx 紀錄復原金鑰；不封給自己則回放靜默無效 → getMaxKnownEpoch()=-1 → 以 epoch 0
+      // 重發新鑰，與對方手上同代舊鑰碰撞（rejoin flake 根因，10 輪 6 紅實證）。
       const sealTargets = await Promise.all(
-        others.map(async (m) => ({
+        eligible.map(async (m) => ({
           userId: m.userId,
           ecdhPublic: await importEcdhPublic(m.ecdhPubKey),
         }))
@@ -133,7 +135,7 @@ export class RoomKeyCoordinator {
       this.distributedRosterSig = sig;
       logger.info('[RoomKeyCoordinator] distributed keyx', {
         epoch,
-        members: others.length,
+        members: eligible.length - 1,
         rosterSize: eligible.length,
       });
     } catch (err) {

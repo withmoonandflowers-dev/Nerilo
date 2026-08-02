@@ -82,9 +82,10 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     expect(applyLocalKey).toHaveBeenCalledTimes(1);
     const payload = lastKeyx(sendKeyx);
     expect(payload.v).toBe('keyx1');
-    expect(payload.keys).toHaveLength(1); // 只封給 b-user（不封自己）
-    expect(payload.keys[0]!.forMember).toBe('b-user');
-    expect(payload.keys[0]!.epoch).toBe(0);
+    expect(payload.keys).toHaveLength(2); // b-user + 自己（Spec 017：self 條目供 rejoin 回放復原）
+    const members = payload.keys.map((k) => k.forMember).sort();
+    expect(members).toEqual(['a-user', 'b-user']);
+    expect(payload.keys.every((k) => k.epoch === 0)).toBe(true);
     expect(applyLocalKey.mock.calls[0]![1]).toBe(0);
   });
 
@@ -135,7 +136,7 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     // 名冊自此穩定，再跑一輪 → 分發
     await coord.tick();
     expect(sendKeyx).toHaveBeenCalledTimes(1);
-    expect(lastKeyx(sendKeyx).keys).toHaveLength(2); // b + c
+    expect(lastKeyx(sendKeyx).keys).toHaveLength(3); // a(self, Spec 017) + b + c
   });
 
   it('冪等：穩定名冊多次 tick 只分發一次；名冊變動才重發（epoch 遞增）', async () => {
@@ -159,7 +160,7 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     await tickStable(coord, 3);
     expect(sendKeyx).toHaveBeenCalledTimes(2);
     const payload = lastKeyx(sendKeyx);
-    expect(payload.keys).toHaveLength(2); // b + c
+    expect(payload.keys).toHaveLength(3); // a(self, Spec 017) + b + c
     expect(payload.keys.every((k) => k.epoch === 1)).toBe(true);
   });
 

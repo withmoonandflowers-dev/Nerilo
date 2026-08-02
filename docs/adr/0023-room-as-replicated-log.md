@@ -333,3 +333,17 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
 **P4（網絡）全數完成：A 名冊 · B 連線 · C 盲信使寄存/對帳/墓碑/持久化 · D 計量。**
 
 **尚未做（P4-D）**：共簽收據→點數計量（ADR-0022，`CoSignedReceipt` 已備）；多副本 K=3。
+
+## 修訂七（2026-08-02）：keyx 封裝對象納入產生方自己（Spec 017）
+
+P2-②c 的 keyx 只封給 others，產生方自己的金鑰走 applyLocalKey 記憶體安裝。這使
+Spec 012 的 hydrate 重放對「產生方本人」失效：重進後回放自己 store 的 keyx 找不到
+forMember=自己的份，靜默無效（keyxReplayed 計數照加），getMaxKnownEpoch()=-1 →
+以 epoch 0 重新生成分發 → 與對方持有的同代舊鑰碰撞，金鑰環永久分歧。rejoin E2E
+10 輪 6 紅，是否踩中取決於重進者是否為 min-uid 產生方（每輪隨機）。
+
+決策：sealTargets 由 others 改為 eligible 全體（含自己，用自己的 ECDH 公鑰封給
+自己）。wire 格式同形（keys[] 多一個條目，舊 client 不受影響）；歷史解密保留
+（優於「持久化 epoch 計數器」方案——那會讓重進端喪失舊 epoch 歷史解密）。
+舊房間既有 keyx 紀錄無 self 條目，隨下次名冊變動的新 epoch 自然覆蓋。
+證據：MeshKeyxIntegration「Spec 017」整合測試（真 hydrate 路徑，修前紅/修後綠）。

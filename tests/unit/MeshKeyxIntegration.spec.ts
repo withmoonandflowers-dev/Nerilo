@@ -67,9 +67,15 @@ class SimNode {
   static async create(
     userId: string,
     net: SimNetwork,
-    roster: () => { members: Array<{ userId: string; ecdhPubKey?: string }>; participantCount: number }
+    roster: () => { members: Array<{ userId: string; ecdhPubKey?: string }>; participantCount: number },
+    opts?: {
+      /** 重進（rejoin）模擬：沿用同一 ECDH 身分（IdentityManager 持久化語義） */
+      ecdh?: CryptoKeyPair;
+      /** 注入持久層 mock 使 handler.hydrate() 走真回放路徑（Spec 017） */
+      persistence?: unknown;
+    }
   ): Promise<SimNode> {
-    const ecdh = await ecdhPair();
+    const ecdh = opts?.ecdh ?? (await ecdhPair());
     const node = new SimNode(userId, ecdh, await spkiB64(ecdh.publicKey));
 
     // 單一「代表所有鄰居」的連線 mock：send 把 wire 丟進網路佇列
@@ -99,7 +105,8 @@ class SimNode {
     };
 
     node.handler = new GossipMessageHandler(
-      ROOM, userId, identity as never, security as never, topology as never
+      ROOM, userId, identity as never, security as never, topology as never,
+      null, (opts?.persistence ?? null) as never
     );
     node.handler.setKeyxPrivateKey(ecdh.privateKey);
     node.handler.onMessage((m) => node.displayed.push(m.content));
@@ -234,5 +241,87 @@ describe('P2-②c keyx 整合模擬（真協調器 + 真 handler + 真 crypto）
     expect(a.displayed).toContain('epoch1-after-carol-left'); // 留下者解得開
     expect(c.displayed.some((s) => s.includes('🔒'))).toBe(true); // 離開者佔位
     expect(c.displayed.some((s) => s.includes('epoch1-after-carol-left'))).toBe(false); // 讀不到離開後內容
+  });
+});
+
+describe('Spec 017：產生方 rejoin 金鑰自我復原', () => {
+  it('keyx 含 self 條目；產生方重生經 hydrate 復原金鑰環，不再同 epoch 異鑰碰撞', async () => {
+    const net = new SimNetwork();
+    let roster = {
+      members: [] as Array<{ userId: string; ecdhPubKey?: string }>,
+      participantCount: 0,
+    };
+    const rosterFn = () => roster;
+
+    // bob 取 min userId → bob 是產生方，且 bob 是重進者（對齊 rejoin.spec 失敗劇本）
+    const bob = await SimNode.create('n1-bob', net, rosterFn);
+    const alice = await SimNode.create('n2-alice', net, rosterFn);
+    roster = {
+      members: [bob, alice].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      participantCount: 2,
+    };
+
+    await settle(net, [bob, alice], () =>
+      [bob, alice].every((n) => n.handler.getMaxKnownEpoch() === 0)
+    );
+
+    // (a) 產生方分發的 keyx 必須含封給自己的份（自我復原的前提）
+    const keyxWire = net.sentWires.find(
+      (w) => w.channel === 'keyx' && w.senderId === 'n1-bob'
+    )!;
+    expect(keyxWire).toBeDefined();
+    const keyxPayload = JSON.parse(keyxWire.content) as { keys: Array<{ forMember: string }> };
+    expect(keyxPayload.keys.some((k) => k.forMember === 'n1-bob')).toBe(true);
+    expect(keyxPayload.keys.some((k) => k.forMember === 'n2-alice')).toBe(true);
+
+    // alice 送 epoch-0 密文，bob 舊 session 解得開（現況錨點）
+    const before = net.sentWires.length;
+    await alice.handler.sendMessage('before-rejoin', 'm0');
+    await net.flush();
+    expect(bob.displayed).toContain('before-rejoin');
+    const aliceEpoch0Wire = net.sentWires
+      .slice(before)
+      .find((w) => (w.channel ?? 'chat') === 'chat')!;
+
+    // ── bob 重進：新 handler/coordinator、同 ECDH 身分；持久層回放自己的 keyx ──
+    let seq = 100;
+    const persistence = {
+      reserveSeq: vi.fn(async () => ++seq),
+      reserveSessionEpoch: vi.fn(async () => Date.now()),
+      saveAcceptedEpoch: vi.fn(async () => undefined),
+      loadRoom: vi.fn(async () => ({
+        records: [structuredClone(keyxWire)],
+        floors: [],
+        acceptedEpochs: [],
+      })),
+      saveRecord: vi.fn(async () => undefined),
+      evictRecord: vi.fn(async () => undefined),
+      listRooms: vi.fn(async () => [ROOM]),
+    };
+    const bob2 = await SimNode.create('n1-bob', net, rosterFn, {
+      ecdh: bob.ecdh,
+      persistence,
+    });
+    await bob2.handler.hydrate();
+
+    // (b) 真 hydrate 回放後金鑰環已復原（修前此處為 -1 → epoch 0 重發碰撞）
+    expect(bob2.handler.getMaxKnownEpoch()).toBe(0);
+
+    // (c) 名冊未變下 coordinator 再分發必為新 epoch（單調），且對方訊息可解
+    await settle(net, [bob2, alice], () =>
+      [bob2, alice].every((n) => n.handler.getMaxKnownEpoch() >= 1)
+    );
+    expect(bob2.handler.getMaxKnownEpoch()).toBeGreaterThanOrEqual(1);
+    expect(alice.handler.getMaxKnownEpoch()).toBe(bob2.handler.getMaxKnownEpoch());
+
+    // alice 重進後發的新訊息 bob2 解得開（rejoin.spec 第 50 行的單元級等價）
+    await alice.handler.sendMessage('after-rejoin', 'm1');
+    await net.flush();
+    expect(bob2.displayed).toContain('after-rejoin');
+    expect(bob2.displayed.some((s) => s.includes('🔒'))).toBe(false);
+
+    // 歷史解密保留：alice 的 epoch-0 舊密文在 bob2 仍解得開（epoch-bump 方案做不到這點）
+    await bob2.handler.handleReceivedMessage(structuredClone(aliceEpoch0Wire), 'n2-alice');
+    expect(bob2.displayed).toContain('before-rejoin');
   });
 });
