@@ -40,6 +40,18 @@ export interface RoomKeyCoordinatorDeps {
   applyLocalKey: (key: CryptoKey, epoch: number) => void;
   /** 本機金鑰環中已知最高 epoch（-1 = 尚無）；用於產生方交接時的 epoch 單調 */
   getMaxKnownEpoch: () => number;
+  /**
+   * store 是否已有他人紀錄（選填，Spec 018 交接寬限用；未提供＝false，
+   * 行為與閘門加入前一致）。true 且未觀察到任何 keyx → 房間已運轉、既有 keyx
+   * 可能在 anti-entropy 路上，延遲分發避免同代異鑰碰撞。
+   */
+  hasForeignRecords?: () => boolean;
+  /**
+   * store 中觀察到的最高 keyx epoch（選填，Spec 018；-1/未提供＝未見）。
+   * 新加入者開不了舊 keyx（前向保密）但讀得到 epoch 明文 metadata；
+   * 分發基底取 max(已安裝, 已觀察)+1，交接必單調。
+   */
+  getMaxObservedEpoch?: () => number;
 }
 
 /**
@@ -48,6 +60,14 @@ export interface RoomKeyCoordinatorDeps {
  */
 const STABILITY_TICKS = 1;
 
+/**
+ * 交接寬限（Spec 018 第四道閘門）：金鑰環空但 store 已有他人紀錄時，延遲分發的
+ * 最大 tick 數。4s tick × 3 ≈ 12s，涵蓋 anti-entropy 2s 週期數輪讓既有 keyx 到達；
+ * 窗盡照發保 liveness。防的是「晚加入的新任 min-uid 未消費前任 keyx 即以 epoch 0
+ * 再發」的跨時間交接碰撞（CI 7p 第五輪實證，Spec 016 殘留 E）。
+ */
+const HANDOVER_GRACE_TICKS = 3;
+
 export class RoomKeyCoordinator {
   /** 上次分發所用的名冊簽章（userId 排序 join）；相同則不重發 */
   private distributedRosterSig: string | null = null;
@@ -55,6 +75,8 @@ export class RoomKeyCoordinator {
   private lastSeenSig: string | null = null;
   /** 名冊連續穩定計數（sig 與上輪相同則遞增，變動歸零） */
   private stableCount = 0;
+  /** 交接寬限已延遲的 tick 數（Spec 018 閘門 4；窗盡不重置，liveness 有界） */
+  private handoverWaitTicks = 0;
 
   constructor(private deps: RoomKeyCoordinatorDeps) {}
 
@@ -106,7 +128,25 @@ export class RoomKeyCoordinator {
 
     if (sig === this.distributedRosterSig) return; // 此名冊已分發
 
-    const epoch = this.deps.getMaxKnownEpoch() + 1;
+    // 閘門 4（Spec 018）：交接寬限——環空、也未觀察到任何 keyx，但房間已運轉
+    // → 等既有 keyx 抵達（開不開得了無所謂，epoch metadata 是明文）。
+    // 一旦觀察到 keyx（或窗盡），以 max(已安裝, 已觀察)+1 分發，交接必單調。
+    const observedEpoch = this.deps.getMaxObservedEpoch?.() ?? -1;
+    if (
+      this.deps.getMaxKnownEpoch() === -1 &&
+      observedEpoch === -1 &&
+      (this.deps.hasForeignRecords?.() ?? false) &&
+      this.handoverWaitTicks < HANDOVER_GRACE_TICKS
+    ) {
+      this.handoverWaitTicks++;
+      logger.info('[RoomKeyCoordinator] handover grace — deferring distribution', {
+        waitTick: this.handoverWaitTicks,
+        graceTicks: HANDOVER_GRACE_TICKS,
+      });
+      return;
+    }
+
+    const epoch = Math.max(this.deps.getMaxKnownEpoch(), observedEpoch) + 1;
     try {
       const roomKey = await generateRoomKey();
       // 封給全體 eligible 含自己（Spec 017）：產生方重進後 hydrate 只能從自己 store 的

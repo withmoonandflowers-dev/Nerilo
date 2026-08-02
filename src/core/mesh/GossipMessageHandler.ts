@@ -1,4 +1,5 @@
 import type { GossipMessage } from '../../types';
+import { storeHasRecordsFromOthers, maxObservedKeyxEpoch } from './storeInspect';
 import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
@@ -111,6 +112,16 @@ export class GossipMessageHandler {
   }
 
   /** 金鑰環中已知最高（房間金鑰）epoch；供產生方交接時單調遞增。 */
+  /** store 已有他人紀錄？——keyx 交接寬限閘門的「房間已運轉」證據（Spec 018） */
+  hasRecordsFromOthers(): boolean {
+    return storeHasRecordsFromOthers(this.store, this.userId);
+  }
+
+  /** store 觀察到的最高 keyx epoch（-1=未見）；產生方交接基底（Spec 018） */
+  getMaxObservedKeyxEpoch(): number {
+    return maxObservedKeyxEpoch(this.store);
+  }
+
   getMaxKnownEpoch(): number {
     return this.contentKeys.getMaxKnownEpoch();
   }

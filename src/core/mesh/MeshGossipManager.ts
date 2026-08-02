@@ -243,6 +243,10 @@ export class MeshGossipManager {
             localUserId: userId,
             getEcdhPrivateKey: () => this.identityManager.getEcdhPrivateKey(),
             getEcdhPublicKeyBase64: () => this.identityManager.exportEcdhPublicKey(),
+            // Spec 018 閘門 4：環空且未見 keyx 但房間已運轉 → 交接寬限；
+            // 分發基底含「觀察到的 keyx epoch」（開不了也讀得到 metadata）
+            hasForeignRecords: () => this.messageHandler?.hasRecordsFromOthers() ?? false,
+            getMaxObservedEpoch: () => this.messageHandler?.getMaxObservedKeyxEpoch() ?? -1,
             // 快取讀（forceServer=false）：keyx 週期輪詢不需每次強制 server 讀。
             // 名冊＝meshIdentities ∩ participants（離開者 meshIdentity 未即時清 →
             // 必須交集 participants，否則離開者續留名冊、續被封鑰 → 無前向保密，見 rosterFromRoom）。

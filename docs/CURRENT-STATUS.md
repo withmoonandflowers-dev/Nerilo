@@ -31,6 +31,10 @@
   成形層確定性模擬 1600 seed 落地（補 Spec 011 只驗擴散層的證據缺口）。
   迴歸全綠（單元 1558、3 人矩陣×3、@vue-stable、React @stable）；7p 單機量測顯著
   改善但未全綠（R-g 資源上限），驗收移至 `e2e-7p.yml`（手動＋每日排程）。ADR-0037。
+- **Spec 018（implementing→CI 驗證中）**：產生方交接 epoch 碰撞（Spec 016 殘留 E）修復——
+  keyx 分發基底改 max(已安裝, 已觀察 metadata)+1＋交接寬限閘門；新加入者開不了舊
+  keyx（前向保密）但讀得到 epoch 明文，交接必單調。單元 1562 全綠、rejoin 8 輪 7 綠
+  （單次傳輸尾巴）、3 人矩陣綠。ADR-0023 修訂八。
 - 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
 - 未裁定：mesh-e2ee 本機 4/4 紅（stash 對照證實與以上修復無關；當時機器被論文重跑
   程序佔核＋睡眠干擾；該 spec 不在 @vue-stable 與 E2E Full 涵蓋內——覆蓋缺口待補）。

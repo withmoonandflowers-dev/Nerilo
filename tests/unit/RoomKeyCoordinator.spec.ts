@@ -27,7 +27,11 @@ async function spkiB64(k: CryptoKey): Promise<string> {
 type Roster = { members: Array<{ userId: string; ecdhPubKey?: string }>; participantCount: number };
 
 /** 建一個以 alice 為本機（產生方候選）的協調器，roster 由 loadRoster spy 控制 */
-async function setup(opts?: { localUserId?: string }) {
+async function setup(opts?: {
+  localUserId?: string;
+  hasForeignRecords?: () => boolean;
+  getMaxObservedEpoch?: () => number;
+}) {
   const alice = await ecdhPair();
   const localUserId = opts?.localUserId ?? 'a-user';
   const sendKeyx = vi.fn().mockResolvedValue(undefined);
@@ -45,6 +49,8 @@ async function setup(opts?: { localUserId?: string }) {
       applyLocalKey(key, epoch);
     },
     getMaxKnownEpoch: () => maxEpoch,
+    ...(opts?.hasForeignRecords ? { hasForeignRecords: opts.hasForeignRecords } : {}),
+    ...(opts?.getMaxObservedEpoch ? { getMaxObservedEpoch: opts.getMaxObservedEpoch } : {}),
   };
   return {
     alice,
@@ -53,6 +59,10 @@ async function setup(opts?: { localUserId?: string }) {
     applyLocalKey,
     loadRoster,
     aliceEcdhPubB64: await spkiB64(alice.publicKey),
+    /** 模擬「既有 keyx 經 gossip 到達並被 consumeKeyx 安裝」（Spec 018 測試用） */
+    installKey: (epoch: number) => {
+      maxEpoch = Math.max(maxEpoch, epoch);
+    },
   };
 }
 
@@ -250,5 +260,57 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     const ct = await encryptRecordContent('房內密語', localKey, 0);
     expect(await decryptRecordContent(ct, bobKey)).toBe('房內密語');
     expect(alice).toBeTruthy();
+  });
+});
+
+describe('Spec 018：第四道閘門（產生方交接寬限）', () => {
+  async function rosterAB(aliceEcdhPubB64: string) {
+    const bob = await ecdhPair();
+    return {
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 2,
+    };
+  }
+
+  it('環空＋房間已運轉 → 延遲分發；觀察到既有 keyx（開不了也算）後以 observed+1 分發', async () => {
+    let observed = -1;
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup({
+      hasForeignRecords: () => true,
+      getMaxObservedEpoch: () => observed,
+    });
+    loadRoster.mockResolvedValue(await rosterAB(aliceEcdhPubB64));
+
+    await tickStable(coord, 4); // 穩定窗 + 寬限窗內
+    expect(sendKeyx).not.toHaveBeenCalled(); // 修前此處已發 epoch 0（碰撞源）
+
+    observed = 0; // 前任 keyx 經 anti-entropy 到達（新加入者開不了，但 epoch metadata 可讀）
+    await coord.tick();
+    expect(sendKeyx).toHaveBeenCalledTimes(1);
+    expect(lastKeyx(sendKeyx).keys.every((k) => k.epoch === 1)).toBe(true); // 單調，無同代異鑰
+  });
+
+  it('bootstrap（無他人紀錄）：立即分發 epoch 0，行為與閘門加入前一致', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup({
+      hasForeignRecords: () => false,
+    });
+    loadRoster.mockResolvedValue(await rosterAB(aliceEcdhPubB64));
+
+    await tickStable(coord, 2);
+    expect(sendKeyx).toHaveBeenCalledTimes(1);
+    expect(lastKeyx(sendKeyx).keys.every((k) => k.epoch === 0)).toBe(true);
+  });
+
+  it('liveness：寬限窗盡仍無 keyx → 照發 epoch 0（有界等待）', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup({
+      hasForeignRecords: () => true, // 永遠有他人紀錄但 keyx 永不到（理論明文房）
+    });
+    loadRoster.mockResolvedValue(await rosterAB(aliceEcdhPubB64));
+
+    await tickStable(coord, 8); // 穩定窗 1 + 寬限 3 + 餘裕
+    expect(sendKeyx).toHaveBeenCalledTimes(1);
+    expect(lastKeyx(sendKeyx).keys.every((k) => k.epoch === 0)).toBe(true);
   });
 });

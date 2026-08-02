@@ -347,3 +347,14 @@ forMember=自己的份，靜默無效（keyxReplayed 計數照加），getMaxKno
 （優於「持久化 epoch 計數器」方案——那會讓重進端喪失舊 epoch 歷史解密）。
 舊房間既有 keyx 紀錄無 self 條目，隨下次名冊變動的新 epoch 自然覆蓋。
 證據：MeshKeyxIntegration「Spec 017」整合測試（真 hydrate 路徑，修前紅/修後綠）。
+
+## 修訂八（2026-08-03）：keyx 第四道閘門——產生方交接以觀察 epoch 為基底（Spec 018）
+
+CI 7p 第五輪實證跨時間交接碰撞：逐一加入使 min-uid 換人，新任產生方未見前任
+keyx 即以 epoch 0 再發，同代異鑰。深層事實：新加入者「開不了」既有 keyx（未封給
+他，前向保密本意），等待安裝永遠等不到，現任又已非 min-uid 不再重發——交接死鎖。
+決策：keys[].epoch 是明文 metadata，開不了也讀得到。分發基底改
+max(已安裝, 已觀察)+1；環空且未觀察到 keyx 且房間已運轉時延遲 3 tick
+（HANDOVER_GRACE，等 anti-entropy 送達）。bootstrap 行為不變、前向保密不破、
+epoch 單調在交接下成立。證據：閘門三例單元＋交接整合劇本（MeshKeyxIntegration
+Spec 018 節，重演 CI 劇本）。

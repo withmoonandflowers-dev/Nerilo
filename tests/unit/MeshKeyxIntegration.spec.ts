@@ -119,6 +119,9 @@ class SimNode {
       sendKeyx: (content) => node.handler.sendMessage(content, undefined, 'keyx'),
       applyLocalKey: (key, epoch) => node.handler.setContentKey(key, epoch),
       getMaxKnownEpoch: () => node.handler.getMaxKnownEpoch(),
+      // 與 MeshGossipManager 產線接線同款（Spec 018 閘門 4）
+      hasForeignRecords: () => node.handler.hasRecordsFromOthers(),
+      getMaxObservedEpoch: () => node.handler.getMaxObservedKeyxEpoch(),
     });
 
     net.nodes.set(userId, node);
@@ -323,5 +326,81 @@ describe('Spec 017：產生方 rejoin 金鑰自我復原', () => {
     // 歷史解密保留：alice 的 epoch-0 舊密文在 bob2 仍解得開（epoch-bump 方案做不到這點）
     await bob2.handler.handleReceivedMessage(structuredClone(aliceEpoch0Wire), 'n2-alice');
     expect(bob2.displayed).toContain('before-rejoin');
+  });
+});
+
+describe('Spec 018：產生方交接不撞代（第四道閘門整合）', () => {
+  it('更小 uid 晚加入：先收 backfill 再收 keyx，不再出現第二把 epoch 0，全場單調收斂', async () => {
+    const net = new SimNetwork();
+    let roster = {
+      members: [] as Array<{ userId: string; ecdhPubKey?: string }>,
+      participantCount: 0,
+    };
+    const rosterFn = () => roster;
+
+    // 既有房：bob(n2) 為 min-uid 產生方，與 carol(n3) 收斂 epoch 0
+    const bob = await SimNode.create('n2-bob', net, rosterFn);
+    const carol = await SimNode.create('n3-carol', net, rosterFn);
+    roster = {
+      members: [bob, carol].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      participantCount: 2,
+    };
+    await settle(net, [bob, carol], () =>
+      [bob, carol].every((n) => n.handler.getMaxKnownEpoch() === 0)
+    );
+    await bob.handler.sendMessage('pre-history', 'm0');
+    await net.flush();
+    const bobKeyxWire = net.sentWires.find((w) => w.channel === 'keyx' && w.senderId === 'n2-bob')!;
+    const bobChatWire = net.sentWires.find(
+      (w) => (w.channel ?? 'chat') === 'chat' && w.senderId === 'n2-bob'
+    )!;
+
+    // n1-alice 晚加入成為新任 min-uid：backfill（他人聊天紀錄）先到、keyx 未到
+    const alice = await SimNode.create('n1-alice', net, rosterFn);
+    roster = {
+      members: [alice, bob, carol].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      participantCount: 3,
+    };
+    await alice.handler.handleReceivedMessage(structuredClone(bobChatWire), 'n2-bob');
+    expect(alice.handler.getMaxKnownEpoch()).toBe(-1); // 環空、房間已運轉 → 碰撞高危窗
+
+    // 寬限窗內（穩定 1 tick + 寬限 2 tick）：alice 不得分發（修前此處產生第二把 epoch 0）
+    for (let i = 0; i < 3; i++) {
+      for (const n of [alice, bob, carol]) await n.coord.tick();
+      await net.flush();
+    }
+    expect(
+      net.sentWires.some((w) => w.channel === 'keyx' && w.senderId === 'n1-alice')
+    ).toBe(false);
+
+    // 既有 keyx 經 anti-entropy 到達：alice 開不了（未封給她，前向保密），
+    // 但 epoch metadata 可讀 → 交接基底成立
+    await alice.handler.handleReceivedMessage(structuredClone(bobKeyxWire), 'n2-bob');
+    expect(alice.handler.getMaxKnownEpoch()).toBe(-1); // 開不了＝環仍空（前向保密不破）
+    expect(alice.handler.getMaxObservedKeyxEpoch()).toBe(0); // 但知道現行代
+    await settle(net, [alice, bob, carol], () =>
+      [alice, bob, carol].every((n) => n.handler.getMaxKnownEpoch() === 1)
+    );
+
+    // 碰撞不存在：alice 發過的 keyx 全部 epoch ≥ 1
+    const aliceKeyx = net.sentWires.filter(
+      (w) => w.channel === 'keyx' && w.senderId === 'n1-alice'
+    );
+    expect(aliceKeyx.length).toBeGreaterThan(0);
+    for (const w of aliceKeyx) {
+      const payload = JSON.parse(w.content) as { keys: Array<{ epoch: number }> };
+      expect(payload.keys.every((k) => k.epoch >= 1)).toBe(true);
+    }
+
+    // 新代訊息全員可解（雙向）
+    await alice.handler.sendMessage('post-handover', 'm1');
+    await net.flush();
+    expect(bob.displayed).toContain('post-handover');
+    expect(carol.displayed).toContain('post-handover');
+    bob.displayed.length = 0;
+    await carol.handler.sendMessage('carol-after', 'm2');
+    await net.flush();
+    expect(bob.displayed).toContain('carol-after');
+    expect(alice.displayed).toContain('carol-after');
   });
 });
