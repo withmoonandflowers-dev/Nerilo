@@ -1,7 +1,7 @@
 # Spec 018：修復產生方交接的 epoch 碰撞（keyx 第四道閘門）
 
 - 軌別：feature
-- 狀態：implementing
+- 狀態：done（2026-08-03：CI e2e-7p R6/R7/R8 連續 3 綠）
 - 建立：2026-08-03／最後更新：2026-08-03
 - 關聯：Spec 016 殘留 E（CI 第五輪實證）、Spec 017、ADR-0023 P2-②c
 
@@ -71,8 +71,8 @@ joinedAt，擴 deps 面大且時鐘語義另起爭議。store 他人紀錄是「
 - [x] T4 整合劇本（MeshKeyxIntegration）：交接競態——既有雙節點 epoch 0 收斂後，
   更小 uid 的新節點加入並先收到 backfill 再收 keyx → 不再出現第二把 epoch 0；
   全場收斂單一金鑰鏈，epoch 單調；新舊訊息全員可解。
-- [ ] T5 驗收：全單元；rejoin×3（keyx 路徑迴歸）；3 人矩陣；CI 7p dispatch 驗證。
-- [ ] T6 文件：ADR-0023 修訂八、CURRENT-STATUS、Spec 016 殘留 E 收口註記。
+- [x] T5 驗收：全單元 1562；rejoin 8 輪 7 綠（單次傳輸尾巴，閘門 inert 佐證非本 spec）；3 人矩陣綠；CI 7p R6/R7/R8 連續 3 綠。
+- [x] T6 文件：ADR-0023 修訂八、CURRENT-STATUS、Spec 016 殘留 E 收口註記。
 
 ## 6. 驗收（黃金判準）
 

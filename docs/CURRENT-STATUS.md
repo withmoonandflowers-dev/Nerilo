@@ -26,12 +26,12 @@
 
 - **Spec 017（done）**：rejoin flake 根因＝產生方 keyx 不封給自己，重進後 hydrate 開不回
   金鑰 → epoch 0 重發撞代。修：封裝對象含 self。rejoin E2E 修前 10 輪 6 紅、修後 10/10。
-- **Spec 016（implementing）**：7p 連線成形三層修復——確定性互選（circulant，
+- **Spec 016（done，2026-08-03 CI 7p 三連綠收口）**：7p 連線成形三層修復——確定性互選（circulant，
   `circulantTopology.ts`）、入站 offer 反應式應答、signaling 訂閱視窗 50→400。
   成形層確定性模擬 1600 seed 落地（補 Spec 011 只驗擴散層的證據缺口）。
   迴歸全綠（單元 1558、3 人矩陣×3、@vue-stable、React @stable）；7p 單機量測顯著
   改善但未全綠（R-g 資源上限），驗收移至 `e2e-7p.yml`（手動＋每日排程）。ADR-0037。
-- **Spec 018（implementing→CI 驗證中）**：產生方交接 epoch 碰撞（Spec 016 殘留 E）修復——
+- **Spec 018（done，2026-08-03 CI 7p R6-R8 三連綠）**：產生方交接 epoch 碰撞（Spec 016 殘留 E）修復——
   keyx 分發基底改 max(已安裝, 已觀察 metadata)+1＋交接寬限閘門；新加入者開不了舊
   keyx（前向保密）但讀得到 epoch 明文，交接必單調。單元 1562 全綠、rejoin 8 輪 7 綠
   （單次傳輸尾巴）、3 人矩陣綠。ADR-0023 修訂八。

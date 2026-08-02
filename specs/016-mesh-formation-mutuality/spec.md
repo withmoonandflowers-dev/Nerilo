@@ -1,7 +1,7 @@
 # Spec 016：修復 partial mesh 連線成形的互選缺口
 
 - 軌別：feature
-- 狀態：implementing（迴歸全綠已合入；7p 驗收待 CI 乾淨環境累積）
+- 狀態：done（2026-08-03：CI e2e-7p R6/R7/R8 連續 3 綠達成原始驗收口徑；殘留 D 分島為獨立工項）
 - 建立：2026-08-02／最後更新：2026-08-02
 - 關聯：Spec 011（R-a 遺留）、ADR-0035（回填修訂）、mesh-correctness 殘留第 3 項
 
@@ -101,7 +101,7 @@ r 數據顯示選擇層已修（發起 101→78、單邊 offer 0）但 bus 逾�
 - [x] T5 成形層確定性模擬 `tests/unit/meshFormation.simulation.spec.ts`：
   節點以亂序時間到場、名冊視圖漸進收斂，斷言「有限步內全圖連通」多 seed 全過
   （含晚到者、視圖分歧窗、入站應答開/關對照）。
-- [x] T6 驗收執行（部分）：全單元 1558、3 人矩陣×3、@vue-stable、React @stable 全綠；**7p×3 綠未達成**——單機量測顯著改善（成形 12→20、bus 逾時 106→62、單邊 offer 歸零）但開發機 7 瀏覽器即 R-g 資源上限，驗收移至 e2e-7p.yml workflow（乾淨 runner，手動＋每日排程），連續綠後本項轉 [x]。
+- [x] T6 驗收執行（部分）：全單元 1558、3 人矩陣×3、@vue-stable、React @stable 全綠；**7p×3 綠**已達成（2026-08-03）**：CI e2e-7p R6/R7/R8 連續 3 綠（c91ea83，含 Spec 018 交接修復與測試韌性修復後）。單機殘留為 R-g 資源上限如實記錄。
 - [x] T7 文件收尾：CURRENT-STATUS、QA-REPORT 已知限制、ADR-0037 回填、
   Spec 011 V1 註記、docs/DEVELOPMENT.md Relay/Topology 表不變（拓撲策略表無用詞變更）。
 
