@@ -196,7 +196,8 @@ digest 交換一輪對稱差嚴格縮小 + 訊息集有限 → 連通圖上數�
   本機同簽名 → 排除環境；再查 schema 即定案：**Spec 009（2026-07-18，sessionEpoch 分代）
   因 Dexie 主鍵不可變把活表由 `records` 換成 `records2`，v2 upgrade 並清空 `records`
   且程式不再讀寫**，而本測試仍讀 `records` → 自 Spec 009 落地起恆空恆紅。產品側完全正常
-  （keyx 分發、收端安裝、複本落地皆有實證）。修：測試改讀 `records2`（本機 2/2 綠）。
+  （keyx 分發、收端安裝、複本落地皆有實證）。修：測試改讀 `records2`（本機 2/2 綠、**CI e2e-e2ee run#4 綠**）。
   教訓：**stale 測試能潛伏兩週，正是因為它不在任何 CI 集內——補覆蓋缺口的第一個回報就是
-  揪出它**。全 repo 僅此一處讀複本 DB（已查證）。首輪另修單 spec workflow 冷啟動撞 10s
-  建房窗（加 golden-path 暖機）。
+  揪出它**。全 repo 僅此一處讀複本 DB（已查證）。另修單 spec workflow 冷啟動撞 10s 建房窗：改用
+  `tests/e2e-vue/_warmup.spec.ts`（純路由預熱、無產品斷言）——先前拿 golden-path 當暖機時
+  暖機自己成了冷啟動受害者（run#3 實證：mesh-e2ee 本體已綠、暖機反而紅）；7p workflow 同步套用。

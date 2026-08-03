@@ -41,7 +41,7 @@
 - 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
 - **mesh-e2ee 已定案並修復（2026-08-03）**：覆蓋缺口補上（`e2e-e2ee.yml`，每日 04:45）
   後即揪出根因＝測試讀 Spec 009 已停用的死表 `records`（活表為 `records2`），產品側正常；
-  測試改讀 `records2`，本機 2/2 綠。詳見 QA-REPORT 已知限制。
+  測試改讀 `records2`，本機 2/2 綠、CI run#4 綠。兩個單 spec workflow 併用 `_warmup` 純路由預熱。詳見 QA-REPORT 已知限制。
 
 - `core/relay/onion/`（11 檔，約 2,900 行）移出並凍結——出站路徑死的，卻每場 mesh 跑一次
   NAT 偵測＋三組計時器。留下 `types`／`PeerScoring`／`RelayDirectory`／`CongestionPricing`
