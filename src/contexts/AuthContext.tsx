@@ -14,6 +14,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import type { User, UserRole } from '../types';
 import { logger } from '../utils/logger';
+import { featureLog } from '../utils/featureLog';
 import { captureError } from '../config/sentry';
 
 /**
@@ -157,6 +158,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     } finally {
       setLoading(false);
+      // E2E auth-ready 訊號（對齊 web-vue useAuth）：auth 初始化落地的可觀察點。
+      // CI emulator 卡頓時登入頁互動須等此訊號（tests/e2e/_helpers/users.ts setupUser）。
+      featureLog('auth', 'state_changed', {
+        uid: firebaseUser.uid,
+        anonymous: firebaseUser.isAnonymous,
+      });
     }
   };
 

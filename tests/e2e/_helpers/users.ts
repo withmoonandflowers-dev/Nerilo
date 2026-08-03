@@ -7,7 +7,13 @@
  * physical (locator appears = ready) rather than guessed.
  */
 
-import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import {
+  expect,
+  type Browser,
+  type BrowserContext,
+  type ConsoleMessage,
+  type Page,
+} from '@playwright/test';
 
 export interface User {
   ctx: BrowserContext;
@@ -49,10 +55,23 @@ const uniqueEmail = () =>
 export async function setupUser(browser: Browser): Promise<User> {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
+  // auth-ready 訊號：AuthContext 完成首次 onAuthStateChanged 時打
+  // [NERILO:auth:state_changed]。CI emulator 卡頓下 auth 初始化可拖 10s+，
+  // 此前對表單互動不生效（run #200 P0.3 點擊落空、#204 連續重點 10s 仍不切——
+  // 純 hydration 重試在長卡頓下不足）。goto 前掛監聽、等訊號落地再互動；
+  // 30s 保底後照舊流程（下方 toPass 仍是第二道防線）。
+  const authReady = new Promise<void>((resolve) => {
+    const onConsole = (msg: ConsoleMessage) => {
+      if (msg.text().includes('NERILO:auth:state_changed')) {
+        page.off('console', onConsole);
+        resolve();
+      }
+    };
+    page.on('console', onConsole);
+  });
   await page.goto('/login');
+  await Promise.race([authReady, page.waitForTimeout(30_000)]);
   // Switch the login form into register mode, then submit a unique account.
-  // 單次 click 可能落在 hydration 完成前（handler 未掛上，點了無效，之後等再久也不會切）——
-  // CI 2 核下實際踩到（2026-08-02 run #200 P0.3）。重試「點擊到生效」而非拉長盲等。
   await expect(async () => {
     await page.locator('.auth-toggle-link').click();
     await expect(page.locator('.login-form button[type="submit"]')).toHaveText('註冊', { timeout: 1_000 });
