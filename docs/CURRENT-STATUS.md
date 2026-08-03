@@ -39,8 +39,9 @@
   30s 慢車道持久重試，出列以當下 snapshot 的互選目標集為準；size>=k 誤殺一併修。
   分島最壞自癒從「永不」→ ~30s。
 - 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
-- 未裁定：mesh-e2ee 本機 4/4 紅（stash 對照證實與以上修復無關；當時機器被論文重跑
-  程序佔核＋睡眠干擾；該 spec 不在 @vue-stable 與 E2E Full 涵蓋內——覆蓋缺口待補）。
+- **mesh-e2ee 已裁定（2026-08-03）：真信號非環境。** 覆蓋缺口已補（新增專用 workflow
+  `e2e-e2ee.yml`，每日 04:45＋手動），乾淨 runner 重現本機同簽名：金鑰協議層正常但
+  複本讀不到 keyx 紀錄。候選根因與後續見 QA-REPORT 已知限制。
 
 ## 2026-07-26 架構收斂（本日重點）
 
