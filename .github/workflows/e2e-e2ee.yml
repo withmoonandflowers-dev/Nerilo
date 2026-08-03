@@ -1,0 +1,66 @@
+# mesh 群組 E2EE 驗證（tests/e2e-vue/mesh-e2ee.spec.ts：UI 明文／複本密文／
+# 盲信使不可解）。此 spec 原不在 @vue-stable 與 E2E Full 任何 CI 集內（覆蓋缺口，
+# 2026-08-02 本機連紅無從裁定）。專用 workflow＝覆蓋＋乾淨環境裁定＋stable 集
+# 觀察期載體；連續綠後可議入 @vue-stable。手動觸發＋每日排程，不掛 PR 硬閘。
+name: E2E Mesh E2EE
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '45 20 * * *' # 04:45 台北，錯開 7p 輪（04:30）
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  vue-e2ee:
+    name: Vue mesh E2EE (emulator-backed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.57.0-noble
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            web-vue/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Vue dependencies
+        run: npm ci --prefix web-vue
+
+      - name: Cache Firebase emulator binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-v1
+
+      - name: Run mesh-e2ee against emulators
+        run: >
+          npx firebase-tools emulators:exec --only auth,firestore --project nerilo
+          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/mesh-e2ee.spec.ts --workers=1 --reporter=list"
+        env:
+          CI: 'true'
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-e2ee
+          path: playwright-report/
+          retention-days: 14
