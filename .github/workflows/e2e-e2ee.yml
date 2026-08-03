@@ -50,10 +50,13 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
-      - name: Run mesh-e2ee against emulators
+      # 先跑黃金路徑暖機：nuxt dev server 首次編譯各路由可吃 >10s，單 spec 冷啟動
+      # 會撞 createRoom 的 10s 斷言窗（首輪實紅：room_created 有發生、只是晚於窗）。
+      # vue-stable job 靠前面十幾條 spec 天然暖機，單 spec workflow 需顯式暖。
+      - name: Run golden-path (warmup) + mesh-e2ee against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo
-          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/mesh-e2ee.spec.ts --workers=1 --reporter=list"
+          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/golden-path.spec.ts tests/e2e-vue/mesh-e2ee.spec.ts --workers=1 --reporter=list"
         env:
           CI: 'true'
 
