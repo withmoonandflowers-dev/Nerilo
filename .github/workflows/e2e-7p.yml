@@ -50,10 +50,12 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
-      - name: Run 7p matrix against emulators
+      # _warmup 先跑（見 e2e-e2ee.yml 註解）：單 spec workflow 的 nuxt dev 冷啟動
+      # 會吃掉第一個產品斷言窗。7p 目前靠自身 20s 加入窗容忍過去，顯式預熱更穩。
+      - name: Run warmup + 7p matrix against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo
-          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/mesh-diagnostic-7p.spec.ts --workers=1 --reporter=list"
+          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/_warmup.spec.ts tests/e2e-vue/mesh-diagnostic-7p.spec.ts --workers=1 --reporter=list"
         env:
           CI: 'true'
 
