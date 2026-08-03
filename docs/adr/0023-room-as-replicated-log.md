@@ -358,3 +358,14 @@ max(已安裝, 已觀察)+1；環空且未觀察到 keyx 且房間已運轉時�
 （HANDOVER_GRACE，等 anti-entropy 送達）。bootstrap 行為不變、前向保密不破、
 epoch 單調在交接下成立。證據：閘門三例單元＋交接整合劇本（MeshKeyxIntegration
 Spec 018 節，重演 CI 劇本）。
+
+## 修訂九（2026-08-03）：ready 截止改「有進展就續等」（Spec 020）
+
+rejoin 重建的截止是盲目牆鐘（REJOIN_READY_TIMEOUT_MS 15s），而該常數註解自載
+「實測 rejoin 首連常落在 13-15s」——門檻與實測分布幾無餘裕，誤殺正在成形的連線後
+再走一輪握手即吃掉使用者感知窗（rejoin 8 輪 1 紅根因；期間留房者已 close、重進者
+仍自認健全續送入黑洞）。決策：到期時以兩個具體訊號判斷是否「正在成形」
+（DataChannel 物件已建＝signaling 已完成／pc 已 connected），有進展才授予一次
+READY_GRACE_MS(10s) 續等，無進展維持立即失敗走乾淨重試。修的是判準不是加長牆
+（誠實條款）；只放行差最後一哩者。證據：三路徑單元（stash 對照修前 2/3 紅）、
+rejoin 8/8（基線 8 輪 1 紅）、3 人矩陣與 @vue-stable 不動搖。

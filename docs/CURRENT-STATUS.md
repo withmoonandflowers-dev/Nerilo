@@ -38,6 +38,8 @@
 - **Spec 019（done，2026-08-03）**：分島自癒（Spec 016 殘留 D）——重連快車道耗盡改降
   30s 慢車道持久重試，出列以當下 snapshot 的互選目標集為準；size>=k 誤殺一併修。
   分島最壞自癒從「永不」→ ~30s。
+- **Spec 020（done，2026-08-03）**：rejoin 重建截止改「有進展就續等」——修掉 15s 盲砍與
+  13-15s 實測握手重疊的誤殺（rejoin 8 輪 1 紅 → 8/8）。ADR-0023 修訂九。
 - 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
 - **mesh-e2ee 已定案並修復（2026-08-03）**：覆蓋缺口補上（`e2e-e2ee.yml`，每日 04:45）
   後即揪出根因＝測試讀 Spec 009 已停用的死表 `records`（活表為 `records2`），產品側正常；

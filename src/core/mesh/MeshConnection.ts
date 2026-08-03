@@ -43,6 +43,14 @@ const CHANNEL_READY_TIMEOUT_MS = 30_000;
  */
 export const REJOIN_READY_TIMEOUT_MS = 15_000;
 
+/**
+ * 進展寬限（Spec 020）：ready 截止到期時，若連線「正在成形」（DataChannel 物件已建
+ * ＝signaling 已完成，或 pc 已 connected）則授予一次此長度的續等，而非盲砍重來。
+ * 只放行差最後一哩者；連 bus 都沒建的（signaling 卡住）維持立即失敗走乾淨重試。
+ * 取 10s：rejoin 最壞 15+10=25s，仍小於 rejoin.spec 的 30s 斷言窗，留餘裕給對帳補齊。
+ */
+export const READY_GRACE_MS = 10_000;
+
 export class MeshConnection {
   private p2pManager: P2PManager;
   private channelBus: P2PChannelBus | null = null;
@@ -131,15 +139,43 @@ export class MeshConnection {
         }
       }, 200);
 
-      const timeout = setTimeout(() => {
+      // 兩段式截止（Spec 020）：到期時若連線「正在成形」則授予一次寬限，而非盲砍。
+      // 動機：rejoin 門檻 15s 與實測握手 13-15s 幾無餘裕，誤殺差最後一哩的連線後
+      // 再走一輪握手就吃掉使用者感知窗（rejoin 8 輪 1 紅的根因）。
+      // 無進展（連 bus 都沒建＝signaling 卡住）維持立即 reject，保住快速重試的原意。
+      let graceGranted = false;
+      const onDeadline = () => {
+        const bus = this.p2pManager.getChannelBus();
+        const pcConnected =
+          this.p2pManager.getConnectionManager().getState() === 'connected';
+        const progressing = bus !== null || pcConnected;
+        if (progressing && !graceGranted) {
+          graceGranted = true;
+          logger.info('[MeshConnection] ready deadline hit but connection is progressing — granting grace', {
+            roomId: this.roomId,
+            remoteFirebaseUid: this.remoteFirebaseUid,
+            hasBus: bus !== null,
+            pcConnected,
+            graceMs: READY_GRACE_MS,
+          });
+          timeout = setTimeout(onDeadline, READY_GRACE_MS);
+          return;
+        }
         clearInterval(checkInterval);
         logger.warn('[MeshConnection] ChannelBus not ready after timeout', {
           roomId: this.roomId,
           remoteFirebaseUid: this.remoteFirebaseUid,
           meshUserId: this.meshUserId,
+          graceGranted,
         });
-        reject(new Error(`MeshConnection timeout: ChannelBus not ready after ${this.readyTimeoutMs}ms`));
-      }, this.readyTimeoutMs);
+        reject(
+          new Error(
+            `MeshConnection timeout: ChannelBus not ready after ${this.readyTimeoutMs}ms` +
+              (graceGranted ? ` (+${READY_GRACE_MS}ms grace)` : '')
+          )
+        );
+      };
+      let timeout = setTimeout(onDeadline, this.readyTimeoutMs);
     });
 
     this.startBusRebindWatch();

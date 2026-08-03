@@ -201,16 +201,10 @@ digest 交換一輪對稱差嚴格縮小 + 訊息集有限 → 連通圖上數�
   揪出它**。全 repo 僅此一處讀複本 DB（已查證）。另修單 spec workflow 冷啟動撞 10s 建房窗：改用
   `tests/e2e-vue/_warmup.spec.ts`（純路由預熱、無產品斷言）——先前拿 golden-path 當暖機時
   暖機自己成了冷啟動受害者（run#3 實證：mesh-e2ee 本體已綠、暖機反而紅）；7p workflow 同步套用。
-- **rejoin 傳輸尾巴（2026-08-03 診斷，未修，@vue-stable 成員）**：`tests/e2e-vue/rejoin.spec.ts`
-  本機 8 輪 1 紅（Spec 018 批次；閘門 log 實證 018 在此路徑 inert，非其所致）。
-  失敗簽名固定在**反向那則**（B 重進後 A 收不到 B 發的訊息）。日誌事實：
-  留房者 A 偵測 `Peer rejoined (session renewed)` → 拆舊建新 → 新連線在
-  `REJOIN_READY_TIMEOUT_MS`(15s) 逾時 → `ChannelBus not ready` → close + 排重試；
-  同時 B 側自認連線健全（`sent ... neighborCount: 1`）持續送入已被對端關閉的通道。
-  **根因家族＝rejoin 重建的逾時窗與握手實測時間重疊**：該常數的註解本身寫明
-  「rejoin 首連常落在 13-15s」——15s 門檻與 13-15s 實測幾乎無餘裕，稍慢即誤殺，
-  一次誤殺再走一輪握手就吃掉測試 30s 斷言窗。加上兩端拆線不對稱（A 已 close、
-  B 未察覺），B 的送出進黑洞，需等 anti-entropy 於新連線成形後補齊。
-  修復方向（下一 spec，擇一或並用）：(a) rejoin 重建改「等到 ready 或對端另建成功」
-  而非固定 15s 硬砍；(b) 拆線對稱化——close 時通知對端使其同步降級並重連；
-  (c) 若確認握手時間分布長尾，重新校準常數並補上分布量測（不可盲目加長，違誠實條款）。
+- **rejoin 傳輸尾巴（2026-08-03 已修，Spec 020／ADR-0023 修訂九）**：根因＝rejoin 重建的
+  盲目牆鐘截止（15s）與實測握手時間（該常數註解自載 13-15s）幾無餘裕，誤殺正在成形的
+  連線後再走一輪握手即吃掉感知窗；期間留房者已 close、重進者仍自認 `neighborCount: 1`
+  續送入黑洞。修：截止改兩段式——到期時若有具體進展（DataChannel 物件已建／pc 已
+  connected）授予一次 10s 寬限，無進展維持立即失敗走乾淨重試（修判準非加長牆）。
+  證據：rejoin 8/8（基線 8 輪 1 紅）、三路徑單元 stash 對照修前紅、矩陣與 @vue-stable 不動搖。
+  未做（主因已解，暫不需要）：拆線對稱化通知對端（需新 wire 訊息）。
