@@ -33,8 +33,12 @@ async function readReplicaRecords(
       req.onsuccess = () => {
         const db = req.result;
         try {
-          const tx = db.transaction('records', 'readonly');
-          const all = tx.objectStore('records').getAll();
+          // 活表是 records2（Spec 009 起主鍵加 sessionEpoch，Dexie 主鍵不可變故開新表）。
+          // 舊 `records` 自 v2 upgrade 起被清空且程式不再讀寫——本測試原本讀它，
+          // 於 Spec 009 落地後即恆空、恆紅，因該 spec 當時不在任何 CI 集內而未被發現
+          // （覆蓋缺口 2026-08-03 由 e2e-e2ee.yml 補上時才暴露）。
+          const tx = db.transaction('records2', 'readonly');
+          const all = tx.objectStore('records2').getAll();
           all.onsuccess = () => resolve(all.result as Array<{ recordJson: string }>);
           all.onerror = () => reject(all.error);
         } catch (e) {

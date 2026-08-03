@@ -191,13 +191,12 @@ digest 交換一輪對稱差嚴格縮小 + 訊息集有限 → 連通圖上數�
   形成期/重載明文窗（出口閘＋hydrate 重放 keyx）、React 橋接/備援改密文、盲信使
   拒收明文。殘留（誠實記錄）：橋接條件依房間文件人數，成員「已離開但文件未更新」
   期間會多寫一筆備援（無正確性影響）；在籍成員可解全歷史屬刻意取捨（THREAT_MODEL）。
-- **mesh-e2ee 複本 keyx 傳播（2026-08-03 裁定：真信號，非環境）**：`tests/e2e-vue/mesh-e2ee.spec.ts`
-  本機連紅後，專用 workflow `e2e-e2ee.yml`（本日新增，補該 spec 原本不在任何 CI 集內的
-  覆蓋缺口）在乾淨 runner 重現同一簽名 → **排除環境因素**。觀察：金鑰協議層正常
-  （`distributed keyx` epoch 0 發出、收端 `keyx consumed` 均安裝成功），但受檢頁
-  `readReplicaRecords` 40s 內讀不到 channel='keyx' 的複本紀錄。兩個候選根因（待定案）：
-  (a) keyx 紀錄未走 `storePut(persist=true)` 落 Dexie（產品側——盲信使寄存的前提就是
-  複本要有紀錄）；(b) 測試以 `indexedDB.open('NeriloReplica')` **不帶版本**開庫——DB 尚未
-  由 app 建立時會創出無 object store 的空庫，`transaction('records')` 拋 NotFoundError
-  使 predicate 恆假，且該連線會卡住 Dexie 的 versionchange 升級（測試側）。兩者不互斥。
-  首輪另修掉單 spec workflow 的 nuxt dev 冷啟動撞 10s 建房窗（加 golden-path 暖機）。
+- **mesh-e2ee 複本 keyx 傳播（2026-08-03 已定案並修復：測試讀死表）**：該 spec 原不在
+  任何 CI 集內（覆蓋缺口），本日新增專用 workflow `e2e-e2ee.yml` 後，乾淨 runner 重現
+  本機同簽名 → 排除環境；再查 schema 即定案：**Spec 009（2026-07-18，sessionEpoch 分代）
+  因 Dexie 主鍵不可變把活表由 `records` 換成 `records2`，v2 upgrade 並清空 `records`
+  且程式不再讀寫**，而本測試仍讀 `records` → 自 Spec 009 落地起恆空恆紅。產品側完全正常
+  （keyx 分發、收端安裝、複本落地皆有實證）。修：測試改讀 `records2`（本機 2/2 綠）。
+  教訓：**stale 測試能潛伏兩週，正是因為它不在任何 CI 集內——補覆蓋缺口的第一個回報就是
+  揪出它**。全 repo 僅此一處讀複本 DB（已查證）。首輪另修單 spec workflow 冷啟動撞 10s
+  建房窗（加 golden-path 暖機）。

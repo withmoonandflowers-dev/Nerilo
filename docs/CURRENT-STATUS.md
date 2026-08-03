@@ -39,27 +39,9 @@
   30s 慢車道持久重試，出列以當下 snapshot 的互選目標集為準；size>=k 誤殺一併修。
   分島最壞自癒從「永不」→ ~30s。
 - 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
-- **mesh-e2ee 已裁定（2026-08-03）：真信號非環境。** 覆蓋缺口已補（新增專用 workflow
-  `e2e-e2ee.yml`，每日 04:45＋手動），乾淨 runner 重現本機同簽名：金鑰協議層正常但
-  複本讀不到 keyx 紀錄。候選根因與後續見 QA-REPORT 已知限制。
-
-## 2026-07-26 架構收斂（本日重點）
-
-三件「被相信著、但沒人驗證過」的事被查出來，各自修掉並補上機器檢查：
-
-1. **洋蔥路由從未接線，但文件當成已部署防護在賣。** `RelayManager.sendViaRelay()` 全 repo
-   零呼叫、`SphinxPacket` 零非測試 import、cover traffic 預設關閉且無呼叫端開啟。
-   README 與 THREAT_MODEL 原本把 Sphinx-Lite 列為「惡意中繼」與「全球被動對手」的緩解措施
-   ——等於宣稱了不存在的安全屬性。已全面改為未部署、加更正紀錄、風險登記新增 **R11(High)**。
-   **Nerilo 目前不提供寄件者匿名性**，對外任何說法不得再暗示有。
-2. **ADR-0031 的死重圍籬擋不住相對路徑。** `no-restricted-imports` 比對 import 字串而非
-   解析路徑，`**/core/game/**` 擋不住 `../game/X`，而 docs/DEVELOPMENT.md 慣例正是 core 用相對路徑。
-   圍籬自 2026-07-16 立起，在最該生效的 core→core 方向上一直是裝飾品。已補相對 pattern，
-   並加 `tests/unit/fitness.fence.spec.ts` 直接斷言設定有效性。
-3. **套件在非 Vite 環境載入即炸**（前一日 2026-07-25 發現）：`import.meta.env` 裸讀。
-   repo 內全部測試跑在 Vitest 下所以看不見。已加 `qa:pack-smoke` 掛進 `prepublishOnly`。
-
-下架與歸位：
+- **mesh-e2ee 已定案並修復（2026-08-03）**：覆蓋缺口補上（`e2e-e2ee.yml`，每日 04:45）
+  後即揪出根因＝測試讀 Spec 009 已停用的死表 `records`（活表為 `records2`），產品側正常；
+  測試改讀 `records2`，本機 2/2 綠。詳見 QA-REPORT 已知限制。
 
 - `core/relay/onion/`（11 檔，約 2,900 行）移出並凍結——出站路徑死的，卻每場 mesh 跑一次
   NAT 偵測＋三組計時器。留下 `types`／`PeerScoring`／`RelayDirectory`／`CongestionPricing`
