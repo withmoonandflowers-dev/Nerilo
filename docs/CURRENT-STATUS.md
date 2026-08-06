@@ -1,51 +1,67 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-07-26（架構收斂：死重下架、圍籬修復、文件誠實化）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-08-03（Firestore 授權修復、部署硬閘、MCP gateway v0.2）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
 - Nerilo 是可嵌入的 P2P 韌性資料傳遞層；聊天是參考應用，不是最終產品邊界。
 - repo 已於 2026-07-16 轉為公開（Apache-2.0）；GitHub Actions 額度限制解除。npm 尚未發佈。
 - SDK 版本 `0.9.0`，可零 Firebase 嵌入；API 在 0.x 階段尚未鎖定。
-- React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版可 type-check、static generate，尚未取得切 production 資格。
+- React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版已有隔離的 `nerilo-staging` 手動 preview pipeline，但尚未取得切 production 資格，也尚未由本機完成首次 preview deploy。
 - Firebase Functions 未部署。Hosting 與 Firestore rules/indexes 由 master push workflow 部署；需 Blaze／Cloud Build 的 Functions 能力仍刻意排除。
 - Lemon Squeezy／Netlify webhook 付款鏈已驗證，但 store 仍在 test mode。Pro 首個伺服器端強制權益＝房間容量 10 人（Spec 011）；發放路徑補完（2026-07-18）：手動發放 scripts/grant-plan.mjs、web-vue 建房 sheet 升級入口（PlanCapacityLine）、兩線付款後 focus 強制刷新 token、rules 整合測試 token.plan 五例。
 
 ## 已驗證基線
 
-| 層級 | 2026-07-26 基線 |
+| 層級 | 最新基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；**1547 tests** 全綠（既有 7 warnings；實測 2026-07-26） |
+| Core quality | TypeScript、ESLint gate 通過；**1570 tests** 全綠（既有 7 warnings；實測 2026-08-03） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入兩個進入點 |
-| React stable E2E | 2026-07-15 emulator-backed 11/11 |
+| Firestore rules | Emulator-backed **54/54**；含 room takeover、非成員 signal injection、收件人資格、payload 形狀／大小回歸 |
+| React P0 E2E | Emulator-backed **6/6**（2026-08-03；建房、加入、E2EE 握手、雙向訊息、離房） |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
 | Nuxt stable E2E | `@vue-stable` 9/9 本機基線，固定 1 worker 隔離 spec；兩週 CI 觀察尚未完成 |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
+
+## 2026-08-03 授權與 AI gateway 收斂
+
+- 修正 `p2pRooms` update 規則：不再以「更新後 participants 含自己」當授權；join、leave、
+  owner migration、成員活性與 own mesh identity 各自按操作形狀驗證。原先已登入陌生人可在
+  同一次 update 把自己設為 owner 並移除原成員，現有攻擊回歸測試釘住拒絕結果。
+- `signals` create 現在要求 sender 是房內成員；明確 `to` 必須是房內成員。WebRTC initiator
+  尚未知 remoteUid 時只允許 `offer`／`ice` 使用 `to:null` 房內廣播。SDP、ICE 與 top-level
+  欄位改採 allowlist 和實際字串長度限制，不再誤把 `Map.size()` 當 byte 大小。
+- Firebase deploy workflow 新增 rules integration 與 P0 browser E2E 兩道硬閘；App Check site key
+  也進入 build env（仍須專案擁有者在 Firebase Console 設定 secret／啟用 enforcement）。
+- MCP v0.2 可由 stdio AI client 掛載，公開七個意圖工具；新增 capability truth、固定 agent
+  identity、read-only／room allowlist／訊息長度 policy、cursor 與 stderr audit。預設 runtime
+  仍是無網路、無持久化、無 E2EE 的 in-process demo；真 P2P 路徑採 browser bridge 設計，
+  尚未宣稱完成。詳見 `docs/MCP-GATEWAY.md`。
 
 ## 2026-08-02 mesh 正確性收斂（Spec 016/017）
 
 - **Spec 017（done）**：rejoin flake 根因＝產生方 keyx 不封給自己，重進後 hydrate 開不回
   金鑰 → epoch 0 重發撞代。修：封裝對象含 self。rejoin E2E 修前 10 輪 6 紅、修後 10/10。
-- **Spec 016（done，2026-08-03 CI 7p 三連綠收口）**：7p 連線成形三層修復——確定性互選（circulant，
+- **Spec 016（done，2026-08-03 CI 7p 三連綠收口）**：7p 連線成形三層修復，確定性互選（circulant，
   `circulantTopology.ts`）、入站 offer 反應式應答、signaling 訂閱視窗 50→400。
   成形層確定性模擬 1600 seed 落地（補 Spec 011 只驗擴散層的證據缺口）。
   迴歸全綠（單元 1558、3 人矩陣×3、@vue-stable、React @stable）；7p 單機量測顯著
   改善但未全綠（R-g 資源上限），驗收移至 `e2e-7p.yml`（手動＋每日排程）。ADR-0037。
-- **Spec 018（done，2026-08-03 CI 7p R6-R8 三連綠）**：產生方交接 epoch 碰撞（Spec 016 殘留 E）修復——
+- **Spec 018（done，2026-08-03 CI 7p R6-R8 三連綠）**：產生方交接 epoch 碰撞（Spec 016 殘留 E）修復，
   keyx 分發基底改 max(已安裝, 已觀察 metadata)+1＋交接寬限閘門；新加入者開不了舊
   keyx（前向保密）但讀得到 epoch 明文，交接必單調。單元 1562 全綠、rejoin 8 輪 7 綠
   （單次傳輸尾巴）、3 人矩陣綠。ADR-0023 修訂八。
-- **Spec 019（done，2026-08-03）**：分島自癒（Spec 016 殘留 D）——重連快車道耗盡改降
+- **Spec 019（done，2026-08-03）**：分島自癒（Spec 016 殘留 D），重連快車道耗盡改降
   30s 慢車道持久重試，出列以當下 snapshot 的互選目標集為準；size>=k 誤殺一併修。
   分島最壞自癒從「永不」→ ~30s。
-- **Spec 020（done，2026-08-03）**：rejoin 重建截止改「有進展就續等」——修掉 15s 盲砍與
+- **Spec 020（done，2026-08-03）**：rejoin 重建截止改「有進展就續等」，修掉 15s 盲砍與
   13-15s 實測握手重疊的誤殺（rejoin 8 輪 1 紅 → 8/8）。ADR-0023 修訂九。
 - 兩顆 timing flake 同日先行收斂：GossipKeyx 單 tick 斷言、setupUser hydration 點擊落空。
 - **mesh-e2ee 已定案並修復（2026-08-03）**：覆蓋缺口補上（`e2e-e2ee.yml`，每日 04:45）
   後即揪出根因＝測試讀 Spec 009 已停用的死表 `records`（活表為 `records2`），產品側正常；
   測試改讀 `records2`，本機 2/2 綠、CI run#4 綠。兩個單 spec workflow 併用 `_warmup` 純路由預熱。詳見 QA-REPORT 已知限制。
 
-- `core/relay/onion/`（11 檔，約 2,900 行）移出並凍結——出站路徑死的，卻每場 mesh 跑一次
+- `core/relay/onion/`（11 檔，約 2,900 行）移出並凍結，出站路徑死的，卻每場 mesh 跑一次
   NAT 偵測＋三組計時器。留下 `types`／`PeerScoring`／`RelayDirectory`／`CongestionPricing`
   與整組 courier 寄存經濟（各有活的呼叫端，查證後不可一起搬）。
 - `core/chain`(936)、`core/protocol`(91) **刪除**；`core/features`(447) 補進 PARK 圍籬。
@@ -81,11 +97,11 @@
   （maxParticipants 欄位＋rules token.plan 驗證）。證據分層：n=7..10 確定性模擬
   1100 組 seed（含 churn＋晚到者）全收斂；7 人 E2E spec 已落地（未入 @vue-stable），
   單機高負載下已實證 7 頁全數切 partial-mesh 與 Pro 容量 rules，惟恰好一次矩陣
-  因 WebRTC 遭 CPU 排擠尚未穩定轉綠——殘留與重跑指引見 Spec 011 V1；
+  因 WebRTC 遭 CPU 排擠尚未穩定轉綠，殘留與重跑指引見 Spec 011 V1；
   super-node（>20）維持凍結。
 - SDK 已抽出公開入口、quickstart 與 minimal example，且不會從 eager import 偷帶 Firebase。
 - PARK 模組（`game/`、`community/`、`transport/`、`ledger/`、`core/features/`、`relay/onion/`）
-  皆「已測但未接進產品流」，由 ESLint 圍籬凍結；**不可把單元測試等同 production 接線**——
+  皆「已測但未接進產品流」，由 ESLint 圍籬凍結；**不可把單元測試等同 production 接線**，
   2026-07-26 的洋蔥路由事件正是這個誤判的實例。
 
 ### 信使寄存經濟（Spec 001）
@@ -122,12 +138,12 @@
 - 四線合併驗證（2026-07-18 本機）：`npm run ci` 137 檔/1544 tests 全綠；React
   mesh-diagnostic 5/5；vue e2e @vue-stable 11 條中 8 綠；兩項裁決落地後 migration-window 與 relay-connect 轉綠
   （rejoin 既有 flake 仍偶發）。原 3 紅逐項記錄：
-  - `migration-window`：Spec 010×012 語義衝突——**已裁決收斂（2026-07-18 使用者拍板）**：
+  - `migration-window`：Spec 010×012 語義衝突，**已裁決收斂（2026-07-18 使用者拍板）**：
     縮小測試斷言（既有成員間恆恰好一次、C 加入後訊息全員恰好一次；C×並發格可見與否
     不斷言、收到即不得重複），012 語義與回歸鎖不動。已連 3 次轉綠；Spec 010 V1 同步修訂。
   - `rejoin`：合併前後皆偶發紅（pre-merge 分支實測亦紅），既有 flake，金鑰時序家族。
   - `relay-connect` 後四條：依賴的 `online-node-count` testid 已於 Spec 006（合併前的
-    master）砍中繼卡時移除——分叉點即壞，非合併引入。**已裁決收斂（2026-07-18 使用者
+    master）砍中繼卡時移除，分叉點即壞，非合併引入。**已裁決收斂（2026-07-18 使用者
     拍板）**：以 `PresenceFooter` 元件補回在線節點數頁尾（presence 機制本就照跑，只補
     UI 掛鉤；誠實條款不做假在線）。relay-connect 全套 7/7 綠。
   - `mesh-diagnostic-7p`：單機 7 瀏覽器負載下連線成形失敗（8 次 ICE restart），

@@ -1,25 +1,25 @@
-# Nerilo — P2P E2EE Real-Time Chat (Firebase + WebRTC)
+# Nerilo: P2P E2EE Real-Time Chat (Firebase + WebRTC)
 
-Browser-only P2P chat with end-to-end encryption. Firebase handles signaling and fallback only; message content travels over WebRTC DataChannels encrypted with per-room sender keys.
+Browser-first P2P chat and embeddable messaging layer with end-to-end encryption. Firebase handles room discovery, signaling and encrypted fallback; the primary message path uses WebRTC DataChannels.
 
 Current implementation status, verified test baselines, active work and known gaps are maintained in [docs/CURRENT-STATUS.md](docs/CURRENT-STATUS.md). Use that file instead of older roadmap snapshots when deciding what is live today.
 
-## What this is — and isn't
+## What this is, and what it isn't
 
-| ✅ Is | ❌ Isn't |
+| Is | Isn't |
 |---|---|
 | E2EE group chat (AES-256-GCM, ECDH P-256 key exchange) | A polished consumer product |
-| 2–20 peers, mesh + gossip topology auto-selected | A drop-in Signal/Slack replacement |
-| Blind-courier store-and-forward: offline recipients get ciphertext held by a passing peer | Anonymous. **Onion routing is written and unit-tested but NOT wired** — see below |
-| Honest about its limits — read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before relying on it | Audited / certified for high-stakes use |
+| 2–10 peers in the currently supported room tiers; mesh + gossip topology auto-selected | A drop-in Signal/Slack replacement |
+| Blind-courier experiment in the Vue candidate UI | Anonymous. **Onion routing is written and unit-tested but NOT wired** (see below) |
+| Honest about its limits; read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) before relying on it | Audited / certified for high-stakes use |
 
 ## Core features
 
-- 🔒 **E2EE messages** — AES-256-GCM sender keys, distributed per-recipient via ECDH P-256. Auto-rotates every 100 messages or 1 hour.
-- 🕸️ **Mesh + gossip** — 2-peer direct, 3–6 full mesh, 7–20 partial mesh (wired & tested to 10-person rooms; upgrades on join, never downgrades mid-session), >20 super-node (dormant).
-- 🤝 **Blind-courier store-and-forward** — when the recipient is offline, a passing peer holds the ciphertext and hands it over on reconnect. The courier verifies authenticity but cannot read content, and earns credit against a co-signed receipt. Wired and covered by end-to-end tests.
-- 📦 **Firestore as signaling + fallback** — message content is encrypted before any Firestore write.
-- 📝 **IndexedDB** persistence — clear browser data to forget everything.
+- **E2EE messages.** React star rooms use sender-key rotation; mesh uses an AES-GCM room key distributed per recipient through ECDH P-256 and rotates when the roster changes. See the threat model for the forward-secrecy boundary.
+- **Mesh + gossip.** 2-peer direct, 3–6 full mesh, 7–20 partial-mesh algorithm (current product tiers cap rooms at 10), >20 super-node path dormant.
+- **Blind-courier experiment.** Implemented and exercised through the Vue candidate dashboard, but not exposed by the production React app or public SDK yet.
+- **Firestore as signaling + fallback.** Message content is encrypted before any Firestore write.
+- **IndexedDB persistence.** Clear browser data to forget everything.
 
 ### Written but not wired
 
@@ -27,7 +27,7 @@ Be aware before you rely on it: `src/core/relay/` contains a Sphinx-Lite onion-r
 
 ## Quick start
 
-> **Embedding Nerilo as an SDK in your own app?** See [docs/SDK-QUICKSTART.md](docs/SDK-QUICKSTART.md) — install `nerilo`, wire the injectable backends, run with zero Firebase. The section below is for running this repo's app locally.
+> **Embedding Nerilo as an SDK in your own app?** See [docs/SDK-QUICKSTART.md](docs/SDK-QUICKSTART.md): install `nerilo`, wire the injectable backends, run with zero Firebase. The section below is for running this repo's app locally.
 
 ### Prerequisites
 
@@ -35,7 +35,7 @@ Be aware before you rely on it: `src/core/relay/` contains a Sphinx-Lite onion-r
 |---|---|
 | **Node.js 24** | Matches CI and the npm 11 lockfile. |
 | **Java 21+** (Temurin recommended) | Firebase Tools 15 emulator requirement. |
-| **Firebase account + 1–2 projects** | One for production (e.g. `nerilo`), one for staging (e.g. `nerilo-staging`) — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
+| **Firebase account + 1–2 projects** | One for production (e.g. `nerilo`), one for staging (e.g. `nerilo-staging`). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 
 ### Install
 
@@ -62,7 +62,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
 VITE_FIREBASE_APP_ID=1:123456789:web:abcdef
 ```
 
-**Then enable Anonymous auth** in the Firebase Console (Build → Authentication → Sign-in method → Anonymous → Enable). The app falls back to anonymous sign-in for guests; **without this, the first page load hangs with an empty role badge** and no UI feedback. This is the #1 first-time setup mistake — see [Troubleshooting](#troubleshooting).
+**Then enable Anonymous auth** in the Firebase Console (Build → Authentication → Sign-in method → Anonymous → Enable). The app falls back to anonymous sign-in for guests; **without this, the first page load hangs with an empty role badge** and no UI feedback. This is the most common first-time setup mistake; see [Troubleshooting](#troubleshooting).
 
 ### Run
 
@@ -90,9 +90,11 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full staging + production w
 ```bash
 npm run deploy:staging:safe      # type-check + lint + tests + Firebase Hosting preview channel
 npm run deploy:production:safe   # same, but live
+npm run deploy:web-vue:preview   # Vue candidate, isolated nerilo-staging channel only
 ```
 
-Both scripts refuse to run while `.env.staging` / `.env.production` contain `REPLACE_ME_*` placeholders.
+All three deploy paths validate their Firebase env values and expected project before building.
+The root `deploy:full` command is blocked unless Functions and Blaze billing are explicitly acknowledged; it is never used by CI.
 
 ## Troubleshooting
 
@@ -130,17 +132,17 @@ src/core/
 └── metrics/      # MetricsCollector + opt-in console exporter
 ```
 
-E2EE flow: ECDH P-256 between peers → derive AES-256-GCM sender key → AES-256-GCM encrypt per message → rotate every 100 messages / 1 hour. See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for what this protects and what it doesn't.
+E2EE flow depends on the active topology. React star rooms use sender-key rotation; mesh derives pairwise wrapping keys with ECDH P-256, distributes an AES-GCM room key, and rotates it on roster changes. See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for what this protects and what it doesn't.
 
-## Security & privacy
+## Security and privacy
 
 **The honest version is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).** Short version:
 
-- ✅ **Content** is unreadable to Firebase, relays, and passive observers.
-- ⚠️ **Metadata** (who is in which room, when, message sizes) leaks to whoever runs the signaling layer.
-- ❌ **No sender anonymity.** The onion-routing stack is unwired (see "Written but not wired"). Anyone carrying your traffic sees who sent it. Do not use this for activism in adversarial jurisdictions.
-- ⚠️ **IndexedDB private keys** are stored at-rest — physical device access or same-origin XSS can extract them.
-- ✅ **Firestore rules** enforce: only-self meshIdentity writes, participant-only signaling reads, ±30 s anti-replay on fallback messages.
+- **Content** is unreadable to Firebase, relays, and passive observers.
+- **Metadata** (who is in which room, when, message sizes) leaks to whoever runs the signaling layer.
+- **No sender anonymity.** The onion-routing stack is unwired (see "Written but not wired"). Anyone carrying your traffic sees who sent it. Do not use this for activism in adversarial jurisdictions.
+- **IndexedDB private keys** are stored at-rest, so physical device access or same-origin XSS can extract them.
+- **Firestore rules** enforce: operation-shaped room updates, only-self meshIdentity writes, participant-only signaling reads/writes, and bounded fallback-message expiry.
 
 ## Contributing
 
@@ -148,4 +150,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Tests must pass (`npm run ci`) before PR
 
 ## License
 
-Project delivery sample — adjust to your needs.
+Project delivery sample; adjust to your needs.

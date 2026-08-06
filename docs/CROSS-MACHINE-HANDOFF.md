@@ -54,6 +54,7 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
 
 - `ci.yml`:push/PR → type-check + lint(上限 10 warnings)+ 單元測試(Node 24)+ 模擬器 E2E(軟性)。
 - `firebase-deploy.yml`:**push master 即自動部署** hosting + Firestore rules → https://nerilo.web.app。Functions 不部署(需 Blaze 方案,步驟見 PR #15)。
+- `web-vue-preview.yml`:僅手動觸發，固定部署 Nuxt/Vue 到 `nerilo-staging` 的 `vue-candidate` preview channel；需先建立 `vue-preview` environment 與 staging 專用 secrets，不能切換 production。
 - GitHub secrets(只列名稱):`FIREBASE_SERVICE_ACCOUNT_NERILO`、`VITE_FIREBASE_*` ×6、`VITE_SENTRY_DSN`、`VITE_TURN_{URLS,USERNAME,CREDENTIAL}`。
 - 部署分流見 `docs/DEPLOYMENT.md`:staging 用 Hosting preview channel(`npm run deploy:staging`),production 用 `deploy:production:safe`。
 - **GitHub Actions 免費額度**:私有 repo 每月 2000 分鐘,用完後 push **靜默地**不觸發任何 run、`workflow_dispatch` 回 HTTP 500。看到「零 check、無錯誤訊息」先懷疑額度(帳單頁確認),不是 workflow 壞掉。
@@ -124,7 +125,7 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
 - Netlify site **nerilo-webhook** 已建(site_id 880139cc-...,
   team withmoonandflowers),LS_WEBHOOK_SECRET 已設進站台環境變數。
 - **webhook 已部署上線**:Netlify site **nerilo-api**(git 連 master 自動部署,
-  workspace 帳號的 team,非 gmail 帳號的 Donekit team——注意 MCP 連 gmail
+  workspace 帳號的 team,非 gmail 帳號的 Donekit team，注意 MCP 連 gmail
   帳號看不到此 site)。端點 https://nerilo-api.netlify.app/api/ls-webhook。
 - **LS webhook 已設定**:URL 同上 + 5 事件(created/updated/resumed/expired/
   unpaused)。**簽章驗證 e2e 通過**(curl 正確簽章回 Ignored 200,錯誤簽章 401)。
@@ -134,7 +135,7 @@ node ".\node_modules\firebase-tools\lib\bin\firebase.js" emulators:exec --only a
   nerilo-api。gmail team 那顆 env 可忽略。
 - 待辦(**使用者本人**,收真錢前才需要):(a) FIREBASE_SERVICE_ACCOUNT
   (Firebase Console → 服務帳戶 → 產生私鑰,壓單行)設進 nerilo-api 的 Netlify env
-  ——沒有它 webhook 收到事件會在 setCustomUserClaims 前失敗(500),
+  ，沒有它 webhook 收到事件會在 setCustomUserClaims 前失敗(500),
   但簽章驗證與事件映射已可運作;(b) LS store activation(商業資料+身分+payout)。
 
 ## 6c. 系統可用狀態(2026-07-03 收尾)
@@ -169,7 +170,7 @@ plan claim 讀取管道已就緒(usePlan hook,付款鏈路驗證時已確認徽�
 供匯款成交/贈送/測試,與 webhook 同語義 merge claims)。(2) web-vue 建房 sheet 有
 方案容量列+升級入口(PlanCapacityLine,composables/usePlan.ts;VITE_LS_CHECKOUT_URL
 由 nuxt.config define 注入 process.env)。(3) 兩線升級點擊後 focus 強制刷新 token
-(30 分鐘窗,轉 pro 即停)——LS 結帳在新分頁,claim 不會自己進本分頁的 ID token。
+(30 分鐘窗,轉 pro 即停)，LS 結帳在新分頁,claim 不會自己進本分頁的 ID token。
 (4) rules 整合測試補 token.plan 容量五例(tests/integration/firestore-rules.spec.ts)。
 
 **另一項使用者操作(資料保留,非阻塞)**:原生 TTL policy 需跑
@@ -180,7 +181,7 @@ plan claim 讀取管道已就緒(usePlan hook,付款鏈路驗證時已確認徽�
 - `reports/` gitignored;健康檢查排程只監控不修改。
 - lint 上限 `--max-warnings 10`;測試檔豁免 no-explicit-any;未用參數以 `_` 前綴。
 - 用 `roomDisplayName()`(src/utils)取房名 fallback,勿重複硬編碼。
-- Onboarding modal 在 localStorage 被擋(無痕模式)時要能優雅降級 — 維持此行為。
+- Onboarding modal 在 localStorage 被擋(無痕模式)時要能優雅降級，維持此行為。
 
 ## 8. 跨機器協作約定
 
