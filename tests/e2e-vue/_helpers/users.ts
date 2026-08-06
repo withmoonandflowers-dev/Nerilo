@@ -33,13 +33,23 @@ export async function setupUser(browser: Browser): Promise<User> {
   });
   await page.goto('/login');
   // 保險絲：test mode 會在 window 掛 __nerilo_test__；不存在代表 app 沒連
-  // emulator（正打向正式 Firebase）——立即失敗，不准把測試資料寫進 prod。
+  // emulator（正打向正式 Firebase），立即失敗，不准把測試資料寫進 prod。
+  //
+  // catch 不可省：SPA 在 load 之後仍會再導航一次（首次路由解析／dev server 整頁
+  // reload），輪詢中的 page.evaluate 會因執行環境被銷毀而丟例外。而 expect.poll
+  // 只對「斷言失敗」重試，generator 丟出的例外是直接往外拋的，timeout 根本用不到。
+  // 2026-08-05 CI 兩條 spec 皆亡於此，各自不到 1 秒（同 commit 前兩天都是綠的）。
   await expect
     .poll(
-      () =>
-        page.evaluate(
-          () => !!(window as unknown as { __nerilo_test__?: unknown }).__nerilo_test__
-        ),
+      async () => {
+        try {
+          return await page.evaluate(
+            () => !!(window as unknown as { __nerilo_test__?: unknown }).__nerilo_test__
+          );
+        } catch {
+          return false; // 環境被換掉，下一輪再問
+        }
+      },
       { timeout: 15_000 }
     )
     .toBe(true);
