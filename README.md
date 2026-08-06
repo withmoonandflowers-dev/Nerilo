@@ -73,6 +73,16 @@ npm run test:run           # unit tests (Vitest; current count in docs/CURRENT-S
 npm run test:e2e:ci        # E2E tests with Firebase emulators auto-booted
 ```
 
+### Connect an AI client through MCP
+
+The repository includes a stdio MCP gateway with seven intent-level tools. The default runtime is deliberately a local, in-memory demo: it lets an AI client inspect and exercise the contract, but does **not** claim WebRTC, persistence or E2EE. The `nerilo_get_capabilities` tool exposes those limits to the agent.
+
+```bash
+NERILO_MCP_AGENT_ID=my-agent npm run mcp
+```
+
+For client configuration, read-only and room-allowlist policies, and the real browser-bridge design, see [docs/MCP-GATEWAY.md](docs/MCP-GATEWAY.md).
+
 ### Deploy
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full staging + production walkthrough. TL;DR:
@@ -99,10 +109,11 @@ Both scripts refuse to run while `.env.staging` / `.env.production` contain `REP
 
 ## Documentation
 
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — staging + production deploy, Firebase project setup, Sentry wiring, local E2E with emulators
-- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — what privacy actually means; adversaries; Sphinx-Lite limits; recommended user practices
-- [docs/PR-5-analysis.md](docs/PR-5-analysis.md) — analysis of the in-flight feature/multi-room-improvements branch
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — codebase architecture quick-reference
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): React staging/production, Vue candidate preview, Firebase setup and rollback
+- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): what privacy actually means; adversaries; Sphinx-Lite limits; recommended user practices
+- [docs/MCP-GATEWAY.md](docs/MCP-GATEWAY.md): MCP setup, policy controls, honest runtime limits, browser-bridge production design
+- [docs/PR-5-analysis.md](docs/PR-5-analysis.md): analysis of the in-flight feature/multi-room-improvements branch
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): codebase architecture quick-reference
 
 Older zh-TW design docs in [docs/](docs/) (架構文件, 協議文件, 新功能接入SOP, 上板與部署手冊).
 

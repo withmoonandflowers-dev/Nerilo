@@ -1,7 +1,7 @@
-# Spec 008：Nerilo MCP server PoC — AI agent 的意圖介面
+# Spec 008：Nerilo MCP server PoC, AI agent 的意圖介面
 
 - 軌別：feature（新公開表面：MCP 工具集）
-- 狀態：done（2026-07-16，MCP 整合測試 5/5、全閘門綠）
+- 狀態：done；2026-08-03 完成 v0.2 gateway hardening
 - 建立：2026-07-16
 - 關聯：架構收斂稽核 §5（MCP 映射）、ADR-0025（SDK）、憲法 §14
 
@@ -11,19 +11,19 @@
 
 **憲法檢核**：
 - 目標函數加分項：可嵌入（第三種消費者實證）；補助競爭力（AI agent 對接是差異化敘事）。
-- 四條不變量影響：皆〈無〉——PoC 用行程內引擎，不碰 mesh/crypto/帳本路徑。
+- 四條不變量影響：皆〈無〉，PoC 用行程內引擎，不碰 mesh/crypto/帳本路徑。
 
 ## 2. 邊界（明確不做）
 
 - **不在 Node 硬撐真 WebRTC mesh**：Node 無 RTCPeerConnection/IndexedDB，wrtc 原生依賴重且脆。真網路對接（browser bridge 或 node-datachannel）列 follow-up，不進 PoC。
 - 不做多 server 跨行程互通（那是真網路的事）。
-- 不暴露機制工具（signaling/keyx/courier/ledger 不是工具——稽核 §5 裁決）。
+- 不暴露機制工具（signaling/keyx/courier/ledger 不是工具，稽核 §5 裁決）。
 - 不進 npm 發佈包（`mcp/` 不在 `files` 內；PoC 以 repo 內腳本交付）。
 
-## 3. 待釐清（clarify）——2026-07-16 依稽核裁決代決，標註供追認
+## 3. 待釐清（clarify），2026-07-16 依稽核裁決代決，標註供追認
 
-- [x] Q1 工具清單：稽核 §5 的六個——`nerilo_create_room` / `nerilo_join_room` / `nerilo_send_message` / `nerilo_get_messages` / `nerilo_room_status` / `nerilo_list_rooms`（5-8 甜蜜點內）。
-- [x] Q2 引擎：**行程內 `InProcessChatEngine` 實作 `IChatEngine`**，接上 `NeriloClient` 門面——用 SDK 自己的縫，本身即「第三方可換引擎」的活證明。誠實標注：訊息傳遞在行程內，非真 P2P。
+- [x] Q1 工具清單：稽核 §5 的六個，`nerilo_create_room` / `nerilo_join_room` / `nerilo_send_message` / `nerilo_get_messages` / `nerilo_room_status` / `nerilo_list_rooms`（5-8 甜蜜點內）。
+- [x] Q2 引擎：**行程內 `InProcessChatEngine` 實作 `IChatEngine`**，接上 `NeriloClient` 門面，用 SDK 自己的縫，本身即「第三方可換引擎」的活證明。誠實標注：訊息傳遞在行程內，非真 P2P。
 - [x] Q3 傳輸：stdio（MCP 標準掛載方式）；測試用 SDK 的 InMemoryTransport 對接真 client。
 
 ## 4. 技術計畫（plan）
@@ -55,3 +55,12 @@
 - [x] 任務完整實現方案
 - [x] 驗收能證明需求
 - [x] 未違反憲法任何一條
+
+## 8. v0.2 AI gateway hardening（2026-08-03）
+
+- 工具新增 `nerilo_get_capabilities`，讓 agent 直接得知目前 runtime 無網路、持久化與 E2EE，不能把 PoC 說成真 P2P。
+- MCP server 與執行機制拆成 `NeriloMcpRuntime`；行程內引擎只是預設測試 runtime，browser bridge 可替換而不改工具表面。
+- 移除 `as` 參數。一台 server 綁定一個固定 agentId，不允許模型自行冒用第二身分。
+- 加入 read-only、create/join 開關、room allowlist、訊息長度與 stderr audit policy。
+- `get_messages` 加 cursor，incoming message 明示為不可信資料；`send_message` 明示 messageId 不等於 recipient ACK。
+- 真 P2P 路徑採 browser bridge：Firebase session、WebRTC、IndexedDB、私鑰與使用者核准都留在瀏覽器。詳見 `docs/MCP-GATEWAY.md`。
