@@ -27,6 +27,18 @@ const ENV: Record<string, string | boolean | undefined> =
   (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env ?? {};
 const IS_TEST_MODE = ENV['MODE'] === 'test' || ENV['VITE_USE_EMULATOR'] === 'true';
 const IS_DEV = Boolean(ENV['DEV']);
+const PROCESS_ENV = (globalThis as typeof globalThis & {
+  process?: { env?: Record<string, string | undefined> };
+}).process?.env ?? {};
+
+function emulatorAddress(value: string, fallbackPort: number): { host: string; port: number } {
+  const separator = value.lastIndexOf(':');
+  if (separator < 0) return { host: value, port: fallbackPort };
+  return {
+    host: value.slice(0, separator),
+    port: Number(value.slice(separator + 1)),
+  };
+}
 
 const REQUIRED_VARS = [
   'VITE_FIREBASE_API_KEY',
@@ -81,8 +93,13 @@ export const db = IS_TEST_MODE
 // Test mode：自動連接 Firebase Emulator（E2E 測試用）
 if (IS_TEST_MODE) {
   try {
-    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    const authEmulator = PROCESS_ENV['FIREBASE_AUTH_EMULATOR_HOST'] ?? '127.0.0.1:9099';
+    const firestoreEmulator = emulatorAddress(
+      PROCESS_ENV['FIRESTORE_EMULATOR_HOST'] ?? '127.0.0.1:8080',
+      8080
+    );
+    connectAuthEmulator(auth, `http://${authEmulator}`, { disableWarnings: true });
+    connectFirestoreEmulator(db, firestoreEmulator.host, firestoreEmulator.port);
     logger.info('[Firebase] Connected to emulators (test mode)');
   } catch (err) {
     logger.warn('[Firebase] Failed to connect to emulators', err);

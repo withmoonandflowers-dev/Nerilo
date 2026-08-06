@@ -28,6 +28,14 @@ const TEST_PROJECT_ID = 'nerilo';
 // Emulator 不驗證 key 的有效性，所以用一個假的即可
 const TEST_API_KEY = 'AIzaSyFakeKeyForEmulatorTesting123456';
 
+function splitHost(value: string): { host: string; port: number } {
+  const separator = value.lastIndexOf(':');
+  return {
+    host: value.slice(0, separator),
+    port: Number(value.slice(separator + 1)),
+  };
+}
+
 interface TestClient {
   app: FirebaseApp;
   db: Firestore;
@@ -48,8 +56,10 @@ function getClient(name: string): TestClient {
   const db = getFirestore(app);
   const auth = getAuth(app);
 
-  connectFirestoreEmulator(db, '127.0.0.1', 8080);
-  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  const firestore = splitHost(process.env['FIRESTORE_EMULATOR_HOST'] ?? '127.0.0.1:8080');
+  const authEmulator = process.env['FIREBASE_AUTH_EMULATOR_HOST'] ?? '127.0.0.1:9099';
+  connectFirestoreEmulator(db, firestore.host, firestore.port);
+  connectAuthEmulator(auth, `http://${authEmulator}`, { disableWarnings: true });
 
   const client: TestClient = { app, db, auth, uid: null };
   _clients.set(name, client);

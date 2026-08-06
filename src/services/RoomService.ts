@@ -708,6 +708,7 @@ export class RoomService {
           status: 'closed',
           hostMigrationEpoch: newEpoch,
           participants: [],
+          participantCount: 0,
           previousRoomId: data.previousRoomId ?? null,
           lineageRootRoomId: data.lineageRootRoomId ?? roomId,
         });
@@ -725,6 +726,7 @@ export class RoomService {
         ownerUid: newOwnerUid,
         hostMigrationEpoch: newEpoch,
         participants: remainingParticipants,
+        participantCount: remainingParticipants.length,
         previousRoomId: data.previousRoomId ?? null,
         lineageRootRoomId: data.lineageRootRoomId ?? roomId,
       });

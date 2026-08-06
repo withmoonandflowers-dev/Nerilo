@@ -9,10 +9,10 @@
  */
 
 // Firestore Emulator（Admin SDK + Web SDK 共用此環境變數）
-process.env['FIRESTORE_EMULATOR_HOST'] = '127.0.0.1:8080';
+process.env['FIRESTORE_EMULATOR_HOST'] ??= '127.0.0.1:8080';
 
 // Auth Emulator
-process.env['FIREBASE_AUTH_EMULATOR_HOST'] = '127.0.0.1:9099';
+process.env['FIREBASE_AUTH_EMULATOR_HOST'] ??= '127.0.0.1:9099';
 
 // 避免 firebase-admin 嘗試讀取 Application Default Credentials
 process.env['GOOGLE_APPLICATION_CREDENTIALS'] = '';

@@ -346,6 +346,62 @@ describe(
         updateDoc(doc(db, 'p2pRooms', ROOM_ID), { status: 'closed' })
       );
     });
+
+    it('陌生人不可在同一次更新把自己加進名冊並接管房間', async () => {
+      const token = await createTestUser(UID_STRANGER);
+      const { db } = await signInWithToken('stranger-takeover', token);
+      await assertDenied(() =>
+        updateDoc(doc(db, 'p2pRooms', ROOM_ID), {
+          ownerUid: UID_STRANGER,
+          participants: [UID_STRANGER],
+          participantCount: 1,
+          status: 'open',
+        })
+      );
+    });
+
+    it('新成員只能新增自己，且可讓雙人 waiting 房轉為 open', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('member-join', token);
+      await updateDoc(doc(db, 'p2pRooms', ROOM_ID), {
+        participants: [UID_OWNER, UID_MEMBER],
+        participantCount: 2,
+        status: 'open',
+        lastActiveAt: Date.now(),
+        ttlExpireAt: Timestamp.fromMillis(Date.now() + 300_000),
+      });
+    });
+
+    it('既有成員不可修改共享房間狀態', async () => {
+      await adminDb().collection('p2pRooms').doc(ROOM_ID).update({
+        participants: [UID_OWNER, UID_MEMBER],
+        participantCount: 2,
+        status: 'open',
+      });
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('member-status-tamper', token);
+      await assertDenied(() =>
+        updateDoc(doc(db, 'p2pRooms', ROOM_ID), { status: 'closed' })
+      );
+    });
+
+    it('房主只能把房主身分移交給既有成員，且 migration epoch 必須遞增', async () => {
+      await adminDb().collection('p2pRooms').doc(ROOM_ID).update({
+        participants: [UID_OWNER, UID_MEMBER],
+        participantCount: 2,
+        status: 'open',
+        hostMigrationEpoch: 2,
+      });
+      const token = await createTestUser(UID_OWNER);
+      const { db } = await signInWithToken('owner-migrate', token);
+      await updateDoc(doc(db, 'p2pRooms', ROOM_ID), {
+        ownerUid: UID_MEMBER,
+        participants: [UID_MEMBER],
+        participantCount: 1,
+        status: 'open',
+        hostMigrationEpoch: 3,
+      });
+    });
   })
 );
 
@@ -384,8 +440,35 @@ describe(
       const { db } = await signInWithToken('member-sig', token);
       await addDoc(
         collection(db, 'p2pRooms', ROOM_ID, 'signals'),
-        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: {}, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300_000) }
+        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: { type: 'answer', sdp: 'v=0 test-answer' }, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300_000) }
       );
+    });
+
+    it('房間成員可送出尚未知 remoteUid 的初始 broadcast offer', async () => {
+      const token = await createTestUser(UID_OWNER);
+      const { db } = await signInWithToken('owner-broadcast-offer', token);
+      await addDoc(
+        collection(db, 'p2pRooms', ROOM_ID, 'signals'),
+        { from: UID_OWNER, to: null, type: 'offer', payload: { type: 'offer', sdp: 'v=0 initial-offer' }, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300_000) }
+      );
+    });
+
+    it('非房間成員不可注入 signal', async () => {
+      const token = await createTestUser(UID_STRANGER);
+      const { db } = await signInWithToken('stranger-signal-injection', token);
+      await assertDenied(() => addDoc(
+        collection(db, 'p2pRooms', ROOM_ID, 'signals'),
+        { from: UID_STRANGER, to: UID_OWNER, type: 'offer', payload: { type: 'offer', sdp: 'v=0 injected' }, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300_000) }
+      ));
+    });
+
+    it('房間成員不可把 signal 寄給非成員', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('member-signal-outsider', token);
+      await assertDenied(() => addDoc(
+        collection(db, 'p2pRooms', ROOM_ID, 'signals'),
+        { from: UID_MEMBER, to: UID_STRANGER, type: 'offer', payload: { type: 'offer', sdp: 'v=0 outsider' }, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300_000) }
+      ));
     });
 
     it('缺 expiresAt 的 signal 會被拒絕', async () => {
@@ -393,7 +476,23 @@ describe(
       const { db } = await signInWithToken('member-sig-no-expiry', token);
       await assertDenied(() => addDoc(
         collection(db, 'p2pRooms', ROOM_ID, 'signals'),
-        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: {}, createdAt: serverTimestamp() }
+        { from: UID_MEMBER, to: UID_OWNER, type: 'answer', payload: { type: 'answer', sdp: 'v=0 no-expiry' }, createdAt: serverTimestamp() }
+      ));
+    });
+
+    it('超過 10KB 的 SDP signal 會被拒絕', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('member-signal-oversized', token);
+      await assertDenied(() => addDoc(
+        collection(db, 'p2pRooms', ROOM_ID, 'signals'),
+        {
+          from: UID_MEMBER,
+          to: UID_OWNER,
+          type: 'offer',
+          payload: { type: 'offer', sdp: 'x'.repeat(10 * 1024 + 1) },
+          createdAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
+        }
       ));
     });
 

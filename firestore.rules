@@ -106,6 +106,124 @@ service cloud.firestore {
                 : null);
     }
 
+    function ownerUidUnchanged() {
+      return request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
+    function participantCountMatches(data) {
+      return data.participantCount is int
+        && data.participantCount == data.participants.size();
+    }
+
+    // 新成員只能把「自己」加入既有名冊；不得趁 join 改房主、踢人或改任意 metadata。
+    function isSelfJoinOnly() {
+      let oldP = resource.data.participants.toSet();
+      let newP = request.resource.data.participants.toSet();
+      let statusUnchanged = request.resource.data.status == resource.data.status;
+      let activatesWaitingRoom = resource.data.status == 'waiting'
+        && request.resource.data.status == 'open'
+        && request.resource.data.participants.size() >= 2;
+      return !(request.auth.uid in resource.data.participants)
+        && request.auth.uid in request.resource.data.participants
+        && oldP.difference(newP).size() == 0
+        && newP.difference(oldP).hasOnly([request.auth.uid])
+        && request.resource.data.participants.size() == newP.size()
+        && participantCountMatches(request.resource.data)
+        && ownerUidUnchanged()
+        && (statusUnchanged || activatesWaitingRoom)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['participants', 'participantCount', 'status', 'lastActiveAt', 'ttlExpireAt']);
+    }
+
+    // 既有成員可以刷新房間活性，但不能藉此改共享狀態。
+    function isParticipantActivityUpdate() {
+      return request.auth.uid in resource.data.participants
+        && ownerUidUnchanged()
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['lastActiveAt', 'ttlExpireAt']);
+    }
+
+    // mesh identity 是每位成員自己的安全邊界；topology 只是非安全性的能力提示。
+    function isOwnMeshIdentityUpdate() {
+      return request.auth.uid in resource.data.participants
+        && ownerUidUnchanged()
+        && request.resource.data.participants == resource.data.participants
+        && 'meshIdentities' in request.resource.data
+        && request.auth.uid in request.resource.data.meshIdentities
+        && isValidMeshIdentity(request.resource.data.meshIdentities[request.auth.uid])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['meshIdentities', 'topology']);
+    }
+
+    // 房主仍可管理房間生命週期與產品 metadata，但只能改已知欄位，且一般更新
+    // 不得偷換 ownerUid。participants 清空只允許同時關房。
+    function isOwnerManagedUpdate() {
+      let newP = request.resource.data.participants.toSet();
+      return request.auth.uid == resource.data.ownerUid
+        && ownerUidUnchanged()
+        && request.resource.data.participants.size() == newP.size()
+        && (request.auth.uid in request.resource.data.participants
+            || (request.resource.data.participants.size() == 0
+                && request.resource.data.status == 'closed'))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'status', 'closedAt', 'participants', 'participantCount',
+             'lastActiveAt', 'ttlExpireAt', 'meshIdentities', 'topology',
+             'pendingMergeRequestId', 'pendingSplitPlanId', 'version',
+             'capabilityHint', 'kind', 'roomName', 'isPrivate', 'ownerName',
+             'hostMigrationEpoch', 'previousRoomId', 'lineageRootRoomId'
+           ]);
+    }
+
+    // 房主移交是唯一可改 ownerUid 的 client 操作：舊房主必須離開、不得新增成員，
+    // 新房主必須是更新前後都在房內的既有成員，epoch 恰好 +1。
+    function isOwnerMigration() {
+      let oldP = resource.data.participants.toSet();
+      let newP = request.resource.data.participants.toSet();
+      return request.auth.uid == resource.data.ownerUid
+        && request.resource.data.ownerUid != resource.data.ownerUid
+        && request.resource.data.ownerUid in resource.data.participants
+        && request.resource.data.ownerUid in request.resource.data.participants
+        && !(request.auth.uid in request.resource.data.participants)
+        && newP.difference(oldP).size() == 0
+        && request.resource.data.participants.size() == newP.size()
+        && request.resource.data.get('hostMigrationEpoch', 0)
+             == resource.data.get('hostMigrationEpoch', 0) + 1
+        && request.resource.data.status == 'open'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'ownerUid', 'status', 'participants', 'participantCount',
+             'hostMigrationEpoch', 'previousRoomId', 'lineageRootRoomId'
+           ]);
+    }
+
+    // Firestore Map.size() 只算欄位數，不是 byte 大小。要真的限制 signaling payload，
+    // 必須按 SDP / ICE 的實際字串欄位驗證長度與形狀。
+    function isValidSignalPayload(data) {
+      return data.payload is map
+        && data.keys().hasOnly(
+             ['from', 'to', 'type', 'payload', 'createdAt', 'expiresAt', 'channelLabel'])
+        && (!('channelLabel' in data)
+            || (data.channelLabel is string && data.channelLabel.size() <= 256))
+        && (
+          (data.type in ['offer', 'answer']
+            && data.payload.keys().hasOnly(['type', 'sdp'])
+            && data.payload.type == data.type
+            && data.payload.sdp is string
+            && data.payload.sdp.size() <= 10 * 1024)
+          ||
+          (data.type == 'ice'
+            && data.payload.keys().hasOnly(['candidate', 'sdpMid', 'sdpMLineIndex'])
+            && data.payload.candidate is string
+            && data.payload.candidate.size() <= 4096
+            && (!('sdpMid' in data.payload)
+                || data.payload.sdpMid == null
+                || (data.payload.sdpMid is string && data.payload.sdpMid.size() <= 256))
+            && (!('sdpMLineIndex' in data.payload)
+                || data.payload.sdpMLineIndex == null
+                || data.payload.sdpMLineIndex is int))
+        );
+    }
+
     // ── 參與者自行離開 ──────────────────────────────────────────────
     // leaveRoom 是把自己從 participants 移除，更新後 uid 必不在列表中，
     // 落不進「加入/更新身分」分支，需要獨立分支。
@@ -118,6 +236,9 @@ service cloud.firestore {
         && !(request.auth.uid in request.resource.data.participants)
         && oldP.difference(newP).hasOnly([request.auth.uid])
         && newP.difference(oldP).size() == 0
+        && request.resource.data.participants.size() == newP.size()
+        && participantCountMatches(request.resource.data)
+        && ownerUidUnchanged()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
              ['participants', 'participantCount', 'lastActiveAt', 'ttlExpireAt', 'meshIdentities']);
     }
@@ -139,30 +260,27 @@ service cloud.firestore {
       // 且 ownerUid 必須是當前用戶
       allow create: if isAuthenticated() &&
         request.resource.data.ownerUid == request.auth.uid &&
+        request.auth.uid in request.resource.data.participants &&
+        request.resource.data.participants.size() == request.resource.data.participants.toSet().size() &&
         participantsWithinCap(request.resource.data) &&
         validMaxParticipantsOnCreate(request.resource.data) &&
         request.auth.token.firebase.sign_in_provider != "anonymous";
 
-      // 更新：允許房主更新房間，或使用者加入/更新自己的身分。
+      // 更新按操作形狀授權，不能只看「更新後名冊含自己」；後者會讓陌生人先把
+      // 自己塞進 participants，再於同一次 update 接管房間。
       // 任何更新都不得修改其他使用者的 meshIdentities 條目（防 MITM）。
       allow update: if isAuthenticated() && meshIdentitiesChangeIsValid() &&
         participantsWithinCap(request.resource.data) &&
         maxParticipantsUnchanged() && (
-        // 房主可以更新房間
-        (request.auth.uid == resource.data.ownerUid) ||
-        // 使用者加入房間：更新後必須在 participants 中，且房間非 closed
-        (request.auth.uid in request.resource.data.participants &&
-         resource.data.status != 'closed') ||
+        isOwnerManagedUpdate() ||
+        isOwnerMigration() ||
+        (resource.data.status != 'closed' && isSelfJoinOnly()) ||
         // 參與者離開房間：把自己（且只有自己）從 participants 移除。
         // 必須排在 meshIdentity 分支之前：rules 的 || 由左至右短路且不吸收
         // 錯誤，後面分支若 evaluation error 會蓋掉這裡的 true。
         isSelfLeaveOnly() ||
-        // 既有參與者可以更新自己的 meshIdentity（含格式驗證）。
-        // 用 `in` 檢查 key 存在——直接索引不存在的 key 是 evaluation error。
-        (request.auth.uid in resource.data.participants &&
-         'meshIdentities' in request.resource.data &&
-         request.auth.uid in request.resource.data.meshIdentities &&
-         isValidMeshIdentity(request.resource.data.meshIdentities[request.auth.uid]))
+        isParticipantActivityUpdate() ||
+        isOwnMeshIdentityUpdate()
       );
 
       // 刪除：房主，或任何參與者（持久聊天室的「全員軟刪除→最後一人真刪」
@@ -191,10 +309,9 @@ service cloud.firestore {
       // Signals subcollection - signaling 訊息
       // 安全措施：
       //   1. 只能建立自己的 signal（from === auth.uid）
-      //   2. payload 大小上限 10KB
+      //   2. SDP 上限 10KB；ICE candidate 上限 4KB，且欄位採 allowlist
       //   3. append-only（不可更新/刪除）
-      //   4. 必須帶有 createdAt 時間戳
-      //   5. createdAt 不得為未來時間（±30 秒容差）
+      //   4. createdAt 型別有效、expiresAt 必須在未來 10 分鐘內
       match /signals/{signalId} {
         // 只有該房間的參與者（或房主）能讀取 signaling — 防止任意登入用戶
         // 爬取所有房間的 ICE 候選 / SDP 來建立使用者圖譜。
@@ -203,9 +320,19 @@ service cloud.firestore {
           request.auth.uid == get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.ownerUid
         );
         allow create: if isAuthenticated()
+          && (request.auth.uid in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants
+              || request.auth.uid == get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.ownerUid)
           && request.resource.data.from == request.auth.uid
           && request.resource.data.type in ['offer', 'answer', 'ice']
-          && request.resource.size() < 10 * 1024
+          // initiator 在收到第一個遠端 signal 前尚不知道 remoteUid，既有 WebRTC
+          // handshake 會以 to:null 廣播初始 offer / ICE；answer 一定已有明確收件人。
+          && ((request.resource.data.to is string
+               && request.resource.data.to != request.auth.uid
+               && (request.resource.data.to in get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.participants
+                   || request.resource.data.to == get(/databases/$(database)/documents/p2pRooms/$(roomId)).data.ownerUid))
+              || (request.resource.data.to == null
+                  && request.resource.data.type in ['offer', 'ice']))
+          && isValidSignalPayload(request.resource.data)
           && request.resource.data.expiresAt is timestamp
           && request.resource.data.expiresAt > request.time
           && request.resource.data.expiresAt <= request.time + duration.value(10, 'm')

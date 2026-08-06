@@ -71,7 +71,7 @@ describe('SDK createFirestoreSignaling（真實 rules 下的第三方可用性�
       from: OWNER,
       to: GUEST,
       type: 'offer',
-      payload: { sdp: 'v=0 fake-offer' },
+      payload: { type: 'offer', sdp: 'v=0 fake-offer' },
       channelLabel: 'inputs',
       createdAt: Date.now(),
     });
@@ -103,7 +103,7 @@ describe('SDK createFirestoreSignaling（真實 rules 下的第三方可用性�
       from: GUEST,
       to: OWNER,
       type: 'answer',
-      payload: { sdp: 'v=0 fake-answer' },
+      payload: { type: 'answer', sdp: 'v=0 fake-answer' },
       channelLabel: 'inputs',
       createdAt: Timestamp.now(),
       expiresAt: Timestamp.fromMillis(Date.now() + 5 * 60 * 1000),

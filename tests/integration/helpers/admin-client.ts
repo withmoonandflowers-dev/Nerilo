@@ -44,8 +44,9 @@ export function adminAuth() {
  */
 export async function clearEmulatorData(): Promise<void> {
   const projectId = TEST_PROJECT_ID;
+  const firestoreHost = process.env['FIRESTORE_EMULATOR_HOST'] ?? '127.0.0.1:8080';
   // Emulator REST API：DELETE 清空所有文件
-  const url = `http://127.0.0.1:8080/emulator/v1/projects/${projectId}/databases/(default)/documents`;
+  const url = `http://${firestoreHost}/emulator/v1/projects/${projectId}/databases/(default)/documents`;
   const res = await fetch(url, { method: 'DELETE' });
   if (!res.ok && res.status !== 200) {
     const text = await res.text();

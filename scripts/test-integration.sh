@@ -6,8 +6,8 @@
 #   bash scripts/test-integration.sh
 #
 # 前提條件：
-#   - Node.js >= 18
-#   - Java >= 11（已確認 OpenJDK 11 可用）
+#   - Node.js 24
+#   - Java >= 21（firebase-tools 15+）
 #   - firebase-tools：npm install -g firebase-tools
 #
 # 業界標準：
@@ -38,7 +38,7 @@ if ! command -v firebase &>/dev/null; then
 fi
 
 if ! command -v java &>/dev/null; then
-  echo "❌  Java 未安裝（Firebase Emulator 需要 Java 11+）"
+  echo "❌  Java 未安裝（Firebase Emulator 需要 Java 21+）"
   exit 1
 fi
 
