@@ -1,0 +1,125 @@
+name: Deploy Vue Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      expires:
+        description: Firebase preview channel lifetime
+        required: true
+        default: 7d
+        type: choice
+        options:
+          - 1d
+          - 7d
+          - 30d
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-vue-preview
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  deploy-preview:
+    name: Build and deploy Vue candidate
+    runs-on: ubuntu-latest
+    environment: vue-preview
+    env:
+      VITE_FIREBASE_API_KEY: ${{ secrets.VUE_PREVIEW_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VUE_PREVIEW_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ secrets.VUE_PREVIEW_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VUE_PREVIEW_FIREBASE_STORAGE_BUCKET }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VUE_PREVIEW_FIREBASE_MESSAGING_SENDER_ID }}
+      VITE_FIREBASE_APP_ID: ${{ secrets.VUE_PREVIEW_FIREBASE_APP_ID }}
+      VITE_DEPLOY_ENV: preview
+      VITE_USE_EMULATOR: 'false'
+      VITE_LS_CHECKOUT_URL: ${{ secrets.VUE_PREVIEW_LS_CHECKOUT_URL }}
+      VITE_TURN_URLS: ${{ secrets.VITE_TURN_URLS }}
+      VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME }}
+      VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
+      VITE_APPCHECK_KEY: ${{ secrets.VUE_PREVIEW_APPCHECK_KEY }}
+      VITE_SENTRY_DSN: ${{ secrets.VUE_PREVIEW_SENTRY_DSN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web-vue/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Vue dependencies
+        run: npm ci --prefix web-vue
+
+      - name: Guard isolated preview environment
+        run: >
+          node scripts/validate-firebase-web-env.mjs
+          --project nerilo-staging
+          --label "Vue preview"
+
+      - name: Type check Vue app
+        run: npm run type-check --prefix web-vue
+
+      - name: Generate Vue static app
+        run: npm run generate --prefix web-vue
+
+      - name: Guard generated preview target
+        run: >
+          node scripts/verify-web-preview-build.mjs
+          --dir web-vue/.output/public
+          --project nerilo-staging
+          --auth-domain nerilo-staging.firebaseapp.com
+          --forbid-auth-domain nerilo.firebaseapp.com
+
+      - name: Upload rollback artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-vue-preview-${{ github.sha }}
+          path: web-vue/.output/public/
+          retention-days: 14
+
+      - name: Write staging Firebase service account
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_NERILO_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Guard service account project
+        run: >
+          node -e "const fs=require('node:fs');
+          const account=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
+          if(account.project_id!=='nerilo-staging')
+          throw new Error('Service account must belong to nerilo-staging');"
+          "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Deploy Firebase Hosting preview channel
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: >
+          npx firebase-tools hosting:channel:deploy vue-candidate
+          --config firebase.web-vue-preview.json
+          --project nerilo-staging
+          --expires "${{ inputs.expires }}"
+          --non-interactive
+
+      - name: Clean up credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Deployment summary
+        run: |
+          echo "### Vue preview deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Project: \`nerilo-staging\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Channel: \`vue-candidate\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Expires: \`${{ inputs.expires }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact: \`web-vue-preview-${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

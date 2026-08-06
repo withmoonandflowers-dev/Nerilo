@@ -1,5 +1,31 @@
 import { fileURLToPath } from 'node:url'
 
+const injectedViteEnv = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN',
+  'VITE_FIREBASE_PROJECT_ID',
+  'VITE_FIREBASE_STORAGE_BUCKET',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APP_ID',
+  'VITE_USE_EMULATOR',
+  'VITE_LS_CHECKOUT_URL',
+  'VITE_TURN_URLS',
+  'VITE_TURN_USERNAME',
+  'VITE_TURN_CREDENTIAL',
+  'VITE_TURN_CREDENTIAL_ENDPOINT',
+  'VITE_SENTRY_DSN',
+  'VITE_APPCHECK_KEY',
+  'VITE_TELEMETRY_ENDPOINT',
+  'VITE_DEPLOY_ENV',
+] as const
+
+const viteEnvDefines = Object.fromEntries(
+  injectedViteEnv.map((key) => [
+    `import.meta.env.${key}`,
+    JSON.stringify(process.env[key] ?? (key === 'VITE_USE_EMULATOR' ? 'false' : '')),
+  ]),
+)
+
 // UI 重寫版（ADR-0017）：SPA 模式，複用 ../src 的框架無關核心（core/services/types/utils）
 // nuxt 釘死 4.4.2（package.json 無 ^）：4.4.4 與 4.4.5 的 dev server 對 ssr:false 均有
 // regression（nuxt/nuxt#34957、#35033），升版前先確認已修復。
@@ -22,12 +48,9 @@ export default defineNuxtConfig({
   },
   vite: {
     define: {
-      // E2E 用開關：nuxt 的 vite env 只穩定讀 web-vue/.env*，process.env 的
-      // VITE_* 不保證進 import.meta.env——曾因此讓 E2E 打到正式 Firebase。
-      // 在 config 時間點顯式注入，杜絕環境歧義（見 src/config/firebase.ts）。
-      'import.meta.env.VITE_USE_EMULATOR': JSON.stringify(process.env.VITE_USE_EMULATOR ?? 'false'),
-      // LS 結帳連結（同 React 線 VITE_LS_CHECKOUT_URL）：未設定的環境升級鈕不顯示。
-      'import.meta.env.VITE_LS_CHECKOUT_URL': JSON.stringify(process.env.VITE_LS_CHECKOUT_URL ?? ''),
+      // Nuxt 的 Vite env 只穩定讀 web-vue/.env*；CI 由 process.env 注入。
+      // 在 config 時間點固定所有部署變數，避免 preview 誤連 production。
+      ...viteEnvDefines,
     },
     resolve: {
       // ../src 的複用模組會就近解析到 Nerilo/node_modules 的 firebase 副本，
