@@ -122,7 +122,7 @@ const client = await createChatClient({
 > 2. **建立房間的帳號必須是非匿名的**（`sign_in_provider != "anonymous"`）。
 >
 > 換句話說，目前只有「已經用 Nerilo 房間模型」的應用能用它。純匿名的使用情境
-> （例如遊戲大廳，玩家不註冊就想開房）**還不行**——缺一個輕量的房間目錄／建房契約，
+> （例如遊戲大廳，玩家不註冊就想開房）**還不行**，缺一個輕量的房間目錄／建房契約，
 > 那是 Spec 014，尚未實作。2026-07-26 以第一個外部嵌入者實測確認，記錄於
 > `specs/015-expose-firestore-signaling/spec.md` 的 T6。
 >
@@ -230,8 +230,8 @@ const signaling = createWarmColdSignaling({
 
 只有這兩個進入點匯出的東西：
 
-- `nerilo` — 純契約（門面、注入介面、純邏輯 reducer、公開資料型別）
-- `nerilo/firestore` — turnkey Firestore 工廠
+- `nerilo`：純契約（門面、注入介面、純邏輯 reducer、公開資料型別）
+- `nerilo/firestore`：turnkey Firestore 工廠
 
 其餘一律是內部實作，即使你有辦法用深層路徑 import 到（`nerilo/dist/...` 之類），
 它們隨時會變、不列入任何相容保證。公開表面由 `tests/unit/sdkSurface.spec.ts` 鎖住，

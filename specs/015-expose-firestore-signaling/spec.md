@@ -36,7 +36,7 @@ SDK 目前的 signaling 是「全有或全無」：
   與 `WarmColdSignalingTransport`（warm 加密中繼）**沒有任何公開出口**。
 
 後果，第一個外部嵌入者（block-brawl，2026-07-25）實測撞到：它照契約寫出了自己的
-BroadcastChannel signaling，同機雙分頁可以打，但**要跨機器對戰就得自架後端**——
+BroadcastChannel signaling，同機雙分頁可以打，但**要跨機器對戰就得自架後端**，
 明明 Nerilo 有現成的、經過 production 驗證的一份。
 
 這正好打在專案定位上：Nerilo 賣的是「私密 + 關不掉的通訊層」，而 signaling
@@ -61,7 +61,7 @@ BroadcastChannel signaling，同機雙分頁可以打，但**要跨機器對戰�
 - 不提供託管服務：嵌入者仍要自帶 Firebase 專案與 rules（本 spec 不做 BaaS，維持 ADR-0025 的 L2 定位）。
 - 不改既有 mesh／chat 路徑的 signaling 行為。
 
-## 3. 待釐清（clarify——2026-07-25 使用者拍板，決議內嵌於各題）
+## 3. 待釐清（clarify，2026-07-25 使用者拍板，決議內嵌於各題）
 
 - [x] **Q1 開放範圍**：拍板 **warm + cold 一起開**。使用者選擇擴大範圍以取得「第三人零
       Firestore 寫入」這個賣點，接受公開表面隨之拉大。〔提案者原建議只開 cold；
@@ -78,7 +78,7 @@ BroadcastChannel signaling，同機雙分頁可以打，但**要跨機器對戰�
 ### 4.1 warm 的真實前提（設計約束，不是註腳）
 
 實測 `MeshGossipManager.buildWarmColdFactory`（:347-412）：warm 不是一個可獨立安裝的傳輸，
-它是**架在既有 mesh 鄰居 DataChannel 上的中繼**——`SigRelayRouter` 需要開著的鄰居
+它是**架在既有 mesh 鄰居 DataChannel 上的中繼**，`SigRelayRouter` 需要開著的鄰居
 （啟用條件就是 `router.hasOpenNeighbors()`），另需身分金鑰（ECDH 私鑰 + 簽章）與
 名冊型的對端公鑰解析。
 
@@ -86,8 +86,8 @@ BroadcastChannel signaling，同機雙分頁可以打，但**要跨機器對戰�
 RTCPeerConnection、無 Nerilo 房間名冊），warm 沒有中繼底材可用，實際只會落在 cold。
 因此本 spec 的兩個工廠**不是同一種東西**，文件必須分開講，不能並列成「兩個選項」：
 
-- `createFirestoreSignaling()` — 任何嵌入者可用，零前提。
-- `createWarmColdSignaling(deps)` — 只對「已經在跑 Nerilo mesh」的嵌入者有意義；
+- `createFirestoreSignaling()`，任何嵌入者可用，零前提。
+- `createWarmColdSignaling(deps)`，只對「已經在跑 Nerilo mesh」的嵌入者有意義；
   缺 mesh 時退化為純 cold，且此退化必須是**明示的**（型別上要求傳入 mesh 相依，
   不讓人以為裝上去就有零伺服器中繼）。
 
@@ -104,7 +104,7 @@ createWarmColdSignaling(deps: WarmSignalingDeps): SignalingFactory
 
 原計畫的單一型別明列 warm 需要的四件事（本端 uid、身分金鑰來源、
 對端公鑰解析、鄰居就緒判定）。這四件事目前散在 `IdentityManager`／`SigRelayRouter`／
-directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型別——這是本 spec 最大的
+directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型別，這是本 spec 最大的
 設計工作量，也是「表面拉大」的具體代價。
 
 為何工廠而非類別：`WarmColdSignalingTransport` 的建構子有 5 個參數，其中 `patience`
@@ -128,7 +128,7 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
       金鑰檢查、router 建立、resolver、耐心策略都留在 manager（那些是 mesh 專屬狀態）。
 
       刻意只吃結構型別（`SignalRelayBus`／`PeerKeyResolver`／`LocalSignalIdentity`／`SignalClock`，
-      皆為既有 exported interface），不吃 `SigRelayRouter` 具體類別——T3 要把這個型別
+      皆為既有 exported interface），不吃 `SigRelayRouter` 具體類別，T3 要把這個型別
       放進公開表面，先綁死類別之後就拆不開。
 
       〔實作期發現〕這條路徑原本**零測試覆蓋**：`MeshGossipManager.spec.ts` 的
@@ -142,12 +142,12 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
       `build:sdk`、React 護欄 E2E（golden-path + mesh-diagnostic 7/7）全綠。
 
       〔誠實記錄：一段未能解釋的 flake〕`mesh-diagnostic` 連跑時出現 1 過 2 敗 3 敗 4 過。
-      當下的指令把輸出丟給 grep 過濾掉，**兩次失敗的實際訊息沒有留存**，無法事後歸因——
+      當下的指令把輸出丟給 grep 過濾掉，**兩次失敗的實際訊息沒有留存**，無法事後歸因，
       這是操作疏失。補做對照實驗：未改動基線連跑 3 次 3/3 綠；重構後以**完全相同的 loop
       形狀**連跑 3 次亦 3/3 綠（另加 run4-6 共 6 次連綠）。兩者在同條件下無差異，
       故不將該 flake 歸因於本次重構；但也不宣稱已解釋它。附帶查明：
       `mesh-diagnostic.spec.ts` 沒有 `@stable` 標籤，不在 CI 硬閘子集內，
-      所以 CI 全綠與這個 flake 並不矛盾——它是 harden-tests 要求的人工護欄，不是閘門。
+      所以 CI 全綠與這個 flake 並不矛盾，它是 harden-tests 要求的人工護欄，不是閘門。
 - [x] T2：在 `src/sdk/firestore.ts` 加 `createFirestoreSignaling`（動態載入，維持入口隔離）。
       **2026-07-26 完成。**
 
@@ -155,12 +155,12 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
       但動態 `import()` 是非同步的（不動態載就會讓 eager 進入點靜態帶進 firebase，
       `qa:sdk-isolation` 直接紅）。解法是新增 `core/p2p/lazySignalingTransport.ts`
       當接縫。最容易寫錯的一點已寫進該檔註解並補測試：`subscribe()` 必須當下回傳
-      取消函式，而此時真 transport 還沒載完——取消函式得能取消「尚未成立的訂閱」，
+      取消函式，而此時真 transport 還沒載完，取消函式得能取消「尚未成立的訂閱」，
       否則會留下拆不掉的 Firestore `onSnapshot`（持續計費 + 房間關了還投遞）。
       7 條單元覆蓋延遲、單次載入、載入前後取消、轉呼叫、載入失敗不炸呼叫端。
 
       適應度函數如預期咬人：`tests/unit/fitness.architecture.spec.ts` 的公開表面快照
-      因新匯出而紅，依其設計「動它＝改公開契約，需顯性 review」——快照已顯性更新並附理由。
+      因新匯出而紅，依其設計「動它＝改公開契約，需顯性 review」，快照已顯性更新並附理由。
 - [x] T3：加 `createWarmColdSignaling(deps)`，缺 mesh 相依時明示退化為 cold。**2026-07-26 完成。**
 
       「明示退化」的落實方式：省略 `warm` 時**直接回傳 cold 工廠本身**，不包任何看起來
@@ -182,9 +182,9 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
       **2026-07-26 查證後判定：如原樣不可達成，範圍已調整並記錄理由。**
 
       **硬阻礙（實測 rules 原文，非推論）**：
-      1. `firestore.rules:144` — 建房必須是**非匿名**帳號
+      1. `firestore.rules:144`，建房必須是**非匿名**帳號
          （`request.auth.token.firebase.sign_in_provider != "anonymous"`）。
-      2. `firestore.rules:198-204` — 讀寫 `signals` 必須是該房 `participants` 或 `ownerUid`，
+      2. `firestore.rules:198-204`，讀寫 `signals` 必須是該房 `participants` 或 `ownerUid`，
          rules 會 `get()` 父層房間文件。
       3. 合起來：任何第三方要用這個 signaling，**得先有一個 Nerilo 房間，且房主是註冊帳號**。
          匿名玩家可以「加入」既有房（`isAuthenticated()` 只檢查 `request.auth != null`），
@@ -192,7 +192,7 @@ directory 裡，本 spec 把它們收斂成一個嵌入者看得懂的注入型�
 
       **這正是 Spec 014 的缺口，而且它比原本評估的更嚴重**：014 不是「有了更好」，
       是 015 對非 Nerilo-app 嵌入者可用的**前置條件**。原本排序（先 015、014 等回饋）
-      在此被實測推翻——回饋來了，結論是兩者相依。
+      在此被實測推翻，回饋來了，結論是兩者相依。
 
       **已交付的可達成部分**：`tests/integration/sdk-signaling.spec.ts`，在 emulator 上
       以**真實 rules** 驗證出口本身可用：SDK 出口送出的 signal 被另一個 FirebaseApp／

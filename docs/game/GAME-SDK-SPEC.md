@@ -1,7 +1,7 @@
 # Nerilo 遊戲開發者規格（完整自助版）
 
 > 給要在 Nerilo 上做多人遊戲的開發者。照這份就能自己做，不需要問平台方。
-> 每個 API 對齊真實 code 簽名。成熟度誠實標註（§10）——請勿依賴標「未接線」者。
+> 每個 API 對齊真實 code 簽名。成熟度誠實標註（§10），請勿依賴標「未接線」者。
 > companion：[ADR-G01](ADR-G01-game-on-nerilo.md)（決策）、[C4](c4-game-on-nerilo.md)（架構）。
 
 ---
@@ -189,7 +189,7 @@ bus.send(env: P2PEnvelope): Promise<void>
 bus.getReadyState(): RTCDataChannelState
 ```
 `P2PEnvelope`：`{ v:number, ns:string, type:string, id:string, ts:number, from:string, to?:string, replyTo?:string, payload:unknown, meta?:object }`。單則 < 256KB，自動 E2EE。
-保留 ns：`system` `chat` `game` `presence` `file` `media`——自己取別的。
+保留 ns：`system` `chat` `game` `presence` `file` `media`，自己取別的。
 
 **不可靠狀態通道（高頻）**　`成熟度：Beta（2 人星型）`
 ```ts
@@ -289,7 +289,7 @@ bus.subscribe('system', (e) => { if (e.type==='ERROR') handle(e.payload); });
 ## 11. 版本相容
 
 宣告 `strictProtocols: { yourgame: N }`（經 HELLO capability）：雙方版本不等會被擋
-並提示更新——遊戲規則/狀態格式一改就升 N，避免新舊 client 對戰 desync。
+並提示更新，遊戲規則/狀態格式一改就升 N，避免新舊 client 對戰 desync。
 
 ---
 

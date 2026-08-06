@@ -1,4 +1,4 @@
-# ADR-0023：資料中心化傳訊——房間即複寫日誌，連線只是傳輸機會
+# ADR-0023：資料中心化傳訊，房間即複寫日誌，連線只是傳輸機會
 
 - 狀態：Proposed（2026-07-06 產品負責人提出方向，待拍板）
 - 承接：ADR-0009（Nerilo 是資料傳遞架構）、mesh 可靠性第三輪（QA-REPORT-chat 第三輪）、
@@ -12,7 +12,7 @@ perfect negotiation）都失敗且一度弄壞首次連線。復盤發現失敗�
 
 - **連線中心（現況 star）**：訊息的存在依附於「那一條」P2P 連線。連線死了
   訊息就丟了，重連要在 WebRTC signaling 的四層時序（頁面生命週期 ×
-  DataChannel × signaling 狀態機 × Firestore session 對齊）裡搶救——每一層
+  DataChannel × signaling 狀態機 × Firestore session 對齊）裡搶救，每一層
   都可能對不上，這正是兩次失敗的原因。
 - **資料中心（mesh 已驗證）**：訊息是「簽章的不可變紀錄」，身分是
   (senderId, seq)。每位成員持有複本，週期性 anti-entropy 對帳，缺哪則
@@ -21,19 +21,19 @@ perfect negotiation）都失敗且一度弄壞首次連線。復盤發現失敗�
 
 產品負責人 2026-07-06 定調：**雙方的連線只是雙方已溝通（加密訊息），實際上
 是多個參與者共同紀錄資訊；一人斷線重連後，其他人把資料補足；每個人都幫
-別人暫存資料**——即資料中心世界觀升級為全站架構。
+別人暫存資料**，即資料中心世界觀升級為全站架構。
 
 ## Decision（提案）
 
 ### 三條互相解耦的生命週期
 
-1. **房間複本（Room Replica）**——每成員一份，落地 IndexedDB。
+1. **房間複本（Room Replica）**，每成員一份，落地 IndexedDB。
    `cold →(進房載入) syncing →(對帳補齊) live ⇄(離頁/重進) detached → archived(退出/刪除)`
    生命週期綁「成員關係」（在籍即存在），不綁頁面 instance。
-2. **Peer 傳輸 session**——每對成員之間，用完即棄。
+2. **Peer 傳輸 session**，每對成員之間，用完即棄。
    `discovered → connected(gossip+digest) → gone(斷線=正常事件)`
    斷線不修屍體：對方回來就建全新 session。斷線事件**不外溢**到另外兩條生命週期。
-3. **訊息紀錄（Message Record）**——加密後簽章的不可變紀錄。
+3. **訊息紀錄（Message Record）**，加密後簽章的不可變紀錄。
    `created(加密→簽章) → persisted(本地) → replicating(gossip+對帳) → converged(全員恰好一次) → evicted(超量淘汰, floor 語義)`
 
 ### 核心不變量
@@ -53,7 +53,7 @@ perfect negotiation）都失敗且一度弄壞首次連線。復盤發現失敗�
   能讀（暫存者只見密文）。金鑰交換（既有 SenderKeyManager/ECDH）騎同一
   傳輸。避免先統一明文再遷移紀錄格式的二次工。
 - **2 人房走同一條管線**：star 特例退役（或降級為純傳輸優化）。
-  「離開再進」bug 因此**整類消滅**——重進 = cold→syncing→live，
+  「離開再進」bug 因此**整類消滅**，重進 = cold→syncing→live，
   缺的訊息由留房者補，無需連線復活術。
 - **暫存即貢獻**：為他人保存/補送紀錄計入中繼貢獻 → 點數（接 ADR-0020/0021
   既有 CreditEconomy）。「每個人都會幫別人暫存資料」與點數經濟同構。
@@ -64,7 +64,7 @@ perfect negotiation）都失敗且一度弄壞首次連線。復盤發現失敗�
   的離線投遞，仍靠 Firestore 加密備援（現有）或未來房外中繼暫存（Phase 4，
   休眠的 store-and-forward/relay 模組 + Sphinx）。
 - **E2EE × 補齊的張力**：forward secrecy 的金鑰輪替 vs 遲入者補歷史。
-  取捨：成員只能補齊「自己在籍期間、持有對應 epoch 金鑰」的紀錄——
+  取捨：成員只能補齊「自己在籍期間、持有對應 epoch 金鑰」的紀錄，
   這同時是隱私特性（新成員看不到加入前的歷史），非缺陷。
 - **保留策略**：每 sender cap + floor（既有語義）；複本上限與淘汰協調
   屬 Phase 3。
@@ -84,7 +84,7 @@ perfect negotiation）都失敗且一度弄壞首次連線。復盤發現失敗�
   perfect negotiation 降級為 P3 的範圍縮小版（只服務真斷線加速，不再背負
   「重進必須靠它」）。
 - 韌性敘事（補助/競賽定位「隱私+韌性通訊」）獲得可演示的技術實體：
-  「斷線不掉話——因為房間是全員共同保存的加密日誌」。
+  「斷線不掉話，因為房間是全員共同保存的加密日誌」。
 - 成本：複本儲存與對帳流量隨房數成長，需 P3 資源策略；star 的低延遲
   直連優勢由「gossip 管線在 2 人時退化為單邊直送」自然保留。
 
@@ -94,29 +94,29 @@ perfect negotiation）都失敗且一度弄壞首次連線。復盤發現失敗�
 
 產品負責人補充兩項需求，納入本 ADR：
 
-### R1. 盲信使（非成員盲存）——P4 的正式主體
+### R1. 盲信使（非成員盲存），P4 的正式主體
 
 願景：C 未加入房間、只開著首頁，也為 A/B 的房間保存**加密複本**並參與補齊；
 C 讀不到內容（無房間金鑰）、改不了紀錄（簽章）。全員可為彼此暫存。
 
-- **協議天然相容**：anti-entropy 只比對 (senderId, seq)，不讀內容——密文紀錄
+- **協議天然相容**：anti-entropy 只比對 (senderId, seq)，不讀內容，密文紀錄
   照樣可 digest/補送，簽章隨紀錄走、收端自驗。盲存不需要新協議，只需要密文。
 - **硬依賴：P2 紀錄密文化**。紀錄仍為明文前，任何「給非成員存」= 洩露。
   因此 P2 的優先級由此需求確立。
 - **缺件**：①全站 overlay（relayDirectory 名冊 + 陌生節點 DataChannel，
   設計見 docs/design/site-wide-relay-overlay.md）；②盲信使協議（寄存/對帳/
   多副本/儲存上限與淘汰）；③計量與激勵（共簽收據 → 點數；PeerScoring 防擺爛）。
-- **威脅模型**：C 盲但不可信——可丟包/擺爛（多副本+激勵處理）；可見 metadata
+- **威脅模型**：C 盲但不可信，可丟包/擺爛（多副本+激勵處理）；可見 metadata
   （roomId/量/時間；以既有 padding/cover traffic 緩解，列 P5 後）。
 - **驗收（到時）**：A/B 房間、C 在首頁；A 離線期間 B 發訊；B 也離線、
   C 仍在線；A 回線後「僅經 C」補齊（Firestore 備援停用之測試模式下）。
 
-### R2. 全員斷線後重生——已達成，列為 P1 驗收擴充
+### R2. 全員斷線後重生，已達成，列為 P1 驗收擴充
 
 需求：全員下線（零在線複本）後，成員回來要能 ①從本地複本立即呈現歷史
 （不等連線）、②房間連線自動重建、③繼續收發。
 
-**已由 P1 覆蓋並驗證**：`tests/e2e-vue/all-offline-revival.spec.ts`（3 連綠）——
+**已由 P1 覆蓋並驗證**：`tests/e2e-vue/all-offline-revival.spec.ts`（3 連綠），
 三人建立歷史 → 全員下線 → A 獨自回線時歷史即渲染（local-first，房內零在線者）
 → B/C 回線後連線重建、歷史各恰好一次、新訊息雙向互通（seq 續增）。
 架構原因：房間沒有任何「中央 session」可過期；Firestore 房檔永續（metadata），
@@ -135,7 +135,7 @@ C 讀不到內容（無房間金鑰）、改不了紀錄（簽章）。全員可
 
 P2 把紀錄內容密文化。加解密原語已落地並測試（`RecordCrypto`，單一密文信封、
 簽章覆蓋密文、盲信使可存可驗不可解）。接線前必須先定「房間內容金鑰怎麼分發、
-怎麼與複寫日誌共存」——這是分散式設計，不可邊寫邊猜。
+怎麼與複寫日誌共存」，這是分散式設計，不可邊寫邊猜。
 
 ### 決策：內容金鑰本身也是日誌紀錄（key-as-record）
 
@@ -151,7 +151,7 @@ P2 把紀錄內容密文化。加解密原語已落地並測試（`RecordCrypto`
 ### 前向保密 × 補歷史的取捨（沿用 R2 原則）
 
 成員只能解「自己在籍期間、持有對應 epoch 金鑰」的紀錄。加入前的歷史密文
-即使補到本地也解不開——這是隱私特性（新成員看不到入群前對話），非缺陷。
+即使補到本地也解不開，這是隱私特性（新成員看不到入群前對話），非缺陷。
 
 ### P2 分階段（降低對運作中路徑的風險）
 
@@ -178,7 +178,7 @@ star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後�
 - **低風險**：沿用既有身分註冊路徑（`RoomService.updateMeshIdentity`），不新增 gossip 通道語義。
 - **MITM 防護沿用**：`firestore.rules` 的 `meshIdentitiesChangeIsValid`
   （`affectedKeys ⊆ {auth.uid}`）本就擋下覆寫他人條目；另補 `ecdhPubKey` 格式驗證（可選、有才驗）。
-- ECDH 金鑰對持久化於 IndexedDB（`IdentityManager`，與 ECDSA 身分同 blob、獨立金鑰對）——
+- ECDH 金鑰對持久化於 IndexedDB（`IdentityManager`，與 ECDSA 身分同 blob、獨立金鑰對），
   全員斷線重生後舊 keyx（封給舊 ECDH 公鑰）仍開得了，符合「金鑰韌性 = 資料韌性」。
   持久失敗（Safari 隱私模式/node）退 session 內暫時金鑰（該裝置重啟後無法解舊 epoch，已記錄取捨）。
 
@@ -203,7 +203,7 @@ star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後�
 收到 `channel:'keyx'` 且 `forMember == 自己` → `openSealedRoomKey` → `setContentKey(key, epoch)`；
 keyx 不進聊天顯示（如同 game 通道分流），但照樣入 store／轉發／對帳（盲信使/遲入者補齊）。
 內容金鑰改為 **epoch → key 金鑰環**：送出用最高 epoch，解密按各密文信封 epoch 選鑰
-（加人/移除輪替後仍能解舊 epoch 歷史密文）。全程「無鑰退明文相容」不變——沒拿到 keyx 前 mesh 房照舊明文。
+（加人/移除輪替後仍能解舊 epoch 歷史密文）。全程「無鑰退明文相容」不變，沒拿到 keyx 前 mesh 房照舊明文。
 
 ### 決策 4：keyx 名冊＝`meshIdentities ∩ participants`（移除成員前向保密的前提）
 
@@ -230,16 +230,16 @@ Vue 版（web-vue，ADR-0017 重寫；React 生產版凍結、仍星型）2 人�
 gossip 複寫日誌，star 特例邏輯退役（`decideTopology` 一律回 mesh）。分三階段
 （characterization-first，每階段逐層閘門 + 連跑確認非 flaky）：
 
-- **Phase 1 — mesh typing**：typing 是暫態信號，走 `MeshConnection` 新增的
+- **Phase 1：mesh typing**：typing 是暫態信號，走 `MeshConnection` 新增的
   `ns:'presence'` lossy 通道（不進 gossip 可靠日誌/對帳，仿 `relay:forward` 分流）。
   `MeshGossipManager.broadcastTyping/onTyping`，Vue chat page 依拓撲分流 `emitTyping`。
-- **Phase 2 — mesh 遊戲**：`useTicTacToe`/`TicTacToePanel` 的 bus 型別由具象
+- **Phase 2：mesh 遊戲**：`useTicTacToe`/`TicTacToePanel` 的 bus 型別由具象
   `P2PChannelBus` 放寬為最小 `GameBus` 介面（星型結構相容、零回退）；
   `MeshChatService.sendGameEnvelope/onGameMessage` 走 M4 `channel:'game'` 可靠管線；
   `MeshGameBus`（web-vue）轉接。回合制事件走可靠管線比星型 lossy bus 更穩。
-- **Phase 3 — 切換 + rejoin**：chat page 2 人房接 `MeshGameBus` + mesh typing +
+- **Phase 3：切換 + rejoin**：chat page 2 人房接 `MeshGameBus` + mesh typing +
   房主=X；🔒 指示器/遊戲鈕/橫幅改按 mesh 現況（已 E2EE, keyx）與 2 人房閘控。
-  **`tests/e2e-vue/rejoin.spec.ts` 由 fixme 轉綠（連跑 3 次穩定）**——「離開再進
+  **`tests/e2e-vue/rejoin.spec.ts` 由 fixme 轉綠（連跑 3 次穩定）**，「離開再進
   收不到」整類消滅：重進＝cold→syncing→live，B 重連 mesh、缺的訊息由留房者經
   anti-entropy 補齊。前兩次修復卡在的 star signaling 復活術，整個繞過。
 
@@ -272,11 +272,11 @@ React 護欄未迴歸。
 Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndForward`），
 0 個 app 檔引用。`RelayCoordinator` 自己標注「全域 overlay 尚未建立」。故 P4 多為接線。
 
-- **P4-A.1**（commit）：`FirestoreRelayDirectory` — `IRelayDirectory` 的 production
+- **P4-A.1**（commit）：`FirestoreRelayDirectory`：`IRelayDirectory` 的 production
   adapter，宣告寫 `relayDirectory/{ownerUid}`，query 濾 TTL/exclude/sort/limit（對齊
   記憶體版語義）。firestore.rules：只能寫自己那格（docId==auth.uid、ownerUid 相符、
   非匿名反女巫、announcedAt ±60s）、任何登入者可讀。單元 4 + 整合 rules 7 綠。
-- **P4-A.2**（commit）：`useNodePresence` — dashboard 掛載即宣告本節點（nodeId=mesh
+- **P4-A.2**（commit）：`useNodePresence`：dashboard 掛載即宣告本節點（nodeId=mesh
   userId）+ 週期查在線節點數，離頁撤回；誠實條款（只有非匿名宣告成功才顯示，匿名/
   被拒靜默降級）。UI「還有 N 個節點一起守護」。E2E：兩瀏覽器 dashboard 互相發現。
 
@@ -293,11 +293,11 @@ Sphinx/`RelayDirectory`(記憶體)/`RelayOverlay`/`RelayCoordinator`/`StoreAndFo
 - C.3 接真 relay 通道：member 寄存密文紀錄 → courier 代管 → 回線 pull 原樣取回，
   真 WebRTC E2E 綠（密文位元對位相同，證明盲存不改 byte）。
 - C.4 anti-entropy 自動對帳（reconcile）：複用 `antiEntropy` 的 computeDigest/peerLacks，
-  一輪雙向收斂——成員送 digest → 信使補「成員缺的」+ 回自己 digest → 成員回推「信使缺的」。
+  一輪雙向收斂，成員送 digest → 信使補「成員缺的」+ 回自己 digest → 成員回推「信使缺的」。
   整合測試（含 missing 洞、已一致無多餘傳輸）+ 真 WebRTC 雙向 E2E 綠。
 - C.5 app 觸發整合（`useCourierNode`，dashboard 掛載即啟）：
   - 信使角色 always-on：RelayConnector.startListening → 對每條來連掛 CourierServer（共用 CourierStore）。
-  - 成員背景備份：每 30s runCourierBackup — 發現候選信使（新鮮者優先、上限 4，多候選容忍
+  - 成員背景備份：每 30s runCourierBackup：發現候選信使（新鮮者優先、上限 4，多候選容忍
     崩潰未撤回的陳舊名冊條目：連線到不了 'connected' 即換下一個）→ 對「持久層持有紀錄的每一房」
     reconcile（推信使缺的、收信使有我缺的並落地 IndexedDB）。
   - 預設參與、可關（localStorage `nerilo.courier.enabled`，ADR-0024 Decision 3.4）；關頁即停。
@@ -344,15 +344,15 @@ forMember=自己的份，靜默無效（keyxReplayed 計數照加），getMaxKno
 
 決策：sealTargets 由 others 改為 eligible 全體（含自己，用自己的 ECDH 公鑰封給
 自己）。wire 格式同形（keys[] 多一個條目，舊 client 不受影響）；歷史解密保留
-（優於「持久化 epoch 計數器」方案——那會讓重進端喪失舊 epoch 歷史解密）。
+（優於「持久化 epoch 計數器」方案，那會讓重進端喪失舊 epoch 歷史解密）。
 舊房間既有 keyx 紀錄無 self 條目，隨下次名冊變動的新 epoch 自然覆蓋。
 證據：MeshKeyxIntegration「Spec 017」整合測試（真 hydrate 路徑，修前紅/修後綠）。
 
-## 修訂八（2026-08-03）：keyx 第四道閘門——產生方交接以觀察 epoch 為基底（Spec 018）
+## 修訂八（2026-08-03）：keyx 第四道閘門，產生方交接以觀察 epoch 為基底（Spec 018）
 
 CI 7p 第五輪實證跨時間交接碰撞：逐一加入使 min-uid 換人，新任產生方未見前任
 keyx 即以 epoch 0 再發，同代異鑰。深層事實：新加入者「開不了」既有 keyx（未封給
-他，前向保密本意），等待安裝永遠等不到，現任又已非 min-uid 不再重發——交接死鎖。
+他，前向保密本意），等待安裝永遠等不到，現任又已非 min-uid 不再重發，交接死鎖。
 決策：keys[].epoch 是明文 metadata，開不了也讀得到。分發基底改
 max(已安裝, 已觀察)+1；環空且未觀察到 keyx 且房間已運轉時延遲 3 tick
 （HANDOVER_GRACE，等 anti-entropy 送達）。bootstrap 行為不變、前向保密不破、
@@ -362,7 +362,7 @@ Spec 018 節，重演 CI 劇本）。
 ## 修訂九（2026-08-03）：ready 截止改「有進展就續等」（Spec 020）
 
 rejoin 重建的截止是盲目牆鐘（REJOIN_READY_TIMEOUT_MS 15s），而該常數註解自載
-「實測 rejoin 首連常落在 13-15s」——門檻與實測分布幾無餘裕，誤殺正在成形的連線後
+「實測 rejoin 首連常落在 13-15s」，門檻與實測分布幾無餘裕，誤殺正在成形的連線後
 再走一輪握手即吃掉使用者感知窗（rejoin 8 輪 1 紅根因；期間留房者已 close、重進者
 仍自認健全續送入黑洞）。決策：到期時以兩個具體訊號判斷是否「正在成形」
 （DataChannel 物件已建＝signaling 已完成／pc 已 connected），有進展才授予一次

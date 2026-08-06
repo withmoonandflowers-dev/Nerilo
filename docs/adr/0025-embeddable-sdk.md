@@ -24,7 +24,7 @@ React）、wire codec、恰好一次語義、port 雛形（`IChatStorage`/`IRoom
 
 分階段升 L2，前段共用：
 
-- **P1（本 ADR）立門面 + 公開出口**：新增 `src/sdk`——`NeriloClient` 門面（收發訊息、
+- **P1（本 ADR）立門面 + 公開出口**：新增 `src/sdk`，`NeriloClient` 門面（收發訊息、
   表情、已讀人數、輸入中、生命週期）依賴 `IChatEngine` 契約而非具體後端；`src/sdk/index.ts`
   匯出穩定 API + 純 reducer + 注入用型別；預設工廠 `createFirestoreChatClient` 仍以既有
   Firestore 後端為底。純加法、不動運作中的 App。

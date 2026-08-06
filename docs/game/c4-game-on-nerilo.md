@@ -1,11 +1,11 @@
-# 遊戲 on Nerilo — C4 架構
+# 遊戲 on Nerilo：C4 架構
 
 > 主體是「你的遊戲」，Nerilo 是它依賴的傳輸底層（外部容器）。四層由遠而近。
 > 前提：小型合作/回合制遊戲（見 ADR-G01）。以「2 人回合制」為具體範例。
 
 ---
 
-## C1 — System Context
+## C1: System Context
 
 ```mermaid
 flowchart TB
@@ -32,7 +32,7 @@ Firebase 只做牽線與房間（Nerilo 已包好，你不直接碰）。
 
 ---
 
-## C2 — Container
+## C2: Container
 
 ```mermaid
 flowchart TB
@@ -64,7 +64,7 @@ flowchart TB
 
 ---
 
-## C3 — Component（遊戲 client 內部）
+## C3：Component（遊戲 client 內部）
 
 ```mermaid
 flowchart TB
@@ -104,7 +104,7 @@ flowchart TB
 
 ---
 
-## C4 — Code：一回合的資料流（回合制範例）
+## C4：Code：一回合的資料流（回合制範例）
 
 ```mermaid
 sequenceDiagram

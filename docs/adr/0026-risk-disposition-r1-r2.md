@@ -40,7 +40,7 @@ UI 有加密指示燈，但屬被動告知；能選擇性阻斷 keyx 的攻擊�
 
 1. **立即（本 ADR 生效即算）**：明文模式屬「相容例外」而非正常狀態。demo 與對外文件
    一律以加密房演示；提案不對明文模式做任何承諾。
-2. **排修 P2（fail-visible）— 已落地（2026-07-13）**：降級時 UI 從「指示燈」升級為
+2. **排修 P2（fail-visible）， 已落地（2026-07-13）**：降級時 UI 從「指示燈」升級為
    「阻斷式警告」：明文房間須使用者明確確認才能發送，預設拒送。實作：
    - 引擎曝加密狀態 `MeshGossipManager.getEncryptionState()`（encrypted/exchanging/
      plaintext；keyCoordinator=null 即真明文），型別 `EncryptionState` 置於中立 `types`

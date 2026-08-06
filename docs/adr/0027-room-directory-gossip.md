@@ -23,7 +23,7 @@
   60s 週期重播。對稱協議，兩端同碼。
 - **多跳**：announce 集合 = 自己的房（現簽）+ 快取轉發（原簽，下一跳仍可驗）。
   迴圈安全：轉發不改 issuedAt → upsert 冪等 + TTL 界壽命 + answer-once/週期界頻率。
-- **連線來源（piggyback only）**：roomdir 只掛在「已存在的 relay 連線」上——信使角色
+- **連線來源（piggyback only）**：roomdir 只掛在「已存在的 relay 連線」上，信使角色
   的 listening 端、成員 courier backup 開的 outbound 端、以及顯式 connectToRelayNode。
   **不主動建新連線**。UI：dashboard「附近節點的公開房間」區塊（P2P 徽章），點擊即進房。
 

@@ -6,7 +6,7 @@
 
 7-10 人房連線成形長期不穩，Spec 011 V1 記為「CPU 排擠、待低負載重跑」。低負載實測
 推翻該解釋：一條 mesh 邊要成形，兩端都得各自建 MeshConnection，而 selectNeighbors
-是隨機洗牌、reactive discovery 是發現順序取額——互選純屬機率（7 人 k=3 約 0.25/邊），
+是隨機洗牌、reactive discovery 是發現順序取額，互選純屬機率（7 人 k=3 約 0.25/邊），
 未互選的 offer 無人接聽，只能等 2 分鐘一輪的重抽。實測 101 次發起僅 17 次成形。
 Spec 011 的 1100 組 seed 模擬假設 k-圖已成形，只驗擴散層，成形層從未被證明。
 
@@ -30,7 +30,7 @@ Spec 011 的 1100 組 seed 模擬假設 k-圖已成形，只驗擴散層，成�
 - 互選對稱 property 300 輪、連通全枚舉、成形層模擬 1600 seed 全綠；
   單元 1558、3 人矩陣×3、@vue-stable、React @stable 迴歸全綠。
 - 7p E2E 量測改善（發起 101→78、單邊 offer 歸零、成形 12→20、bus 逾時 106→62）
-  但單機仍未全綠——開發機 7 瀏覽器併發即 Spec 011 R-g 資源上限。
+  但單機仍未全綠，開發機 7 瀏覽器併發即 Spec 011 R-g 資源上限。
   驗收移至專用 workflow `e2e-7p.yml`（乾淨 runner，手動＋每日排程）。
 - 順手修：IceServerProvider 社群 TURN 清單失敗不快取（風暴期一輪 59 次重抓）。
 

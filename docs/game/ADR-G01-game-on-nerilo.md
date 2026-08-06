@@ -12,7 +12,7 @@ lockstep SDK（InputBuffer/seed 協商/state-hash/rollback 原語）、房主接
 
 ## Decision
 
-**採用 Nerilo，但限定在其甜蜜區的遊戲類型。** 適用邊界是本決策的核心——
+**採用 Nerilo，但限定在其甜蜜區的遊戲類型。** 適用邊界是本決策的核心，
 用錯類型 Nerilo 會變天花板。
 
 ### 適用（GO）

@@ -30,7 +30,7 @@ desync 難以定位欄位。
    field codec `u8/u16/u32/i8/i16/i32/f32/f64/varint/bool/str/q8`。
 2. **`defineComponent(name, schema)`**：欄位順序 = schema 鍵插入序（JS 穩定），
    派生 `encode/decode/validate`，資料型別由 `InferData<S>` 自 schema 反推。
-3. **`defineInput`**（`sdk/InputCodec.ts`）：熱路徑壓縮——固定動作集 → bitmask
+3. **`defineInput`**（`sdk/InputCodec.ts`）：熱路徑壓縮，固定動作集 → bitmask
    （≤8 動作 1 byte、≤16 用 2、≤32 用 4）、類比軸 → q8（每軸 1 byte）、tick/seq → varint、
    **peerId 不上線**（由 DataChannel 來源推斷，decode 時外部帶入）。實測 sample 從
    ~60 bytes JSON 壓到 ≤8 bytes（省 >80%）。

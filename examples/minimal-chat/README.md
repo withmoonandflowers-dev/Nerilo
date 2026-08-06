@@ -1,4 +1,4 @@
-# minimal-chat — Nerilo reference 整合
+# minimal-chat：Nerilo reference 整合
 
 一個第三方消費者要嵌入 Nerilo 的最小可跑範例：`import { createChatClient } from 'nerilo'`，四道注入縫全走記憶體 adapter，零 Firebase，同頁兩個 client 經 WebRTC 直連並端到端加密互傳。
 
@@ -26,9 +26,9 @@ npm run example:minimal:build
 
 ## 檔案
 
-- `src/main.ts` — 整段整合邏輯。建 client、注入後端、connect、onMessage、sendMessage。
-- `vite.config.ts` — 把套件名 `nerilo` alias 到 `../../dist/index.js`。
-- `index.html` — 無框架的最小 UI。
+- `src/main.ts`：整段整合邏輯。建 client、注入後端、connect、onMessage、sendMessage。
+- `vite.config.ts`：把套件名 `nerilo` alias 到 `../../dist/index.js`。
+- `index.html`：無框架的最小 UI。
 
 ## 邊界
 

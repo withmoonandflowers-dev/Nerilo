@@ -24,7 +24,7 @@ Nerilo 是瀏覽器原生、點對點、端對端加密的韌性通訊層：斷�
   - Driving port：`src/sdk/IChatEngine`（對外門面 `NeriloClient` 依賴它）。
   - Driven port：`src/ports/`（`IChatStorage`、`IRoomDirectory`、`IRoomService`）、`SignalingTransport`。
   - Adapter：`FirestoreRoomDirectory`、`InMemoryChatStorage`、房內/中繼各一個 `SignalingTransport` 實作。
-- **邊界靠工具強制**：ESLint `no-restricted-imports` 擋住「core（後端領域層）import features（前端 UI 層）」——這是限界上下文邊界的程式碼級落實，設計時引用它當活教材。
+- **邊界靠工具強制**：ESLint `no-restricted-imports` 擋住「core（後端領域層）import features（前端 UI 層）」，這是限界上下文邊界的程式碼級落實，設計時引用它當活教材。
 - **既有隱含上下文**（新功能先判斷歸屬，別平地重來）：聊天/Mesh（`src/core/mesh`）、中繼/盲信使（`src/core/relay`、courier）、誘因/帳本（`src/core/incentive`、`ledger`）、身分/金鑰（`IdentityManager`、`RoomKeyCoordinator`）、社群（`src/core/community`，休眠）、遊戲（`src/core/game`，gossip 的第二消費者）。
 - 決策記錄一律落 `docs/adr/`（動詞開頭、只寫看 diff 看不出來的理由與取捨）；常設架構語言以 `docs/architecture/nerilo-architecture.md` 為準。
 - 前端兩套：React（生產、凍結、`src/`）＋ Vue3/Nuxt（go-forward、`web-vue/`）；領域層與兩者皆零耦合。

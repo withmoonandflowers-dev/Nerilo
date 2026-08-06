@@ -1,4 +1,4 @@
-# ADR-0032：p2p2p 自主 signaling——加密 peer 中繼為主、Firestore 縮為 bootstrap
+# ADR-0032：p2p2p 自主 signaling，加密 peer 中繼為主、Firestore 縮為 bootstrap
 
 - 狀態：accepted（2026-07-16）
 - 關聯：Spec 005（feature）、Protocol Spec 007（nsig1 線上格式）、ADR-0002（Firebase
@@ -23,10 +23,10 @@
    物理上需要會合點（瀏覽器不可被直接撥號）。選最小依賴（僅第一跳）而非硬去中心
    （公共 relay＝別人的伺服器；copy-paste＝可用性懸崖，留作未來進階選項）。
 4. **邀請連結內嵌會合資訊（nrz1）**：邀請者 uid＋公鑰放 URL fragment（不上送
-   伺服器）。公鑰構成頻外信任根——名冊供應者換鑰 MITM 可被比對抓到。
+   伺服器）。公鑰構成頻外信任根，名冊供應者換鑰 MITM 可被比對抓到。
    **房金鑰不放連結**：E2EE 金鑰仍由 keyx 成對封裝分發，連結外洩≠金鑰外洩。
 5. **介紹加入的有界耐心**：對被介紹的 pair，warm 無路先等（20s、每秒重試）再退
-   cold——介紹人可能還在接他。有界，不犧牲 liveness；介紹人自己對被介紹者不等
+   cold，介紹人可能還在接他。有界，不犧牲 liveness；介紹人自己對被介紹者不等
    （他就是會合點）。
 6. **hop 上限 1、hop-by-hop ACK/NACK**：介紹人只轉直連鄰居，不洪泛（signaling
    無放大係數）；NACK 毫秒級讓退守快。回放緩衝鏡像 Firestore lookback 語義。
@@ -37,7 +37,7 @@
   對齊隱私定位；成本在握手路徑（低頻）可忽略。
 - **Firestore 第一跳 vs 純 DHT/公共會合**：維持 ADR-0011 觸發判準；「零伺服器的
   第一次接觸」違反 WebRTC 物理，誠實承認而非偽裝。
-- **選擇器包 factory vs 改 P2PConnectionManager**：選前者——連線本體（perfect
+- **選擇器包 factory vs 改 P2PConnectionManager**：選前者，連線本體（perfect
   negotiation、mutex、去重、ICE restart）一行不動，全部複用；傳輸位置是
   `SignalingTransport` 縫的本職。
 - **耐心窗 vs 立即退守**：立即退守讓被介紹者白寫 signaling（違背自主目標）；

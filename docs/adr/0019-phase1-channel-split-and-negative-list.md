@@ -8,9 +8,9 @@
 
 外部審視建議（經 goal 分析採納，含兩處修正）：Phase 1 以 2 人直連把即時遊戲
 資料流跑起來。核心痛點：單一 reliable DataChannel 上，回合開場素材（PNG）會因
-SCTP 隊頭阻塞卡住 60Hz 狀態流。盤點後三項基礎已存在——MultiChannelBus（dormant，
+SCTP 隊頭阻塞卡住 60Hz 狀態流。盤點後三項基礎已存在，MultiChannelBus（dormant，
 三通道骨架+watermark 背壓）、HelloNegotiator（HELLO/HELLO_ACK 已接線）、
-ADR-0018 binary codec——本 ADR 是「啟用+改造」而非新做。
+ADR-0018 binary codec，本 ADR 是「啟用+改造」而非新做。
 
 ## Decision
 
@@ -19,11 +19,11 @@ ADR-0018 binary codec——本 ADR 是「啟用+改造」而非新做。
 | 通道 | 參數 | 載荷 |
 |---|---|---|
 | control | ordered+reliable | 協議控制、名冊、lockstep 輸入等不可丟訊息 |
-| state | **ordered:false, maxRetransmits:0** | 60Hz 狀態幀——丟幀不重傳，下一幀天然覆蓋 |
+| state | **ordered:false, maxRetransmits:0** | 60Hz 狀態幀，丟幀不重傳，下一幀天然覆蓋 |
 | bulk | ordered+reliable，高水位 | 素材/檔案，不與 control 搶隊頭 |
 
 `ChannelKind` 加 `'state'`；建立參數收斂於 `CHANNEL_INIT`（types，單一真相來源）。
-state 通道 watermark 64KB——水位滿代表產幀快過網路，正確行為是丟幀而非排隊。
+state 通道 watermark 64KB，水位滿代表產幀快過網路，正確行為是丟幀而非排隊。
 
 ### 2. 混合資料格式（雙軌，刻意不統一）
 
@@ -34,12 +34,12 @@ state 通道 watermark 64KB——水位滿代表產幀快過網路，正確行�
 - **名冊走 reliable、幀帶 rosterVer**：亂序通道上幀可能引用還不認識的實體；
   收端名冊版本落後於幀時，緩到名冊追上再套用。
 
-此雙軌是設計決策，非債務——請勿日後「統一」回單軌。
+此雙軌是設計決策，非債務，請勿日後「統一」回單軌。
 
 ### 3. HELLO 嚴格版本（硬擋，不降級）
 
 HelloPayload 加 `strictProtocols`（如 `{game: 2}`）：雙方都宣告同一協議時版本
-**必須相等**，不等即列入 `strictMismatches`——上層停用該 feature 並提示
+**必須相等**，不等即列入 `strictMismatches`，上層停用該 feature 並提示
 「請雙方重新整理」。與一般 `protocolVersion` 的 min() 降級語義並存：
 聊天可以降級相容，狀態幀格式錯位沒有降級可言（錯位即 desync）。
 這一步保護之後所有協定改動，為遷移路徑第一步。
@@ -77,7 +77,7 @@ ADR-0005 配額防濫用建立在真實身分上）。Phase 1 維持非匿名；
 - **好處**：素材不再卡狀態流；狀態幀個位數~十幾 bytes（ADR-0018 codec）；
   協定改動有 HELLO 硬擋保護；範圍蔓延有負面清單擋。
 - **成本／風險**：state 通道尚未接進 P2PManager 的通道建立流程（現行單通道
-  `ordered:true`）——接線排 game demo（M4）；FrameGate 只解決 stale，
+  `ordered:true`），接線排 game demo（M4）；FrameGate 只解決 stale，
   不解決丟幀後的視覺跳變（插值/預測屬遊戲層，不屬傳輸層）。
 - **已交付**（本 ADR 同批）：`ChannelKind.state` + `CHANNEL_INIT`、
   MultiChannelBus watermark、`defineStateFrame`/`createFrameGate`、

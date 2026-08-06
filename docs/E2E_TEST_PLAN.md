@@ -6,8 +6,8 @@ The Playwright suite runs against Firebase emulators (`auth:9099`, `firestore:80
 
 This plan distinguishes:
 
-- **Stable subset** — runs as a merge gate in `.github/workflows/ci.yml` (currently `continue-on-error: true`, flip to required once green for 2 weeks).
-- **Full suite** — runs in `.github/workflows/e2e-tests.yml`.
+- **Stable subset**: runs as a merge gate in `.github/workflows/ci.yml` (currently `continue-on-error: true`, flip to required once green for 2 weeks).
+- **Full suite**: runs in `.github/workflows/e2e-tests.yml`.
 
 ## Current coverage (as of 2026-05-27)
 
@@ -47,7 +47,7 @@ This plan distinguishes:
 
 ## Test plan
 
-### P0 — Must pass before any deploy (golden path)
+### P0: Must pass before any deploy (golden path)
 
 These five run as the **stable subset**. If any P0 test fails, the deploy job is blocked.
 
@@ -59,22 +59,22 @@ These five run as the **stable subset**. If any P0 test fails, the deploy job is
 | P0.4 | `golden-path.spec.ts > A sends, B receives` | Send "hello {timestamp}" from A → B sees it within 10 s | Real proof of working transport. |
 | P0.5 | `golden-path.spec.ts > E2EE indicator is visible when connected` | After both peers are connected, `.e2ee-indicator-p2p` is visible on both sides; text contains "端到端加密" | Locks in [5d6acfb](../.git). |
 
-### P1 — Core features (run on every PR, allowed to fail for now)
+### P1: Core features (run on every PR, allowed to fail for now)
 
 | # | Test | Journey |
 |---|---|---|
 | P1.1 | `chat-flow.spec.ts > delivery status progresses sending → sent → delivered` | Verify the 3 status icons appear in order for a sent message |
 | P1.2 | `chat-flow.spec.ts > failed message can be resent` | Force a failure (close peer), see status=failed + resend button, click resend, status=sent |
 | P1.3 | `chat-flow.spec.ts > unicode and emoji round-trip` | "👋 你好 🌏 émoji éclair" from A → identical bytes on B |
-| P1.4 | `chat-flow.spec.ts > long message (5 KB body) round-trips` | Fill input with 5000 chars, send, receive — covers the 256 KB DataChannel cap is not over-restrictive |
-| P1.5 | `chat-flow.spec.ts > rapid send burst — 10 messages in 1s preserved in order` | Send 10 messages back-to-back, all 10 visible in order on receiver |
+| P1.4 | `chat-flow.spec.ts > long message (5 KB body) round-trips` | Fill input with 5000 chars, send, receive, covers the 256 KB DataChannel cap is not over-restrictive |
+| P1.5 | `chat-flow.spec.ts > rapid send burst, 10 messages in 1s preserved in order` | Send 10 messages back-to-back, all 10 visible in order on receiver |
 | P1.6 | `connection-states.spec.ts > banner shows connecting → connected on first peer` | Inspect ConnectionBanner classes through the lifecycle |
 | P1.7 | `connection-states.spec.ts > banner shows 備援模式 when P2P signaling is blocked` | Use Playwright route interception to break `/signals` writes; verify Firestore fallback path engages and messages still flow |
-| P1.8 | `connection-states.spec.ts > E2EE indicator switches to fallback variant` | Same as P1.7 — `.e2ee-indicator-fallback` shows "備援模式" |
-| P1.9 | `multi-peer.spec.ts > 3-peer mesh — every peer sees every other peer's messages` | 3 contexts, each sends one message, all 3 see all 3 (covers H-01 fix doesn't break basic mesh) |
+| P1.8 | `connection-states.spec.ts > E2EE indicator switches to fallback variant` | Same as P1.7，`.e2ee-indicator-fallback` shows "備援模式" |
+| P1.9 | `multi-peer.spec.ts > 3-peer mesh, every peer sees every other peer's messages` | 3 contexts, each sends one message, all 3 see all 3 (covers H-01 fix doesn't break basic mesh) |
 | P1.10 | `refresh-recovery.spec.ts > messages persist across browser refresh` | Send 3 messages → reload one peer → all 3 still visible (Dexie history) |
 
-### P2 — Security & privacy
+### P2: Security & privacy
 
 | # | Test | Journey |
 |---|---|---|
@@ -82,21 +82,21 @@ These five run as the **stable subset**. If any P0 test fails, the deploy job is
 | P2.2 | `security.spec.ts > non-participant cannot read messages subcollection` | Direct firestore read attempt fails (via `page.evaluate` calling `getDocs(messages)`) |
 | P2.3 | `security.spec.ts > anonymous user blocked from creating rooms when flag is off` | Spin up Vite with `VITE_ALLOW_GUEST_CREATE_ROOM=false` (or unset); button is disabled / room creation 403s |
 | P2.4 | `security.spec.ts > meshIdentities cannot be overwritten by another participant` | Bob joins, tries `setDoc({meshIdentities: {alice_uid: bob_pubkey}})` → permission-denied (covers [b0b1204](../.git)) |
-| P2.5 | `security.spec.ts > Firestore-fallback message bodies are encrypted` | Force fallback path, then read the messages subcollection directly — assert `content` field is base64 ciphertext, not plaintext |
+| P2.5 | `security.spec.ts > Firestore-fallback message bodies are encrypted` | Force fallback path, then read the messages subcollection directly, assert `content` field is base64 ciphertext, not plaintext |
 
-### P3 — Edge cases & resilience
+### P3: Edge cases & resilience
 
 | # | Test | Journey |
 |---|---|---|
-| P3.1 | `edge-cases.spec.ts > slow network — Playwright route throttle to 100 KB/s` | Connection still establishes within 90 s, messages eventually flow |
+| P3.1 | `edge-cases.spec.ts > slow network, Playwright route throttle to 100 KB/s` | Connection still establishes within 90 s, messages eventually flow |
 | P3.2 | `edge-cases.spec.ts > 404 roomId redirects to dashboard` | `/chat/non-existent-room-id` → `/dashboard` |
-| P3.3 | `edge-cases.spec.ts > multi-tab same user — second tab doesn't break first` | Same browser context opens two tabs to same room, no crash, both see new messages |
+| P3.3 | `edge-cases.spec.ts > multi-tab same user, second tab doesn't break first` | Same browser context opens two tabs to same room, no crash, both see new messages |
 | P3.4 | `edge-cases.spec.ts > leave room → other user keeps chat open` | A leaves, B's chat page stays usable, room still listed for B |
 | P3.5 | `edge-cases.spec.ts > public room appears on dashboard for other users` | A creates public room, B sees it in 公開房間 section |
 | P3.6 | `edge-cases.spec.ts > host can cancel waiting room from dashboard re-entry` | A creates → goes back → re-enters → can still 取消房間 |
 | P3.7 | `edge-cases.spec.ts > messages from a left peer remain in history` | Bob sends "x", leaves, "x" still visible on Alice |
 
-### P4 — Future features (skipped until shipped)
+### P4: Future features (skipped until shipped)
 
 | Feature | Test idea |
 |---|---|
@@ -110,12 +110,12 @@ These five run as the **stable subset**. If any P0 test fails, the deploy job is
 ## Implementation principles
 
 1. **Single source of truth for helpers.** A new `tests/e2e/_helpers/users.ts` exports `setupUser`, `createRoom`, `joinRoom`, `sendMessage`, `expectConnected`. Existing specs may continue using their inline copies; new specs use the shared helper.
-2. **No hardcoded `localhost:3000`.** All new specs rely on the configured `baseURL` (4173 in tests). The three legacy specs (`multi-user-stability`, `stress-test`, `nerilo-smoke`) that hardcode `:3000` are quarantined — they'll be migrated or deleted in a follow-up.
+2. **No hardcoded `localhost:3000`.** All new specs rely on the configured `baseURL` (4173 in tests). The three legacy specs (`multi-user-stability`, `stress-test`, `nerilo-smoke`) that hardcode `:3000` are quarantined, they'll be migrated or deleted in a follow-up.
 3. **Replace `waitForTimeout` with `expect.toPass` or `locator.waitFor`.** The existing pattern of `await page.waitForTimeout(3000)` after a state change is brittle; new specs use proper waits.
 4. **Each test is independent.** No `test.describe.serial` for the new specs unless explicitly needed (the cross-test state would have to be documented).
 5. **Long timeouts only where physics demands them.** ICE gathering can take 30–60 s. Locator presence should rarely need > 10 s.
 6. **Tag P0 tests with `@stable`.** The `test:e2e:stable` npm script runs only `@stable`-tagged tests, which becomes the merge gate.
-7. **Multi-user pattern.** Use `browser.newContext()` per user, **not** `chromium.launch()` — Playwright reuses the browser process and per-context isolation is enough.
+7. **Multi-user pattern.** Use `browser.newContext()` per user, **not** `chromium.launch()`, Playwright reuses the browser process and per-context isolation is enough.
 
 ## Migration plan for legacy specs
 

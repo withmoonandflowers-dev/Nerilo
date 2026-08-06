@@ -50,7 +50,7 @@ ADR-0006 的 Functions（webhook 接收端）。
   放量後可評估轉 Paddle 或屆時的其他選項。
 - **台灣本地備選**：綠界/藍新（可用花朝月夕工作室統編，NTD 定期定額），
   適合台灣優先的封閉驗證；跨境客群仍需 MoR。兩者不互斥。
-- **webhook 免 Blaze 方案**：MoR webhook 端點不必用 Cloud Functions——
+- **webhook 免 Blaze 方案**：MoR webhook 端點不必用 Cloud Functions，
   可用 Netlify Functions（免費層）承載，內用 firebase-admin service account
   設 custom claims。這解除 ADR-0008 對 ADR-0006（Blaze）的依賴，
   M3 可以完全在免費基礎設施上完成。

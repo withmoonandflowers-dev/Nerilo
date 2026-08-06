@@ -18,7 +18,7 @@
 
 ## 二、按優先級排序的完整問題清單
 
-### P0 — 阻斷級
+### P0：阻斷級
 
 #### P0-1：全站使用 browser alert() 作為通知機制
 - **影響頁面：** DashboardPage (7 處)、WaitingRoomPage (3 處)
@@ -52,7 +52,7 @@
 
 ---
 
-### P1 — 嚴重級
+### P1：嚴重級
 
 #### P1-1：所有載入狀態僅顯示「載入中...」純文字
 - **影響頁面：** App.tsx（Suspense fallback）、DashboardPage、WaitingRoomPage
@@ -89,7 +89,7 @@
 
 ---
 
-### P2 — 改善級
+### P2：改善級
 
 #### P2-1：連線狀態指示過於簡略
 - **影響頁面：** ChatPage
@@ -128,7 +128,7 @@
 
 ---
 
-### P3 — 美化級
+### P3：美化級
 
 #### P3-1：按鈕缺少明確 type 屬性
 - **影響頁面：** 全站（DashboardPage、WaitingRoomPage、ChatPage）
@@ -161,11 +161,11 @@
 
 | CSS 檔案 | 有 @media | 斷點 | 狀態 |
 |-----------|-----------|------|------|
-| LoginPage.css | ❌ | — | max-width: 400px 提供基本適配，但缺少小螢幕微調 |
-| DashboardPage.css | ❌ | — | **嚴重缺失**：grid 佈局、flex 表單、header 均未適配 |
+| LoginPage.css | ❌ | n/a | max-width: 400px 提供基本適配，但缺少小螢幕微調 |
+| DashboardPage.css | ❌ | n/a | **嚴重缺失**：grid 佈局、flex 表單、header 均未適配 |
 | WaitingRoomPage.css | ✅ | 600px | 基本適配：調整 padding、字體大小 |
-| ChatPage.css | ❌ | — | **嚴重缺失**：全高佈局、輸入區域需要適配 |
-| index.css | ❌ | — | 全域樣式，無需特別處理 |
+| ChatPage.css | ❌ | n/a | **嚴重缺失**：全高佈局、輸入區域需要適配 |
+| index.css | ❌ | n/a | 全域樣式，無需特別處理 |
 
 **index.html viewport：** ✅ 已正確設定 `<meta name="viewport" content="width=device-width, initial-scale=1.0" />`
 

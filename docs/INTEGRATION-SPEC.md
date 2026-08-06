@@ -1,6 +1,6 @@
 # Nerilo 串接規格（Integration Spec）
 
-> 給想在 Nerilo 上傳遞資料的開發者。Nerilo 是**傳輸中立的 P2P 資料傳遞基礎架構**——
+> 給想在 Nerilo 上傳遞資料的開發者。Nerilo 是**傳輸中立的 P2P 資料傳遞基礎架構**，
 > 你送 bytes，它負責安全、直連、便宜地送到對端。上面蓋什麼（聊天、遊戲、協作…）是你的事。
 >
 > 版本：對齊 ADR-0004/0018/0019/0021。成熟度標籤見每節；**請勿串接標「未接線」的功能**。
@@ -29,10 +29,10 @@
 
 ## 2. 你要自己處理的事（Nerilo 不提供）
 
-- **應用邏輯**（遊戲規則、訊息語意）——你的事。
-- **伺服器權威 / 反作弊**——P2P 無裁判，state-hash 抽驗只擋 casual（見 §9）。
-- **點數兌換**——Nerilo 只「產生」點數（§8），換成什麼由你決定。
-- **UI**——純傳輸層，無畫面。
+- **應用邏輯**（遊戲規則、訊息語意），你的事。
+- **伺服器權威 / 反作弊**，P2P 無裁判，state-hash 抽驗只擋 casual（見 §9）。
+- **點數兌換**，Nerilo 只「產生」點數（§8），換成什麼由你決定。
+- **UI**，純傳輸層，無畫面。
 
 ---
 
@@ -66,7 +66,7 @@ await bus.send({
 unsubscribe();
 ```
 
-**分派規則**：bus 依 `envelope.ns` 找對應 handler。核心**不認識** namespace 清單——
+**分派規則**：bus 依 `envelope.ns` 找對應 handler。核心**不認識** namespace 清單，
 你自帶 `ns` 就掛得上（開閉原則）。`subscribe('*', ...)` 收所有 namespace。
 
 ---
@@ -83,10 +83,10 @@ unsubscribe();
 | `id` | string | ✅ | 唯一 ID，去重用（建議 UUID） |
 | `ts` | number | ✅ | 送出時間戳（`Date.now()`） |
 | `from` | string | ✅ | 來源 peer ID |
-| `to` | string | — | 定向對象（省略=廣播給連線對端） |
-| `replyTo` | string | — | 回覆某則 `id` |
+| `to` | string | n/a | 定向對象（省略=廣播給連線對端） |
+| `replyTo` | string | n/a | 回覆某則 `id` |
 | `payload` | unknown | ✅（可為任意值，但需存在） | 你的資料；自動 E2EE |
-| `meta` | object | — | 額外 metadata |
+| `meta` | object | n/a | 額外 metadata |
 
 **驗證**：收端嚴格檢查型別，`ns`/`type` 不得為保留字（`__proto__`/`constructor`/`prototype`）。
 畸形 envelope 被丟棄並發 `system`/`ERROR`（見 §10）。
@@ -149,7 +149,7 @@ const bytes = Input.encode({ peerId, tick, seq, actions: ['up'], axes: { moveX: 
 
 - **狀態**：`idle → connecting → connected → (disconnected) → failed/closed`。訂閱拓撲/manager 的狀態事件。
 - **能力協商**：連線開啟後雙方交換 HELLO，算出 feature 交集。
-- **嚴格版本（防 desync）**：宣告 `strictProtocols: { myapp: 2 }`——雙方都宣告同 key 時
+- **嚴格版本（防 desync）**：宣告 `strictProtocols: { myapp: 2 }`，雙方都宣告同 key 時
   **版本必須相等**，不等會列入 `strictMismatches`，你應停用該功能並提示使用者更新
   （狀態幀格式錯位無法降級相容，錯位即 desync）。
 
@@ -168,7 +168,7 @@ creditEconomy.subscribe((b) => updateUI(b.balance));
 ```
 
 - **產生**：連線在線（自動）+ 中繼他人流量（`recordRelayContribution`，接 §11 後生效）。
-- **Nerilo 不做兌換**：換成真實好處由你/玩家決定（避免類金融負擔）。Phase 1 為本機、無真實價值、無 sybil 抵抗——**兌換真實價值前你需自建防刷**。
+- **Nerilo 不做兌換**：換成真實好處由你/玩家決定（避免類金融負擔）。Phase 1 為本機、無真實價值、無 sybil 抵抗，**兌換真實價值前你需自建防刷**。
 
 ---
 

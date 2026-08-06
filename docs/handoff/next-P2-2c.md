@@ -1,4 +1,4 @@
-# 下一步：ADR-0023 P2-②c — keyx 接進 live mesh（3-5 人房真 E2EE）
+# 下一步：ADR-0023 P2-②c：keyx 接進 live mesh（3-5 人房真 E2EE）
 
 > 在乾淨、低負載的新 session 開這步（mesh E2E 對機器負載敏感）。
 

@@ -40,7 +40,7 @@ functions/ 內已有可編譯的 callable 與排程清理函式，但從未部�
 
 盤點發現三個 cleanup 函式（cleanupExpiredRooms/StaleSignals/ExpiredInbox）
 本質都只是「刪除 ttlExpireAt / expiresAt 已過期的文件」。這正是
-**Firestore 原生 TTL policy** 的功能——不需要 Cloud Functions、不需要 Blaze、
+**Firestore 原生 TTL policy** 的功能，不需要 Cloud Functions、不需要 Blaze、
 零成本。因此 M2 的資料保留問題可以在 Spark（免費）方案內解決。
 
 把 M2 需求拆成兩堆：
@@ -53,7 +53,7 @@ functions/ 內已有可編譯的 callable 與排程清理函式，但從未部�
 - client 端清理：離開房間時刪自己的訊息與信令（rules 已允許 owner 刪除）。
 
 **只有 Blaze 能做（延後到真的需要）：**
-- 伺服器端頻率限制（signal/relay spam 防護）——需要一個可信執行點，
+- 伺服器端頻率限制（signal/relay spam 防護），需要一個可信執行點，
   rules 做不到頻率。
 - Stripe webhook（M3 計費）。
 - getIceServers 動態 TURN 憑證發配（目前用靜態 secrets 也可運作）。

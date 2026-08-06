@@ -18,7 +18,7 @@ Spec 017 的 self-seal 只解單一產生方的自我復原，不涉跨產生方
 
 **憲法檢核**：
 - 目標函數：隱私韌性（金鑰環分歧＝訊息不可讀）；可維運（7p 連續綠的最後一塊產品拼圖）。
-- 四條不變量：E2EE 機密性——有影響，方向為修復（不動演算法與信任模型，只動
+- 四條不變量：E2EE 機密性，有影響，方向為修復（不動演算法與信任模型，只動
   分發時機）。恰好一次：間接受益。帳本、身分：無。
 
 ## 2. 邊界（明確不做）
@@ -41,14 +41,14 @@ Spec 017 的 self-seal 只解單一產生方的自我復原，不涉跨產生方
 連續延遲上限 `HANDOVER_GRACE_TICKS = 3`（tick 4s → 約 12s，涵蓋 anti-entropy
 2s 週期數輪）。窗內收到 keyx → 環非空，之後若名冊變動即以 max+1 正常遞增
 （單調，無碰撞）。窗盡仍無 keyx（例如既有成員全為無 ecdh 舊 client 的明文房
-——理論案例，閘門 1 通常早已擋）→ 照發 epoch 0，liveness 有界。
+，理論案例，閘門 1 通常早已擋）→ 照發 epoch 0，liveness 有界。
 
 依賴注入：deps 加選填 `hasForeignRecords?: () => boolean`（預設 () => false，
 既有測試與呼叫端零改動）；GossipMessageHandler 加 `hasRecordsFromOthers()`
 （store 含 senderId ≠ 自己的紀錄）；MeshGossipManager 接線。
 
 **〔實作期修訂〕交接基底 = 觀察到的 epoch，非安裝的 epoch**：整合測試立刻暴露
-第一版盲點——新加入者根本開不了既有 keyx（未封給他，前向保密的本意），
+第一版盲點，新加入者根本開不了既有 keyx（未封給他，前向保密的本意），
 getMaxKnownEpoch 永遠 -1，等待窗形同虛設，且現任產生方因不再是 min-uid 永不
 重發 → 交接死鎖。出路：keyx 的 `keys[].epoch` 是明文 metadata，開不了鑰也讀得到。
 加 `GossipMessageHandler.getMaxObservedKeyxEpoch()`（掃 store 的 keyx 紀錄取最高
@@ -56,8 +56,8 @@ epoch）與 deps `getMaxObservedEpoch?`；閘門 4 改「環空且未觀察到�
 分發基底 = max(已安裝, 已觀察) + 1。新任 min-uid 觀察到 epoch 0 即以 epoch 1
 交接分發（封給全員含現任），前向保密不破、單調成立。
 
-**取捨**：不採「一律延遲首次分發」——懲罰全新房的 E2EE 就緒時間（exit gate
-會扣訊息 12s，UX 可感）；不採「以 joinedAt 判斷誰先來」——名冊 deps 不帶
+**取捨**：不採「一律延遲首次分發」，懲罰全新房的 E2EE 就緒時間（exit gate
+會扣訊息 12s，UX 可感）；不採「以 joinedAt 判斷誰先來」，名冊 deps 不帶
 joinedAt，擴 deps 面大且時鐘語義另起爭議。store 他人紀錄是「房間已運轉」的
 最小充分證據，且 anti-entropy 保證它比 keyx 更早或同批到達。
 
@@ -68,7 +68,7 @@ joinedAt，擴 deps 面大且時鐘語義另起爭議。store 他人紀錄是「
 - [x] T3 ⚠ RoomKeyCoordinator 第四道閘門＋單元：(a) 環空＋他人紀錄 → 延遲；
   窗內 keyx 到 → 名冊變動時以 max+1 分發；(b) 環空＋無他人紀錄（bootstrap）→
   立即分發（現狀不變）；(c) 窗盡無 keyx → 照發（liveness）。
-- [x] T4 整合劇本（MeshKeyxIntegration）：交接競態——既有雙節點 epoch 0 收斂後，
+- [x] T4 整合劇本（MeshKeyxIntegration）：交接競態，既有雙節點 epoch 0 收斂後，
   更小 uid 的新節點加入並先收到 backfill 再收 keyx → 不再出現第二把 epoch 0；
   全場收斂單一金鑰鏈，epoch 單調；新舊訊息全員可解。
 - [x] T5 驗收：全單元 1562；rejoin 8 輪 7 綠（單次傳輸尾巴，閘門 inert 佐證非本 spec）；3 人矩陣綠；CI 7p R6/R7/R8 連續 3 綠。

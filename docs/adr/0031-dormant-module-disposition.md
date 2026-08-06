@@ -15,10 +15,10 @@
 | `core/community` | 2272 | 0 | 0 | **PARK** | 有真實使用者且需多人社群治理（投票/角色權限/聲譽）時 |
 | `core/game`（ECS 引擎） | 3985 | 0 | 0 | **PARK** | 要做 3+ 人 mesh 即時遊戲（里程碑 2+）；現有遊戲 UI 只用 `features/game` 薄層，不碰 ECS |
 | `core/transport`（DHT/StoreAndForward） | 999 | 0 | 0 | **PARK** | 超大規模（>20 人 super-node）或需 DHT 儲存時 |
-| `core/chain`（append-only log merge） | 936 | 0 | 0 | **PARK（傾向未來 DELETE）** | 幾乎不會——功能與 mesh 複寫日誌（ADR-0023）重疊；除非需獨立於 mesh 的日誌合併 |
+| `core/chain`（append-only log merge） | 936 | 0 | 0 | **PARK（傾向未來 DELETE）** | 幾乎不會，功能與 mesh 複寫日誌（ADR-0023）重疊；除非需獨立於 mesh 的日誌合併 |
 | `core/ledger`（SharedLedgerEngine/ForkResolver） | 401 | 0 | 0 | **PARK** | 需多方共享帳本合併時（與 incentive/CreditLedger 點數帳本不同，那個已用） |
 | `core/protocol`（AckManager 殘留） | 91 | 0 | 0 | **PARK（傾向 DELETE）** | 疑似殘留；下輪清理可直接刪 |
-| `core/metrics` | 814 | 1（ConnectionStats） | — | **KEEP** | ConnectionStats 已接 FirestoreChatFallback；遙測子部分（RemoteTelemetry/MetricsExporter）休眠但不圍 |
+| `core/metrics` | 814 | 1（ConnectionStats） | n/a | **KEEP** | ConnectionStats 已接 FirestoreChatFallback；遙測子部分（RemoteTelemetry/MetricsExporter）休眠但不圍 |
 | `core/crypto` TreeKEM + GroupKeyManager | ~1100 | 推論待查 | GroupKeyManager 被 mesh 用 | **不動（待專門分析）** | GroupKeyManager 被 RoomKeyDistribution/RecordCrypto（活的 mesh）引用，TreeKEM 經它牽連；不草率碰 crypto，另立分析 |
 
 PARK 合計約 8684 行。**PARK ≠ 刪**：程式與測試保留（可稽核、可解凍），但用圍籬凍結，不許新接線。
@@ -45,7 +45,7 @@ PARK 合計約 8684 行。**PARK ≠ 刪**：程式與測試保留（可稽核�
 
 | 模組 | 行數 | 處置 | 依據 |
 |---|---|---|---|
-| `core/relay/onion/`（RelayManager + Sphinx + Kademlia + MultiPath + Assembler + PathQuality + NAT + CoverTraffic + Padding + RateLimiter + RelayScorer） | ~2,900 | **移出並 PARK** | `RelayManager.sendViaRelay()` 全 repo 零呼叫、`SphinxPacket` 零非測試 import。出站路徑整條死的，但 `MeshGossipManager.initialize()` 每場仍 new 一顆並跑 NAT 偵測＋三組計時器——**付成本換零功能**。已從 mesh 拆線並移進 `onion/` 子目錄。 |
+| `core/relay/onion/`（RelayManager + Sphinx + Kademlia + MultiPath + Assembler + PathQuality + NAT + CoverTraffic + Padding + RateLimiter + RelayScorer） | ~2,900 | **移出並 PARK** | `RelayManager.sendViaRelay()` 全 repo 零呼叫、`SphinxPacket` 零非測試 import。出站路徑整條死的，但 `MeshGossipManager.initialize()` 每場仍 new 一顆並跑 NAT 偵測＋三組計時器，**付成本換零功能**。已從 mesh 拆線並移進 `onion/` 子目錄。 |
 | `core/features` | 447 | **PARK（補列）** | 引用 0，且唯一提及者是同樣 PARK 的 `core/game`。修訂一漏列。 |
 
 留在 `core/relay/` 的（**不可一起搬**，已查證）：`types.ts`（PeerScoring 與 RelayDirectory 都在用）、
@@ -56,7 +56,7 @@ PARK 合計約 8684 行。**PARK ≠ 刪**：程式與測試保留（可稽核�
 ### 圍籬本身是壞的（比上面兩塊更重要）
 
 實測發現：`no-restricted-imports` 比對的是 **import 字串**，不是解析後的路徑。
-所以修訂一寫的 `**/core/game/**` 只擋得住 `@/core/game/X`，**擋不住 `../game/X`**——
+所以修訂一寫的 `**/core/game/**` 只擋得住 `@/core/game/X`，**擋不住 `../game/X`**，
 而 docs/DEVELOPMENT.md 的慣例正是「core 模組用相對路徑，feature/page 用 `@/`」。
 
 結論：這道圍籬自 2026-07-16 立起，在它**最該生效的 core→core 方向上一直是裝飾品**，

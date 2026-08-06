@@ -9,10 +9,10 @@
 | 項目 | 判定 | 負責 | 狀態 |
 |---|---|---|---|
 | **兩套傳訊棧**：star（P2PChannelBus + HLC/因果排序） ‧‧ mesh（gossip + antiEntropy seq） | 概念冗餘 | 平行 · ADR-0023 修訂五 | 🟡 **收斂中**：移除 star 分支、`Topology` 收斂為 `'mesh'` |
-| **RelayOverlay / RelayCoordinator** | 死島（0 app 引用），被 FirestoreRelayDirectory 新路徑取代 | — | ✅ **已刪除**（2026-07-05；含 3 個 spec，git 歷史保留） |
+| **RelayOverlay / RelayCoordinator** | 死島（0 app 引用），被 FirestoreRelayDirectory 新路徑取代 | n/a | ✅ **已刪除**（2026-07-05；含 3 個 spec，git 歷史保留） |
 | **三套 append-only log 概念**：ledger/SharedLedgerEngine（凍結）· incentive/CreditLedger · 房間複製日誌 | 概念重疊 | 平行 · ADR-0023 | 🟡 統一方向＝複製日誌 |
-| `RelayDirectory`（IRelayDirectory 介面 + 記憶體實作） | **非冗餘** | — | 🟢 被 `FirestoreRelayDirectory` 採用（hexagonal） |
-| ledger/SharedLedgerEngine · ForkResolver | 凍結（ADR-0007 第 2 類） | — | ⚪ 凍結，不動 |
+| `RelayDirectory`（IRelayDirectory 介面 + 記憶體實作） | **非冗餘** | n/a | 🟢 被 `FirestoreRelayDirectory` 採用（hexagonal） |
+| ledger/SharedLedgerEngine · ForkResolver | 凍結（ADR-0007 第 2 類） | n/a | ⚪ 凍結，不動 |
 | relay/ Sphinx · Kademlia · StoreAndForward | dormant | 平行 · P4 評估 | ⚪ 休眠 |
 
 ## 缺口 · 誰覆蓋
@@ -43,6 +43,6 @@
 
 ## 協調原則
 
-1. **底層冗餘清理歸平行 session（P4 + ADR-0023）**——單一負責，勿並行重工。
+1. **底層冗餘清理歸平行 session（P4 + ADR-0023）**，單一負責，勿並行重工。
 2. 我的角色：**測試工具鏈 + 誠實稽核 + 文件**（非破壞性、可與 P4 並存）。
 3. 要動 relay/mesh/topology 核心前，先看本表與 ADR-0023 進度，避免撞 P4-B/C/D。

@@ -1,4 +1,4 @@
-# Nerilo 架構 — C4 模型
+# Nerilo 架構：C4 模型
 
 > 現況快照（2026-07-04）。四層 C4：Context → Container → Component → Code。
 > 誠實標註 dormant（已測未接線）與 not-deployed（存在但未上 production）的部分，
@@ -9,7 +9,7 @@ DataChannel 上、以 namespace 區分的「參考應用」，房間是「資料
 
 ---
 
-## C1 — System Context
+## C1: System Context
 
 誰用它、它依賴哪些外部系統。
 
@@ -49,7 +49,7 @@ flowchart TB
 
 ---
 
-## C2 — Container
+## C2: Container
 
 可獨立部署/執行的單位與其資料存放。
 
@@ -96,7 +96,7 @@ flowchart TB
 
 ---
 
-## C3 — Component（React SPA 內部）
+## C3：Component（React SPA 內部）
 
 `src/` 內部依「平面」分組。粗體=已接線，斜體=dormant（已測未接線，ADR-0007 第 1 類戰略資產）。
 
@@ -164,7 +164,7 @@ flowchart TB
 
 ---
 
-## C4 — Code：出站訊息路徑（脊椎 P2PChannelBus）
+## C4：Code：出站訊息路徑（脊椎 P2PChannelBus）
 
 放大「一則 payload 如何從應用送到對端」，展示 envelope 契約與 fallback。
 
@@ -200,7 +200,7 @@ sequenceDiagram
 | `payload` | 應用資料（E2EE 後為密文；game 熱路徑可走 ADR-0018 binary codec） |
 
 **設計不變式**
-- 核心 bus **不認識** namespace 清單——新應用只要自帶 `ns` 就能掛上（開閉原則）。
+- 核心 bus **不認識** namespace 清單，新應用只要自帶 `ns` 就能掛上（開閉原則）。
 - Firestore 只見**密文**（ADR：fallback 也密文，含 `createdAt` 供 rules）。
 - game INPUT 熱路徑可用 ADR-0018 的 `defineInput` 把 payload 從 ~60B JSON 壓到 ≤8B binary。
 

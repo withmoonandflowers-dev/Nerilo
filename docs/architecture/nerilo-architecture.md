@@ -4,7 +4,7 @@
 - 對應決策：ADR-0023（房間即複寫日誌，P1 已落地）、ADR-0024（盲信使儲存）
 - 讀法：標 ✅ = 已實作並有測試；標 🎯Pn = ADR-0023 階段目標
 
-## 1. C4 Level 1 — Context
+## 1. C4 Level 1: Context
 
 ```
 ┌──────────┐   訊息/遊戲/檔案（P2P，E2EE）   ┌──────────┐
@@ -27,7 +27,7 @@
 **系統定位**：P2P 資料傳遞平台（聊天與遊戲是內建參考應用，ADR-0009/0015）。
 伺服器只做三件事：身分、連線撮合（signaling）、metadata 與密文備援。
 
-## 2. C4 Level 2 — Containers
+## 2. C4 Level 2: Containers
 
 | Container | 技術 | 職責 | 狀態 |
 |---|---|---|---|
@@ -38,7 +38,7 @@
 | IndexedDB（每使用者本地） | NeriloDB + NeriloReplica | 聊天史、身分金鑰、**複寫日誌複本**（P1） | ✅ |
 | relayDirectory | Firestore（設計中） | 全站在線節點名冊（盲信使發現） | 🎯P4 |
 
-## 3. C4 Level 3 — Components（core 內部，資料路徑）
+## 3. C4 Level 3：Components（core 內部，資料路徑）
 
 ```
 UI（chat 頁 / dashboard）
@@ -56,7 +56,7 @@ UI（chat 頁 / dashboard）
 休眠資產：relay/*（Sphinx、Kademlia、PeerScoring）、transport/StoreAndForward、chain/（hash 鏈審計）
 ```
 
-## 4. DDD — Bounded Contexts 與 Aggregates
+## 4. DDD：Bounded Contexts 與 Aggregates
 
 | Bounded Context | Aggregate（root） | 不變量（invariants） |
 |---|---|---|

@@ -1,4 +1,4 @@
-# ADR-0020：點數經濟——玩遊戲即參與基礎建設
+# ADR-0020：點數經濟，玩遊戲即參與基礎建設
 
 - 狀態：Accepted（2026-07-04）
 - 日期：2026-07-04
@@ -7,7 +7,7 @@
 ## Context
 
 產品負責人定調正向循環：**來玩遊戲 → 在線即貢獻網路容量 → 賺點數 →
-點數在遊戲裡花**。遊戲是解 P2（社群中繼）冷啟動的「特洛伊木馬」——
+點數在遊戲裡花**。遊戲是解 P2（社群中繼）冷啟動的「特洛伊木馬」，
 沒誘因沒人願意在線中繼；遊戲給了在線的理由，玩家「不知不覺參與基礎建設」。
 
 資產盤點：`LocalCreditProvider`（ADR-0011）已建，含防作弊節流、負債下限、
@@ -16,13 +16,13 @@ tier，但三個缺口擋住願景：(1) 只有記憶體 Map，重整即失；(2
 
 ## Decision
 
-新增 `CreditEconomy`（`src/core/incentive/CreditEconomy.ts`）——點數經濟骨架，
+新增 `CreditEconomy`（`src/core/incentive/CreditEconomy.ts`），點數經濟骨架，
 建在 LocalCreditProvider 之上，補齊三缺口：
 
 1. **持久化**：本機單一節點餘額存 localStorage（跨 session 累積），無 localStorage
    環境退化記憶體。刻意不用 Dexie（避免 schema 遷移）。
 2. **在線累積**：`startEarning/stopEarning` 每 60 秒 pro-rata 結算 `perUptimeHour`。
-   ChatPage 綁 `connectionState === 'connected'`——**實際連線中**才賺（非開分頁），
+   ChatPage 綁 `connectionState === 'connected'`，**實際連線中**才賺（非開分頁），
    降低純掛機刷點。斷線/離開自動停。
 3. **遊戲面向 facade**：`getBalance / getServiceTier / trySpend(amount, reason) /
    subscribe`。遊戲花點呼叫 `creditEconomy.trySpend(10, 'game:powerup')`，

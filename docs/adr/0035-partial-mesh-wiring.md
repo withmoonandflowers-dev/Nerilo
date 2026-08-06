@@ -7,7 +7,7 @@
 ## 背景
 
 AdaptiveTopologyManager／SuperNodeElection 自專案初期即存在且有單元測試，但
-`MeshTopologyManager.updateParticipantCount()` 全 repo 無呼叫者——自適應拓撲是死碼，
+`MeshTopologyManager.updateParticipantCount()` 全 repo 無呼叫者，自適應拓撲是死碼，
 產品流恆為 full mesh（k=6、fanout 5、ttl 1）。5 人上限是 RoomService 與 firestore.rules
 的產品閘門，非技術實測結果。Pro 唯一可伺服器端強制的權益（每房人數）因此懸空。
 
@@ -20,10 +20,10 @@ AdaptiveTopologyManager／SuperNodeElection 自專案初期即存在且有單元
    partial（k=max(3,⌈√n⌉)、fanout 3、ttl 3）。
 2. **人數權威來源＝rosterFromRoom 語義**（meshIdentities ∩ participants 的
    participants 集合大小），與 keyx 同源同語義，經 MeshGossipManager 既有的
-   directory watch push 通道取得——不另設輪詢。
+   directory watch push 通道取得，不另設輪詢。
 3. **accept-slack（k+2）**：連線要雙側各建 MeshConnection 才成形；k 滿的一側若不建，
    晚到者 offer 無人接、連不進圖（anti-entropy 收斂前提是連通圖）。reactive
-   discovery 對全新成員放寬到 k+2，超出部分由旋轉修剪。不做全域重平衡——10 人內
+   discovery 對全新成員放寬到 k+2，超出部分由旋轉修剪。不做全域重平衡，10 人內
    無必要，且超出 feature 軌。
 4. **橋接條件 connected < min(n-1, k)**：partial mesh 下 k < n-1 是設計常態，沿用
    n-1 會每訊息雙寫 Firestore 備援（成本與「P2P 為主」定位倒置）。已知盲點「鄰居
@@ -42,6 +42,6 @@ AdaptiveTopologyManager／SuperNodeElection 自專案初期即存在且有單元
 - god-file 棘輪迫使新邏輯落新檔：`src/services/roomCapacity.ts`、
   `web-vue/app/composables/useMeshHealth.ts`。
 - React 凍結線只改橋接期望值一行；Pro 建大房能力僅 web-vue（React 建房仍缺省 5，
-  join 大房不受影響——切 Vue 前 Pro 大房入口只在 Vue 線，屬已知且可接受的過渡）。
+  join 大房不受影響，切 Vue 前 Pro 大房入口只在 Vue 線，屬已知且可接受的過渡）。
 - 旋轉 churn 若在實測暴露掉信窗，屬遷移窗同族問題，轉交 mesh-correctness 殘留第 2
   項處理，不在本 ADR 範圍內修。

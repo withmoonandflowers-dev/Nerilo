@@ -10,13 +10,13 @@
 第三方嵌入者只該依賴「地基」。但目前 `src/sdk/index.ts` 有三組公開匯出（`reactions`、
 `readReceipts`、`messageContent`）的實作放在 `src/features/chat/`，也就是 React 參考應用的目錄底下。
 於是公開契約在檔案層相依於應用層：嵌入者讀型別會被導向 features/、`src/sdk` 的 import 圖穿過應用層目錄，
-而 ADR-0017 之後 React 產線是要退役的——退役時會踩到「刪應用層等於刪公開契約」。
+而 ADR-0017 之後 React 產線是要退役的，退役時會踩到「刪應用層等於刪公開契約」。
 
 把三組純邏輯搬進 `src/core/messaging/`，讓公開契約完全落在地基內。**公開表面一個字都不變**
 （匯出名稱、型別、行為全等），純粹是實作位置與 import 路徑的搬遷。
 
 再補上機器圍籬：現行 ESLint 的「後端不得依賴前端 UI 層」只涵蓋 `src/core/**` 與 `src/services/**`，
-`src/sdk/**` 不在名單內——這正是本次違規能長出來的原因。把 `src/sdk/**` 納入同一條圍籬，
+`src/sdk/**` 不在名單內，這正是本次違規能長出來的原因。把 `src/sdk/**` 納入同一條圍籬，
 讓它不會慢慢爛回去。
 
 **憲法檢核**（constitution.md）：
@@ -59,7 +59,7 @@
 
 1. **ESLint override 是覆寫不是合併**。原計畫把 `src/sdk/**` 併進既有的「前後端合約」區塊，
    但檔尾另有一個 PARK 圍籬區塊也涵蓋 `src/sdk/**`，後者整組蓋掉前者的 `no-restricted-imports`，
-   結果 UI 層 pattern 對 sdk 完全失效——設定改了、規則沒生效。改法：把 sdk 從那兩個區塊移出，
+   結果 UI 層 pattern 對 sdk 完全失效，設定改了、規則沒生效。改法：把 sdk 從那兩個區塊移出，
    在檔尾開一個專屬區塊，**同時列全** UI 層與 PARK 兩組 pattern。
 2. **`no-restricted-imports` 射程不含動態 `import()`**。`src/sdk/firestore.ts` 對
    `MeshChatService` 的 `await import()` 規則根本抓不到（一開始加的 `eslint-disable` 反而被
@@ -72,7 +72,7 @@
 穿過 `src/features`。
 
 同時補上本 spec 當時明確承認擋不住的那個缺口：`tests/unit/fitness.architecture.spec.ts`
-新增動態 import 掃描，涵蓋 `src/sdk`／`src/core`／`src/services`。探針驗證——把
+新增動態 import 掃描，涵蓋 `src/sdk`／`src/core`／`src/services`。探針驗證，把
 SDK 的動態 import 改回 `../features/chat/MeshChatService`，測試立刻紅並指名該行。
 ESLint 射程外的部分，現在由這組測試接手。
 
@@ -83,7 +83,7 @@ ESLint 射程外的部分，現在由這組測試接手。
 - [x] T3：`.eslintrc.cjs` 前後端合約圍籬納入 `src/sdk/**/*.ts`。
 - [x] T4：分層閘門逐層綠（type-check → 受影響單元 → 全單元 → lint → build:sdk → nuxt typecheck）。
 
-註：本 spec 不含 ⚠ 任務——三支皆為無相依副作用的純函數，搬移不改行為，
+註：本 spec 不含 ⚠ 任務，三支皆為無相依副作用的純函數，搬移不改行為，
 既有單元測試（reactions／readReceipts／messageContent／neriloClient）即為 characterization 現況鎖。
 
 ## 6. 驗收（黃金判準）

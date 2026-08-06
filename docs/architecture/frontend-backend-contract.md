@@ -15,7 +15,7 @@
 - **前端**（`src/features`、`pages`、`components`、`hooks`、`contexts` / 或 `web-vue/`）：
   只做 UI，透過下方表面呼叫後端。
 
-**強制方式**：ESLint 規則（`.eslintrc.cjs` 合約邊界 override）——後端一旦 import
+**強制方式**：ESLint 規則（`.eslintrc.cjs` 合約邊界 override），後端一旦 import
 `react`/`vue` 或任何前端目錄，`npm run lint` 立即報錯。已驗證會擋。**不靠人自律。**
 
 ## UI 可用的後端表面（換皮就照這張表）

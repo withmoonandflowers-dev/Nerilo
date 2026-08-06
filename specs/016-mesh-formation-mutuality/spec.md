@@ -41,7 +41,7 @@ Spec 011 R-a 已預警「連通性無設計保證，接線方案必須給出連�
 - super-node（>20）維持凍結。
 - 不在本 spec 內處理 rejoin flake（另案診斷中）。
 
-## 3. 待釐清（clarify）——全部拍板（2026-08-02）
+## 3. 待釐清（clarify），全部拍板（2026-08-02）
 
 - [x] Q1 成形時間驗收：**維持 90 秒（E2E 現值不放寬）**；產品面 p95 30 秒列觀測目標
   不入斷言。
@@ -70,8 +70,8 @@ k+ACCEPT_SLACK。去重：已有連線物件則不動（signals 由該連線自�
 10 分鐘 lookback 保證晚建也讀得到 offer）。非名冊身分的 offer 一律忽略（授權邊界
 沿用 rules：只有房間參與者寫得進 signals）。零 wire 變更、零 rules 變更。
 
-**取捨**：不採「純入站應答、不改選擇」——單邊隨機選擇仍會產生大量無效發起與
-retry 風暴，B 只醫接聽不醫浪費；不採「動 rules 或 signals schema」——現行
+**取捨**：不採「純入站應答、不改選擇」，單邊隨機選擇仍會產生大量無效發起與
+retry 風暴，B 只醫接聽不醫浪費；不採「動 rules 或 signals schema」，現行
 subscribe 已覆蓋需求。模擬層補「成形層」證明，關閉 Spec 011 用擴散層模擬
 充當成形證據的缺口。
 
@@ -106,7 +106,7 @@ r 數據顯示選擇層已修（發起 101→78、單邊 offer 0）但 bus 逾�
   Spec 011 V1 註記、docs/DEVELOPMENT.md Relay/Topology 表不變（拓撲策略表無用詞變更）。
 
 **〔實作期發現 2026-08-03〕D. 分島殘留（已由 Spec 019 收口：慢車道持久重試）**：CI 第三輪實證
-「鄰居健全 ≠ 全房可達」盲點（Spec 011 Q4）首次真實現身——房主被測試 goto 重載後，
+「鄰居健全 ≠ 全房可達」盲點（Spec 011 Q4）首次真實現身，房主被測試 goto 重載後，
 向 circulant 目標重建的邊在網路抖動下耗盡 MAX_RECONNECT_ATTEMPTS=5 即永久放棄，
 與最後加入者形成雙人孤島（兩頁 accepted=0 但「已連線」為真），rotation 2 分鐘
 週期來不及自癒。修復方向（下一 spec）：重試耗盡後的低頻長期重試（或由 anti-entropy
@@ -114,12 +114,12 @@ r 數據顯示選擇層已修（發起 101→78、單邊 offer 0）但 bus 逾�
 自傷 goto 已移除（joinRoom 冪等化），emulator 假象恢復（reload 一次）已落地。
 
 **〔實作期發現 2026-08-03 之二〕E. 產生方交接 epoch 碰撞（獨立工項 → Spec 018）**：
-CI 第五輪（成形全健康：chat:init=7、全員 accepted 54-60、無孤島）暴露新變種——
+CI 第五輪（成形全健康：chat:init=7、全員 accepted 54-60、無孤島）暴露新變種，
 逐一加入使「合法完整名冊」隨時間有多個版本，min-uid 隨人數換人；新任 min-uid
 （晚加入者）在消費到前任 keyx 之前金鑰環為空（maxKnownEpoch=-1）→ 以 epoch 0
 再發新鑰 → 同代異鑰碰撞（實證：U5 於 rosterSize 5 發 epoch 0、U7 於 rosterSize 7
 再發 epoch 0；U6/U7 各 14 次解密失敗）。三道閘門防殘缺名冊、防不了跨時間交接；
-Spec 017 self-seal 不涉跨產生方。修法方向（Spec 018）：第四道閘門——金鑰環空但
+Spec 017 self-seal 不涉跨產生方。修法方向（Spec 018）：第四道閘門，金鑰環空但
 store 已有他人紀錄 → 延遲 N tick 等既有 keyx 到達再分發（有界等待保 liveness）。
 
 ## 6. 驗收（黃金判準）

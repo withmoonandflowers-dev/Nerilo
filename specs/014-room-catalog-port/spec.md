@@ -9,7 +9,7 @@
 > **2026-07-26 更新：本 spec 的必要性已由實測證實，不再是「沒有被擋住的使用者」。**
 > Spec 015 的 T6 查出：第三方要用 signaling 出口，得先有 Nerilo 房間、且房主須為
 > 非匿名帳號（`firestore.rules:144`、`:198-204`）。純匿名情境（遊戲大廳）因此完全
-> 過不去。本 spec 補的正是那個缺口——它是 015 對外可用的**前置條件**，
+> 過不去。本 spec 補的正是那個缺口，它是 015 對外可用的**前置條件**，
 > 而非原本評估的「有了更好」。
 >
 > 注意：真正的阻礙不只是「缺一個目錄契約」，還包含「匿名能不能建房」這個**安全模型
@@ -45,7 +45,7 @@
 - 不做跨伺服器的房間聯邦／全域搜尋。
 - 不為 block-brawl 的大廳量身訂做欄位（該遊戲的 mode／count 等屬應用層自訂，走自由欄位）。
 
-## 3. 待釐清（clarify——2026-07-25 使用者拍板，決議內嵌於各題）
+## 3. 待釐清（clarify，2026-07-25 使用者拍板，決議內嵌於各題）
 
 - [x] **Q1 契約範圍**：拍板 **列出 + 公告自己的房**，即 `list`／`watch`／`publish`／`unpublish`
       四個動作。這是大廳真正需要的最小集合，仍遠小於 `IRoomService` 的 14 個方法。
@@ -60,7 +60,7 @@
 〔誠實記錄〕提案者原建議「先做 015、014 等跨機器對戰成立後再用真實情境倒推」，
 理由是 014 目前沒有實際被擋住的使用者（block-brawl 同機大廳用 BroadcastChannel 就夠）。
 使用者拍板兩個同批做。風險承接於此：014 的動作集合是依大廳常識設計，
-不是被真實需求逼出來的，第一個嵌入者上線後可能要調整——這正是 SDK 維持 0.x
+不是被真實需求逼出來的，第一個嵌入者上線後可能要調整，這正是 SDK 維持 0.x
 （見 SDK-QUICKSTART 版本承諾）的用途。
 
 ## 4. 技術計畫（plan）
@@ -85,7 +85,7 @@ IRoomCatalog {
 
 ### 4.2 實作與命名
 
-- `InMemoryRoomCatalog`（+ Hub，比照 `InMemoryRoomDirectoryHub` 的形狀）——零後端起步。
+- `InMemoryRoomCatalog`（+ Hub，比照 `InMemoryRoomDirectoryHub` 的形狀），零後端起步。
 - `createFirestoreRoomCatalog()` 於 `nerilo/firestore`：`list` 包既有
   `RoomService.getPublicRooms`（`src/services/RoomService.ts:901`，已含
   status/isPrivate/TTL 過濾與 limit 20），`publish`／`unpublish` 對應建房與關房的
@@ -107,7 +107,7 @@ Firestore 版不新增授權面：沿用 `getPublicRooms` 既有的
 - [ ] T2：`InMemoryRoomCatalog` + Hub 參考實作。
 - [ ] T3：`createFirestoreRoomCatalog()` 於 `nerilo/firestore`（⚠ 動運作中路徑：
       包裝既有 `getPublicRooms`／建房／關房，先走 harden-tests）。
-- [ ] T4：契約測試——同一組斷言雙跑（InMemory 與 Firestore emulator 版）。
+- [ ] T4：契約測試，同一組斷言雙跑（InMemory 與 Firestore emulator 版）。
 - [ ] T5：`sdkSurface` 納入新匯出；`prune-sdk-types --max=30` 確認不爆。
 - [ ] T6：SDK-QUICKSTART 增「房間目錄」一節，明寫與 `IRoomDirectory` 的差別。
 - [ ] T7：block-brawl 大廳改用本契約（V1）。
@@ -115,7 +115,7 @@ Firestore 版不新增授權面：沿用 `getPublicRooms` 既有的
 ## 6. 驗收（黃金判準）
 
 - [ ] V1 外部嵌入者實證：block-brawl 的大廳目錄改為本契約實作，**遊戲邏輯零改動**
-      （只換工廠）——沿用 Spec 013 的驗收精神，用真的消費者證明縫是真的。
+      （只換工廠），沿用 Spec 013 的驗收精神，用真的消費者證明縫是真的。
 - [ ] V2 契約可替換：同一組契約測試同時套用 InMemory 與 Firestore 版，行為一致
       （比照 block-brawl `test/nerilo-signaling.test.js` 的雙跑法）。
 - [ ] V3 公開表面受控：`sdkSurface` 顯性納入新匯出；`prune-sdk-types --max=30` 不爆。
@@ -130,6 +130,6 @@ Firestore 版不新增授權面：沿用 `getPublicRooms` 既有的
 - [x] 第 5 節任務完整實現第 4 節，無遺漏：T1 對應 4.1 契約、T2/T3 對應 4.2 兩實作、
       T4/T5 是閘門、T6 對應 4.2 的命名混淆風險、T7 是 V1 的執行面。
 - [x] 第 6 節驗收能證明第 1 節：V1 用真實嵌入者證明「能用且不必改遊戲邏輯」；
-      V4 把授權從口頭承諾變成 rules 測試——本 spec 唯一碰到不變量（身分授權）的地方。
+      V4 把授權從口頭承諾變成 rules 測試，本 spec 唯一碰到不變量（身分授權）的地方。
 - [x] 未違反憲法任何一條：第 3 條（新功能先問加分哪個係數）已於第 1 節回答為「可嵌入」，
       且第 3 節誠實記錄了「本 spec 尚無被擋住的真實使用者」這個弱點，未灌水。

@@ -56,7 +56,7 @@ mesh gossip 收訊路徑為了不誤殺 anti-entropy 補送，驗簽停用了時
   - (b) 現行代門檻加補送豁免通道：直接洪泛只收 per-sender 現行 epoch；舊 epoch 只在 anti-entropy 對帳情境（拉方以 digest 明示請求）接受，「拉方主動請求」本身就是區分依據。兩種攻擊效果都擋，但把區分資訊放進對帳協議是更大的 wire 變更。
   - (c) 混合：(a) 為底、(b) 為加強。
   - 拍板重點：只擋預佔槽位（a 即足），或連舊內容重現一併擋（需 b 或 c）。
-  - **拍板：現行代門檻（比列出的選項更嚴）**。直接洪泛與 anti-entropy 對帳一律只接受 per-sender 現行 epoch，不設補送豁免通道。使用者已知情並接受代價：新成員／新裝置補不到舊會話歷史，「跨會話補歷史」這個產品能力放棄。同會話（現行 epoch）內的 anti-entropy 補送必須完好——30 分鐘舊訊息補送回歸鎖絕對不可破，因為那些是現行 epoch 簽出的訊息（epoch 門檻不是 wall-clock 門檻，兩者正交）。
+  - **拍板：現行代門檻（比列出的選項更嚴）**。直接洪泛與 anti-entropy 對帳一律只接受 per-sender 現行 epoch，不設補送豁免通道。使用者已知情並接受代價：新成員／新裝置補不到舊會話歷史，「跨會話補歷史」這個產品能力放棄。同會話（現行 epoch）內的 anti-entropy 補送必須完好，30 分鐘舊訊息補送回歸鎖絕對不可破，因為那些是現行 epoch 簽出的訊息（epoch 門檻不是 wall-clock 門檻，兩者正交）。
 - [x] **Q3 協議版本升級與舊版本節點相容**：epoch 欄位入簽章後，舊版節點驗章時的序列化不含該欄位，雜湊不合即拒收新版訊息；混版房間會分裂。選項：
   - (a) `protocolVersion` min() 協商：混版房降級為不帶 epoch（防護失效但互通），全員新版才啟用。要正視降級攻擊：攻擊者謊稱舊版即可剝掉防護，min() 語義正是靜默降級。
   - (b) `strictProtocols` 相等語義：版本不合即提示雙方更新，不靜默降級。防護不可剝，但犧牲混版互通。
@@ -66,8 +66,8 @@ mesh gossip 收訊路徑為了不誤殺 anti-entropy 補送，驗簽停用了時
 - [x] **Q4 既存資料遷移**：
   - IndexedDB 已落盤的舊格式紀錄（無 epoch）重載後如何處理：(a) 視為 legacy 代原樣保留、可繼續補送；(b) 一次性標記遷移；(c) 丟棄（違反恰好一次，列出供否決）。
   - Protocol Spec 003 信使寄存的 record 是已簽名 gossip 紀錄：舊格式欠條寄存的取回與補送，在新版收端是否仍被接受，接受到什麼時候。
-  - **拍板：(b) 一次性標記遷移**。重載時批次遷移為帶 epoch 的新格式（legacy 標記 sessionEpoch=0），遷移須可中斷恢復（plan 4.8 用 IndexedDB versionchange 交易的原子性保證）。誠實處理：舊紀錄無法重簽（簽章不覆蓋 epoch），故 legacy 紀錄只供本機呈現、不可再對外補送——與 Q2 一致（收端本來就會拒收非現行代）；聊天顯示歷史存於應用層 chatStorage（IndexedDBService），不受影響。信使寄存的舊格式 record 比照辦理：v2 收端一律拒收（形狀檢查缺 sessionEpoch 即拒），無豁免、無過渡期；信使側資料靠 byte-day 計價與墓碑自然退場，不另做清理程式。
-- [x] **Q5 去重鍵與 digest 影響面**：**拍板：(a) 全面分代**。訊息身分／去重鍵改 (senderId, sessionEpoch, seq)；antiEntropy digest 的 floor/max/missing 改 per-(senderId, epoch)，floors 淘汰語義跟著分代。配合 Q2 現行代門檻，digest 每個 sender 只宣告現行代持有（宣告舊代是徒勞——對方必拒），詳 plan 4.6。
+  - **拍板：(b) 一次性標記遷移**。重載時批次遷移為帶 epoch 的新格式（legacy 標記 sessionEpoch=0），遷移須可中斷恢復（plan 4.8 用 IndexedDB versionchange 交易的原子性保證）。誠實處理：舊紀錄無法重簽（簽章不覆蓋 epoch），故 legacy 紀錄只供本機呈現、不可再對外補送，與 Q2 一致（收端本來就會拒收非現行代）；聊天顯示歷史存於應用層 chatStorage（IndexedDBService），不受影響。信使寄存的舊格式 record 比照辦理：v2 收端一律拒收（形狀檢查缺 sessionEpoch 即拒），無豁免、無過渡期；信使側資料靠 byte-day 計價與墓碑自然退場，不另做清理程式。
+- [x] **Q5 去重鍵與 digest 影響面**：**拍板：(a) 全面分代**。訊息身分／去重鍵改 (senderId, sessionEpoch, seq)；antiEntropy digest 的 floor/max/missing 改 per-(senderId, epoch)，floors 淘汰語義跟著分代。配合 Q2 現行代門檻，digest 每個 sender 只宣告現行代持有（宣告舊代是徒勞，對方必拒），詳 plan 4.6。
 - [x] **Q6 「拒收」的驗收口徑**：**拍板：(a) 一律完全拒收**。舊 epoch 訊息不入 store、不上 UI、不轉發、不觸發任何監聽器；V1 斷言照此寫。
 
 ## 4. 技術計畫（plan，依 protocol-spec-template）
@@ -123,7 +123,7 @@ antiEntropy digest v2（GOSSIP_DIGEST payload 與信使 SYNC digest 共用）：
 
 收端 per-(roomId, senderId) 持久追蹤 acceptedEpoch，初始未知：
 
-1. `msg.sessionEpoch < acceptedEpoch` → 完全拒收（不入 store、不上 UI、不轉發；計 peerScoring duplicate，不計 invalid——簽章本身合法）。
+1. `msg.sessionEpoch < acceptedEpoch` → 完全拒收（不入 store、不上 UI、不轉發；計 peerScoring duplicate，不計 invalid，簽章本身合法）。
 2. `msg.sessionEpoch == acceptedEpoch` → 走既有管線：(senderId, epoch, seq) 去重＋inflight 預佔＋per-(sender, epoch) floor → 驗簽 → 身分綁定 → 入 store、通知、轉發。
 3. `msg.sessionEpoch > acceptedEpoch`（含初始未知）→ 驗簽＋身分綁定通過後採納新代（持久化 best-effort）、接受該訊息；同時把該 sender 記憶體 store 中較舊代的桶剪除（成為 inert 歷史，持久層保留供本機一致性，不再宣告不再補送）。
 4. 自己的訊息：首次發送時配發本會話代；自己的 acceptedEpoch 同步推進。
@@ -155,7 +155,7 @@ antiEntropy digest v2（GOSSIP_DIGEST payload 與信使 SYNC digest 共用）：
 - CourierService 的 buildRoomStore／reconcile／runCourierBackup 隨 digest v2 與巢狀 store 改簽名；信使本體維持盲（照存照服，digest 以持有最高代計）。
 - **信使回填收緊**（新增防護，堵既有注入面）：runCourierBackup 的 ingest 目前直寫持久層；改為先驗簽＋身分綁定＋sessionEpoch 形狀＋現行代門檻（epoch ≥ 已持久化 acceptedEpoch，較高則採納）才落地。legacy／舊代紀錄一律不落地。
 - 舊格式寄存紀錄退場：v2 收端一律拒收（缺 sessionEpoch），無豁免通道；信使側殘量靠 byte-day 計價與墓碑自然清退，不另寫遷移程式。Protocol Spec 003 的 record 定義隨 GossipMessage v2 連動（record＝已簽名 GossipMessage，欄位跟著 4.3）。
-- 實作階段補記（spec 活文件條款）：CourierStore 內部寄存槽位維持 (senderId, seq) first-write-wins 鍵（連動 Spec 003/004 的持久 schema 與計量，本 spec 不動）。後果：sender 換裝置後，同 seq 的新代紀錄在「仍持有舊代同槽紀錄」的信使處會被 duplicate 拒收——只損備份冗餘，不損恰好一次（收端現行代門檻必拒舊代補送，正確性不受影響）；靠信使 TTL/墓碑自然清退。列 QA 已知限制。
+- 實作階段補記（spec 活文件條款）：CourierStore 內部寄存槽位維持 (senderId, seq) first-write-wins 鍵（連動 Spec 003/004 的持久 schema 與計量，本 spec 不動）。後果：sender 換裝置後，同 seq 的新代紀錄在「仍持有舊代同槽紀錄」的信使處會被 duplicate 拒收，只損備份冗餘，不損恰好一次（收端現行代門檻必拒舊代補送，正確性不受影響）；靠信使 TTL/墓碑自然清退。列 QA 已知限制。
 
 ### 4.10 安全考量（誠實邊界）
 

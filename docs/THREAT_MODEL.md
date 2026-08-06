@@ -1,8 +1,8 @@
 # Threat Model
 
-This document describes what Nerilo's privacy and security guarantees mean in practice — what each cryptographic and network primitive does, who it defends against, and where the boundaries are. It is intentionally honest about the gaps so that users and operators can make informed decisions.
+This document describes what Nerilo's privacy and security guarantees mean in practice, what each cryptographic and network primitive does, who it defends against, and where the boundaries are. It is intentionally honest about the gaps so that users and operators can make informed decisions.
 
-## TL;DR — what "資料隱私" actually means
+## TL;DR：what "資料隱私" actually means
 
 Nerilo provides **end-to-end encrypted (E2EE) group messaging**. It provides **no sender anonymity**. Specifically:
 
@@ -11,7 +11,7 @@ Nerilo provides **end-to-end encrypted (E2EE) group messaging**. It provides **n
 - The **blind courier** path (store-and-forward for offline recipients) *is* wired: the courier holds ciphertext, can verify authenticity, and cannot read content. That protects *content*, not *who sent it*.
 - **Metadata** (who is in which room, when messages flow, how big they are) is **not** end-to-end-protected against the Firebase signaling layer or a global passive observer.
 
-If you need strong anonymity (e.g. journalism, activism in adversarial jurisdictions), use a dedicated tool like Tor / SecureDrop / Signal. Nerilo is a **chat application with strong content confidentiality and modest metadata protection** — not an anonymity network.
+If you need strong anonymity (e.g. journalism, activism in adversarial jurisdictions), use a dedicated tool like Tor / SecureDrop / Signal. Nerilo is a **chat application with strong content confidentiality and modest metadata protection**, not an anonymity network.
 
 ## Adversaries we consider
 
@@ -20,7 +20,7 @@ If you need strong anonymity (e.g. journalism, activism in adversarial jurisdict
 | **Passive network observer** (ISP, café Wi-Fi sniffer) | Can read all bytes on the wire | TLS everywhere (Firebase HTTPS, WebRTC DTLS-SRTP), plus E2EE inside | Cannot read message content, but **can observe timing, packet sizes, peer IPs**. Cover traffic and block padding are implemented but **not active**, so they mitigate nothing today. |
 | **Malicious relay / courier node** (a peer carrying traffic for others) | Sees ciphertext plus the sender and recipient identifiers on the envelope | Content confidentiality only: the courier cannot read the payload and can verify it was not tampered with | **Not defended: sender/recipient anonymity.** The Sphinx-Lite layering that would provide it is unwired (see TL;DR). A courier also can refuse to forward, drop, or attempt timing correlation. PeerScoring mitigates only the availability side. |
 | **Compromised signaling server** (Firebase Auth + Firestore breach) | Reads all WebRTC SDP/ICE, user identities, room membership | Cannot decrypt P2P traffic (DTLS-SRTP keys never touch Firebase). Cannot decrypt E2EE message content (sender keys never touch Firebase). | **Can deanonymize** room membership, link Firebase Auth UID → IP addresses (from ICE candidates), tamper with signaling to facilitate a MITM at WebRTC handshake (mitigated by ECDH TOFU on first message, see below). |
-| **Malicious peer** (someone you let into a room) | Full E2EE access — they are a legitimate group member | Nothing prevents a member from screenshotting / forwarding content out of band. We provide **forward secrecy** so past sessions remain confidential after key rotation. | Trust is symmetric within a room. Do not invite people you don't trust. |
+| **Malicious peer** (someone you let into a room) | Full E2EE access, they are a legitimate group member | Nothing prevents a member from screenshotting / forwarding content out of band. We provide **forward secrecy** so past sessions remain confidential after key rotation. | Trust is symmetric within a room. Do not invite people you don't trust. |
 | **Global passive adversary** (nation-state with backbone access) | Sees all traffic, timing, sizes | **Nothing.** Padding and cover-traffic generators exist in the codebase but are not active (`enableCoverTraffic` defaults to false and no caller enables it). | We do **not** claim any resistance to a global passive adversary. |
 
 ## Cryptographic primitives
@@ -51,7 +51,7 @@ mesh／gossip 房（Vue 線含 2 人房）不走 per-sender key，而是**單一
 | 盲信使 | 只代管密文與 keyx（收側拒收明文紀錄，協議規則） | [courierEligibility.ts](../src/core/relay/courierEligibility.ts) |
 
 **誠實口徑（刻意取捨，Spec 012 Q4）**：keyx 是永久日誌紀錄，任何在籍成員（含遲入者）
-補齊 keyx 即可解該房**全部 epoch 的歷史**——這是「持久聊天室可補歷史」產品語義的直接後果。
+補齊 keyx 即可解該房**全部 epoch 的歷史**，這是「持久聊天室可補歷史」產品語義的直接後果。
 因此：(1) 成員 ECDH 私鑰外洩 = 該房全歷史暴露，週期輪替救不了（攻擊者同樣能開全部 keyx），
 故不做週期輪替、也不對外宣稱在籍前向保密；(2) 真前向保密（ratchet＋刪舊鑰）與補歷史語義
 正面衝突，若未來需要，屬產品級重新定義，不是加個輪替參數。敏感對話的粗粒度界線
@@ -59,19 +59,19 @@ mesh／gossip 房（Vue 線含 2 人房）不走 per-sender key，而是**單一
 
 ### What E2EE protects
 
-- ✅ **Message content** (text, file metadata, file chunks) is unreadable to anyone outside the room — including the relay nodes, Firebase, and a passive observer.
+- ✅ **Message content** (text, file metadata, file chunks) is unreadable to anyone outside the room, including the relay nodes, Firebase, and a passive observer.
 - ✅ **Forward secrecy after rotation**: if a current sender key is compromised, prior epochs remain confidential.
 - ✅ **Per-group isolation**: a key compromise in one room does not affect other rooms.
 
 ### What E2EE does **not** protect
 
-- ❌ **Metadata** — `from`, `to`, `ts`, `roomId`, message length (before padding), and the existence of a conversation are visible to whatever layer is carrying the envelope (Firebase signaling, or an intermediate relay before/after onion encryption).
-- ❌ **Timing** — when you send, when peers ack. Useful for correlation by a global observer.
-- ❌ **Group membership** — Firestore knows who is in which room.
-- ❌ **Endpoint compromise** — if your device is malware-infected or someone shoulder-surfs, no encryption helps.
-- ❌ **Out-of-band leakage** — a recipient can copy/paste/screenshot.
+- ❌ **Metadata**: `from`, `to`, `ts`, `roomId`, message length (before padding), and the existence of a conversation are visible to whatever layer is carrying the envelope (Firebase signaling, or an intermediate relay before/after onion encryption).
+- ❌ **Timing**: when you send, when peers ack. Useful for correlation by a global observer.
+- ❌ **Group membership**: Firestore knows who is in which room.
+- ❌ **Endpoint compromise**: if your device is malware-infected or someone shoulder-surfs, no encryption helps.
+- ❌ **Out-of-band leakage**: a recipient can copy/paste/screenshot.
 
-### Sphinx-Lite (onion routing) — NOT DEPLOYED
+### Sphinx-Lite (onion routing): NOT DEPLOYED
 
 > **Status: design study.** Implemented in [src/core/relay/SphinxPacket.ts](../src/core/relay/SphinxPacket.ts)
 > and unit-tested, but **not reachable from any send path**. `SphinxPacket` has zero non-test imports and
@@ -79,7 +79,7 @@ mesh／gossip 房（Vue 線含 2 人房）不走 per-sender key，而是**單一
 > what the code *would* provide once wired. **None of it is protecting you today.**
 
 **What it would protect against (once wired):**
-- A single relay node cannot identify both the sender and the receiver — it knows only the previous and next hop. So **no single intermediary** can link sender→receiver.
+- A single relay node cannot identify both the sender and the receiver, it knows only the previous and next hop. So **no single intermediary** can link sender→receiver.
 - Fixed 4096-byte payload + 256-byte block padding (see [MessagePadding.ts](../src/core/relay/MessagePadding.ts)) defeats size-based traffic analysis between hops.
 
 **What it would still NOT protect against, even once wired:**
@@ -95,7 +95,7 @@ Firebase Auth + Firestore are used for:
 1. User identity (anonymous auth → `guest` role; email/Google → `user` role).
 2. Room directory (who is in which room, owner, status).
 3. WebRTC signaling (SDP offers/answers, ICE candidates).
-4. Message fallback (when P2P fails, messages relay through Firestore — **always under E2EE**).
+4. Message fallback (when P2P fails, messages relay through Firestore, **always under E2EE**).
 
 **What we trust Firebase to do:**
 - Authenticate users honestly.
@@ -118,11 +118,11 @@ Firebase Auth + Firestore are used for:
 1. **2–3 onion hops, not 5+.** Lower anonymity-set than Nym/Loopix. Sufficient against curious-but-bounded adversaries; insufficient against nation-states or compromised relay majorities.
 2. **No SURBs.** Reply paths require the responder to construct their own onion route, which leaks reply-direction metadata.
 3. **Cover traffic is battery-aware.** Poisson dummy stream is throttled on low battery, which an observer can detect as device-state side-channel.
-4. **IndexedDB private-key storage.** Long-term ECDSA identity keys are stored in browser IndexedDB. They are **not** encrypted at rest by Nerilo — they rely on the browser/OS sandbox. Anyone with physical or malware-level access to the device can read them.
+4. **IndexedDB private-key storage.** Long-term ECDSA identity keys are stored in browser IndexedDB. They are **not** encrypted at rest by Nerilo, they rely on the browser/OS sandbox. Anyone with physical or malware-level access to the device can read them.
 5. **Firebase metadata layer.** Membership, timing, and IP addresses (via ICE) are visible to a compromised signaling server.
 6. **Single Firebase project for now.** A breach of `nerilo` Firebase project compromises every user (no per-tenant isolation).
 7. **No deniability / unlinkable identity.** ECDSA identity keys are stable per-device; multiple rooms on the same device share the same long-term identity.
-8. **E2EE has no post-compromise security after epoch closes.** A future-compromise of a sender key reveals all messages in that epoch, even those received before the compromise was detected — until the next rotation.
+8. **E2EE has no post-compromise security after epoch closes.** A future-compromise of a sender key reveals all messages in that epoch, even those received before the compromise was detected, until the next rotation.
 9. **Mesh 房間金鑰對在籍成員無前向保密。** keyx 永存日誌、在籍者可解全歷史（補歷史語義的刻意取捨，Spec 012 Q4）；成員 ECDH 私鑰外洩＝該房全歷史暴露。界線靠換房，不靠輪替。
 
 ## Recommended user practices
@@ -130,8 +130,8 @@ Firebase Auth + Firestore are used for:
 - **Only invite people you trust into a room.** E2EE protects the wire; it does not protect against a member screenshotting.
 - **Verify identity fingerprints out-of-band** when you first connect to a new peer (e.g. read them aloud over a known-secure channel like a phone call).
 - **Keep your browser updated.** Nerilo relies entirely on the browser's `SubtleCrypto` and WebRTC implementations; a browser vulnerability defeats the whole stack.
-- **Use a hardware-locked device.** Long-term keys live in IndexedDB — if your laptop is stolen and unlocked, those keys are extractable.
-- **Don't reuse Nerilo for high-stakes operational security.** For activism, journalism in adversarial jurisdictions, or whistleblowing, prefer tools designed for that threat model (Signal, SecureDrop, Tor + tooling) — not a chat app that's transparent about being best-effort.
+- **Use a hardware-locked device.** Long-term keys live in IndexedDB, if your laptop is stolen and unlocked, those keys are extractable.
+- **Don't reuse Nerilo for high-stakes operational security.** For activism, journalism in adversarial jurisdictions, or whistleblowing, prefer tools designed for that threat model (Signal, SecureDrop, Tor + tooling), not a chat app that's transparent about being best-effort.
 - **Be aware of metadata.** Even with E2EE, the fact that you and another user are in the same room is observable to whoever runs the Firebase backend.
 - **Rotate rooms for sensitive conversations.** A room's history is bound to its sender-key epochs; abandoning a room and creating a new one provides a coarse "session boundary."
 
@@ -146,11 +146,11 @@ The following are **not** part of Nerilo's threat model:
 
 ## Changelog
 
-- 2026-07-26 — **更正**：先前版本把 Sphinx-Lite 洋蔥路由寫成已部署的防護（TL;DR、對手表的
+- 2026-07-26：**更正**：先前版本把 Sphinx-Lite 洋蔥路由寫成已部署的防護（TL;DR、對手表的
   「惡意中繼」與「全球被動對手」兩格、以及 Sphinx 專節皆為現在式）。實測查證
   `SphinxPacket` 零非測試 import、`RelayManager.sendViaRelay()` 零呼叫，該機制**從未接線**；
   cover traffic 與 padding 同樣未啟用（`enableCoverTraffic` 預設 false 且無呼叫端開啟）。
   已全面改為「未部署」並移除相關匿名性宣稱。本文件此前高估了自身的防護能力，這是文件錯誤，
   不是實作退步。
-- 2026-07-18 — Spec 012：新增 mesh 房間金鑰（keyx）節與 Q4 輪替口徑（在籍者可解全歷史為刻意取捨）；known limitations 補第 9 點；出口閘／信使拒收明文入列。
-- 2026-05-27 — initial draft. Covers Sphinx-Lite, ECDH+AES-GCM sender keys, Firebase trust boundary. Tracking gaps: cover-traffic battery side-channel; IndexedDB at-rest encryption; per-tenant Firebase isolation.
+- 2026-07-18：Spec 012：新增 mesh 房間金鑰（keyx）節與 Q4 輪替口徑（在籍者可解全歷史為刻意取捨）；known limitations 補第 9 點；出口閘／信使拒收明文入列。
+- 2026-05-27: initial draft. Covers Sphinx-Lite, ECDH+AES-GCM sender keys, Firebase trust boundary. Tracking gaps: cover-traffic battery side-channel; IndexedDB at-rest encryption; per-tenant Firebase isolation.

@@ -1,4 +1,4 @@
-# ADR-0021：社群中繼——效能、安全、與「中繼即價值」
+# ADR-0021：社群中繼，效能、安全、與「中繼即價值」
 
 - 狀態：Accepted（方向）／實作分階段
 - 日期：2026-07-04
@@ -7,11 +7,11 @@
 ## Context
 
 產品負責人拍板：**做社群中繼**（含效能與安全），且**中繼要能「產生價值」（點數）**
-——怎麼兌換由上層/玩家決定，Nerilo 只負責產生。定位：Nerilo 是資料傳遞基礎架構，
+，怎麼兌換由上層/玩家決定，Nerilo 只負責產生。定位：Nerilo 是資料傳遞基礎架構，
 中繼讓「多人在線 = 網路更好、更省」成真（P2P 直連失敗時，第三個在線 peer 幫忙轉，
 省 TURN 成本）。
 
-資產盤點：relay/ 模組群已建且測過（dormant）——RelayManager（sendViaRelay /
+資產盤點：relay/ 模組群已建且測過（dormant），RelayManager（sendViaRelay /
 handleRelayPacket，Sphinx 洋蔥轉發）、PeerScoring（行為評分 + graylist/disconnect
 閾值）、RelayScorer（延遲/可靠/頻寬/uptime/多樣性排名）、MultiPathSelector（多獨立路徑）、
 RateLimiter、MessagePadding。缺的不是機器，是**接進活的連線流 + 接上點數**。
@@ -23,7 +23,7 @@ RateLimiter、MessagePadding。缺的不是機器，是**接進活的連線流 +
 - **RelayScorer** 排名候選節點（0.35 延遲 + 0.25 可靠 + 0.20 頻寬 + 0.10 uptime +
   0.10 多樣性），選最高分。
 - **MultiPathSelector**：重要流量走 2–4 條獨立路徑，避免單點慢/斷（後期）。
-- **只在直連失敗時才中繼**：直連成功的配對已是最短路徑，中繼幫不上——用 P0 量測
+- **只在直連失敗時才中繼**：直連成功的配對已是最短路徑，中繼幫不上，用 P0 量測
   （ConnectionStats）判斷何時直連失敗率高到值得。中繼是省成本/救連線，不是預設路徑。
 
 ### 安全（惡意中繼怎麼防）
@@ -33,14 +33,14 @@ RateLimiter、MessagePadding。缺的不是機器，是**接進活的連線流 +
 - **丟包/搗亂**：PeerScoring 記 delivery/failure/duplicate，低於 graylist 閾值即
   停止採用、低於 disconnect 即斷。
 - **灌流量/放大攻擊**：RateLimiter 每 peer + 全域滑動窗上限。
-- **刷點**：見下——中繼點數走既有每小時上限節流；真實雙簽收據待 Phase 2。
+- **刷點**：見下，中繼點數走既有每小時上限節流；真實雙簽收據待 Phase 2。
 
 ### 中繼即價值（點數產生，本回合已接）
 
 - 本機成功為他人轉發 N bytes → `creditEconomy.recordRelayContribution(requester, bytes)`
   依 perKbRelayed + perRelayBonus 產生點數，走 LocalCreditProvider 每小時上限防刷。
 - **Nerilo 只產生點數，不做兌換**：兌換成真實好處由上層/玩家決定（範圍外，
-  避免類金融/防詐負擔——見 threat-model）。
+  避免類金融/防詐負擔，見 threat-model）。
 - Phase 1 本機記帳（proof='local'）；Phase 2 換真實雙簽收據 / 伺服器權威帳本時
   IIncentiveProvider 介面不變。
 
@@ -65,14 +65,14 @@ routing 大腦（RelayManager）之外，補齊了它缺的「網路名冊」與
 模擬用 `InMemoryRelayDirectory` + `SimTransport`；上 production 只需替換兩個注入點，
 邏輯不變：
 
-1. **Firestore 目錄 adapter**（`IRelayDirectory` 的 Firestore 實作）——跨房發現。
+1. **Firestore 目錄 adapter**（`IRelayDirectory` 的 Firestore 實作），跨房發現。
    **需 firestore.rules 新增 relayNodes 集合規則**（非匿名 + 速率限制防女巫灌假節點）。
    rules 目前平行 session 維護中，故此 adapter 待協調後補。
-2. **真 WebRTC transport**（`RelayCoordinator.attachTransport` 注入實際 peerSend）——
+2. **真 WebRTC transport**（`RelayCoordinator.attachTransport` 注入實際 peerSend），
    連上房間外的中繼節點需新 signaling 路徑。
 3. **真實多節點驗證**：3+ 真實瀏覽器節點跑 A→C→B + 評分踢除 + 女巫抵抗。
 
-**觸發條件**：P2.D 投入前先看 P0 數據——直連成功率高、TURN 不痛時可緩；數據說痛了再上。
+**觸發條件**：P2.D 投入前先看 P0 數據，直連成功率高、TURN 不痛時可緩；數據說痛了再上。
 邏輯已就緒且證明可用，屆時是「接真實傳輸」而非「從頭寫」。
 
 ## Consequences

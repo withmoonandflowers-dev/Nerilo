@@ -24,7 +24,7 @@ Auth（身分）、Firestore（信令與 fallback）、Hosting（部署），
 **正確的問題不是「AWS 還是 Firebase」，是「哪些元件該用 managed、哪些該自建」**：
 - 信令 + Auth：留 Firebase（便宜、免維運，ADR-0002 不推翻）。
 - 中繼 + 儲存：交社群（ADR-0012），這些是 runtime 中立的 Node daemon，
-  可跑在任何 VPS、樹莓派、雲——包括 AWS EC2。社群節點營運者要用
+  可跑在任何 VPS、樹莓派、雲，包括 AWS EC2。社群節點營運者要用
   AWS 是他們的自由，與平台選擇無關。
 - 若未來自建 TURN（coturn）或官方 headless 種子節點：EC2 / 任意 VPS
   適合，這是「補充一台 compute」不是「遷移後端」。
@@ -32,7 +32,7 @@ Auth（身分）、Firestore（信令與 fallback）、Hosting（部署），
 ## Consequences
 
 - 維護面積維持最小，符合單人可持續營運的前提。
-- 社群節點（ADR-0012）天然多雲，不綁任何單一供應商——去中心化容量本身
+- 社群節點（ADR-0012）天然多雲，不綁任何單一供應商，去中心化容量本身
   就分散了平台風險，這比「把中心從 Google 搬到 Amazon」更徹底。
 - 保留未來局部自建的彈性（TURN、種子節點走 VPS），不需要整體遷移。
 

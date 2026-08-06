@@ -22,6 +22,6 @@ WebRTC full mesh 的連線數是 O(n^2)，瀏覽器端超過 5 至 6 人即不�
 - 分層策略讓後續「按方案限制房間人數」有自然的落點：免費層限 2 至 5 人（星型與小 mesh），付費層開放大房間（見 ADR-0008）。
 - partial mesh 與 super-node 在市場定位（ADR-0009）拍板前維持休眠，不投入接線（見 ADR-0007）。
 
-2026-07-18 修訂：partial mesh 已接線（Spec 011／ADR-0035）——第 7 人起切
+2026-07-18 修訂：partial mesh 已接線（Spec 011／ADR-0035），第 7 人起切
 partial-mesh（只升不降），房間上限 10、容量分層 Free 5／Pro 10 落地。
 super-node（>20 人）維持凍結。「按方案限制房間人數」的預留落點自此兌現。

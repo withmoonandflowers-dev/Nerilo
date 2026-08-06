@@ -1,4 +1,4 @@
-# Nerilo — P2P Real-Time Chat Platform
+# Nerilo: P2P Real-Time Chat Platform
 
 ## Quick Reference
 
@@ -15,7 +15,7 @@ npm run ci           # type-check + lint + unit tests
 
 **Run unit tests:** `node ./node_modules/vitest/vitest.mjs run` (workaround for Windows node path issues)
 
-> **New machine?** Read [docs/CROSS-MACHINE-HANDOFF.md](docs/CROSS-MACHINE-HANDOFF.md) first —
+> **New machine?** Read [docs/CROSS-MACHINE-HANDOFF.md](docs/CROSS-MACHINE-HANDOFF.md) first,
 > it carries the cross-machine operational knowledge (E2E local loop, TURN rotation, CI/secrets layout,
 > known pitfalls, pending-work snapshot). Update the handoff doc when you learn something the other machine needs.
 
@@ -65,12 +65,12 @@ src/core/
 ```
 
 Note: `game/`、`community/`、`transport/`、`ledger/`、`features/`（core 底下那個）與
-`relay/onion/` 是 **PARK 模組**——已測但沒接進產品流，由 ESLint 圍籬凍結（ADR-0031）。
+`relay/onion/` 是 **PARK 模組**，已測但沒接進產品流，由 ESLint 圍籬凍結（ADR-0031）。
 `chain/` 與 `protocol/` 已於 2026-07-26 刪除（引用 0，功能與 mesh 複寫日誌重疊）。
 
 ### Relay Infrastructure (`src/core/relay/`)
 
-Dual-layer design **on paper**。實測（2026-07-26）：**出站路徑整條死的**——
+Dual-layer design **on paper**。實測（2026-07-26）：**出站路徑整條死的**，
 `RelayManager.sendViaRelay()` 全 repo 零呼叫，只有入站 `handleRelayPacket` 被
 `MeshGossipManager:478` 接。但 `MeshGossipManager.initialize()` 仍每場 `new RelayManager()`
 並 `initialize()`，所以下列多數元件**有被實例化並啟動、只是服務一條沒有出口的路徑**。
@@ -109,34 +109,34 @@ Phase 2: Blockchain-backed provider (future, same interface)
 ### Logging
 
 Use `import { logger } from '@/utils/logger'` instead of `console.log`:
-- `logger.debug()` — dev only, silenced in prod
-- `logger.info()` — dev only, silenced in prod
-- `logger.warn()` — always outputs, sanitizes sensitive fields
-- `logger.error()` — always outputs, sanitizes sensitive fields
+- `logger.debug()`, dev only, silenced in prod
+- `logger.info()`, dev only, silenced in prod
+- `logger.warn()`, always outputs, sanitizes sensitive fields
+- `logger.error()`, always outputs, sanitizes sensitive fields
 
 ### Code Style
 
-- **TypeScript strict mode** — `noUnusedLocals`, `noUnusedParameters` enabled
+- **TypeScript strict mode**: `noUnusedLocals`, `noUnusedParameters` enabled
 - **Path aliases:** `@/*` maps to `src/*`
 - **Imports:** Use relative paths in core modules, `@/` in feature/page modules
 - **Unused params:** Prefix with `_` (e.g., `_senderId`)
 
 ### Testing
 
-- Unit tests: `tests/unit/*.spec.ts` — use Vitest
-- E2E tests: `tests/e2e/*.spec.ts` — use Playwright
+- Unit tests: `tests/unit/*.spec.ts`, use Vitest
+- E2E tests: `tests/e2e/*.spec.ts`, use Playwright
 - Integration tests: Firestore emulator required (`npm run test:emulator`)
 
 ### Key Design Decisions
 
-- **No blockchain yet** — relay incentives use local credits; blockchain is a future option
-- **Firestore as fallback** — when P2P connections fail, messages relay through Firestore
-- ~~**Fixed-size packets** — 4096-byte relay payloads prevent traffic analysis~~ 未生效：該路徑未接線（2026-07-26 查證）
-- **Score-based peer selection** — PeerScoring gates relay eligibility, gossip participation, and disconnect decisions
+- **No blockchain yet**: relay incentives use local credits; blockchain is a future option
+- **Firestore as fallback**: when P2P connections fail, messages relay through Firestore
+- ~~**Fixed-size packets**：4096-byte relay payloads prevent traffic analysis~~ 未生效：該路徑未接線（2026-07-26 查證）
+- **Score-based peer selection**: PeerScoring gates relay eligibility, gossip participation, and disconnect decisions
 
 ## CI/CD
 
 - **Every PR / master push**: `ci.yml` quality gate (type-check + lint + unit tests, Node 24) + emulator-backed E2E (soft gate, `continue-on-error`)
 - **Every master push auto-deploys** hosting + Firestore rules/indexes to https://nerilo.web.app via `firebase-deploy.yml` (first successful run 2026-06-11)
-- **Cloud Functions are NOT deployed** — never were in production; first deploy requires Blaze plan + Cloud Build API (steps in PR #15). CI still compile-validates `functions/`
-- E2E in CI runs against Firebase emulators (Java 21 + cached emulator/Playwright binaries) — no live Firebase, no secrets needed
+- **Cloud Functions are NOT deployed**: never were in production; first deploy requires Blaze plan + Cloud Build API (steps in PR #15). CI still compile-validates `functions/`
+- E2E in CI runs against Firebase emulators (Java 21 + cached emulator/Playwright binaries), no live Firebase, no secrets needed

@@ -50,7 +50,7 @@
 
 - tsconfig.sdk.json 只 emit `sdk/` + `ports/` + 必要公開型別的 .d.ts，不要 emit core/features/services 內部。目標：型別檔從 184 降到 <30。
 - 加「公開表面快照測試」：`sdk/index.ts` 的匯出清單被改就要顯性 review。
-- 「無痛抽換測試」已成立（InMemory adapter 可換 Firestore，消費者零改動）——這是乾淨的證據，保住它。
+- 「無痛抽換測試」已成立（InMemory adapter 可換 Firestore，消費者零改動），這是乾淨的證據，保住它。
 
 ## ⑤ MCP 映射（給 AI agent）
 
@@ -66,7 +66,7 @@
 
 六個工具，落在甜蜜點內。
 
-**留內部（機制，不該是工具）**：signaling、keyx、gossip、courier、ledger、pricing——agent 不需要、也不該碰。
+**留內部（機制，不該是工具）**：signaling、keyx、gossip、courier、ledger、pricing，agent 不需要、也不該碰。
 
 **設計註記**：NeriloClient 是有狀態物件（connect/dispose 生命週期），MCP 工具是無狀態呼叫→ MCP server 要做 session 管理（roomId→live client 對應）。這是 MCP 對接的主要工作，不是重寫核心。
 
@@ -77,14 +77,14 @@
 - **公開表面快照測試**：對 `sdk/index.ts` 匯出清單與 dist/types 檔數設上限，超過即紅。
 - **死重棘輪**：PARK 的模組加 lint 規則「不得新增對它的 import」，凍結生效。
 - **god-file 行數棘輪**：4 個 god-file 設當前行數為上限，只准變小。
-  - 2026-07-16 裁決：`[roomId].vue` 1171→1172——Spec 005 T4 介紹人 hint 的最小整合面
+  - 2026-07-16 裁決：`[roomId].vue` 1171→1172，Spec 005 T4 介紹人 hint 的最小整合面
     （1 行 import＋呼叫；邏輯在新檔 `lib/introducerHint.ts`）。同輪 `RoomService`
     1055→988（`updateMeshIdentity` 抽至 `meshIdentityRegistry.ts`），淨值大減。
 - madge --circular 納入 CI，維持 0 環。
 
 ## ⑦ 重排（按「能不能被消費」的槓桿）
 
-1. ~~**收乾淨型別表面**（tsconfig.sdk.json 只 emit 公開）——最高槓桿、最低風險，半天工。~~
+1. ~~**收乾淨型別表面**（tsconfig.sdk.json 只 emit 公開），最高槓桿、最低風險，半天工。~~
    **已完成（2026-07-16）**，且比預估難：根因不是 emit 設定，是 barrel 把重型 Firestore 工廠（`createChatClient` 動態載入 MeshChatService）和純公開 API 綁在一起，加上 `SignalingTransport` 介面與 Firestore 實作同檔。修法＝(a) 工廠拆到 subpath `nerilo/firestore`、(b) 介面拆到 `SignalingTransport.types`、(c) tsc emit 後由 `scripts/prune-sdk-types.mjs` 依可達性修剪。**型別檔 186→16、npm 包 192→29 檔（231KB→99KB）**；prune 腳本 `--max=30` 兼作公開表面適應度函數。dts 打包工具（dts-bundle-generator）對本 codebase 的大型別圖會卡（@babel/types），故改用「tsc + 可達性修剪」。
 2. ~~對死重逐塊拍板~~ **已完成（ADR-0031 + 死重圍籬 lint，驗證會擋）**。
 3. ~~公開表面快照 + god-file 棘輪~~ **已完成（tests/unit/fitness.architecture.spec.ts，驗證會紅）**。

@@ -35,7 +35,7 @@ GameFeature <── channel:'game' 過濾 ── MeshGossipManager.onMessage
 ## 契約細則
 
 - **通道分流**：`channel` 缺省視同 `'chat'`；`'game'` 的 content 是遊戲
-  envelope JSON。channel 在簽章覆蓋範圍內——竄改通道＝驗簽失敗
+  envelope JSON。channel 在簽章覆蓋範圍內，竄改通道＝驗簽失敗
   （防把聊天內容推進遊戲分發、或反向）。聊天端（MeshChatService）與
   遊戲端（attachGameTransportToMesh）各自過濾非己通道。
 - **定向 send**：廣播 + `to` 欄位、收端過濾（與星型版同語義）。3–5 人
@@ -47,7 +47,7 @@ GameFeature <── channel:'game' 過濾 ── MeshGossipManager.onMessage
   的硬邊界。
 - **store 語義**：每 sender 保留最近 500 則（超過淘汰最舊、floor 前不回補）。
   遲入/斷線重連的**遊戲狀態**追趕走 GameSession 快照（SNAPSHOT_*），
-  不依賴傳輸層重放全部輸入史——store 只保證「在房成員」的事件恰好一次。
+  不依賴傳輸層重放全部輸入史，store 只保證「在房成員」的事件恰好一次。
 - **拓撲涵蓋**：2 人星型（既有）、3–5 人 mesh（本次）。6+ 人 partial mesh
   未接線（與聊天一致）。
 - **信任邊界**（ADR-G01 不變）：簽章擋第三者偽造與跨通道竄改；
@@ -60,12 +60,12 @@ GameFeature <── channel:'game' 過濾 ── MeshGossipManager.onMessage
 - `tests/unit/SecurityManager.spec.ts`：channel 竄改驗簽失敗 + round-trip。
 - `tests/unit/MeshChatService.spec.ts`：game 通道不進聊天顯示。
 - 可靠性本體（去重、對帳收斂、5/5 診斷矩陣）由聊天通道的既有測試鏈
-  背書——同一條管線，通道欄位不改變傳輸行為。
+  背書，同一條管線，通道欄位不改變傳輸行為。
 
 ## 遊戲事件「不做」Firestore 備援橋接（決策記錄，2026-07-05）
 
 聊天有備援橋接（正確性優先）；遊戲事件**刻意不做**：
-1. 回合制斷線的正確 UX 是「對局暫停」——雙方同時失去對方輸入，暫停是
+1. 回合制斷線的正確 UX 是「對局暫停」，雙方同時失去對方輸入，暫停是
    誠實狀態；經伺服器續打反而掩蓋連線降級。
 2. 遊戲流量頻率高於聊天，橋接的 Firestore 讀寫成本與 P2P 敘事直接矛盾。
 3. lockstep/state-hash 對延遲敏感，Firestore 往返會放大 desync 窗口。
@@ -88,5 +88,5 @@ E2E：`tests/e2e/game-ttt.spec.ts` 雙向出招 + 回合輪替 + 晚開面板對
    是里程碑 2+ 的事。
 3. seq 跨頁面重載會重置（與聊天同源的已知缺口），重載即視為離席重入，
    遊戲層以 SESSION_JOIN + 快照處理；demo 以 RESTART 收斂。
-4. bus 驗證要求 payload 必須存在——無 payload 的 envelope 整包被丟
+4. bus 驗證要求 payload 必須存在，無 payload 的 envelope 整包被丟
    （本輪踩到：SYNC_REQ 空 payload 被靜默丟棄；遊戲事件一律帶 `{}` 起跳）。
