@@ -52,12 +52,14 @@ jobs:
 
       # _warmup 先跑（見 e2e-e2ee.yml 註解）：單 spec workflow 的 nuxt dev 冷啟動
       # 會吃掉第一個產品斷言窗。7p 目前靠自身 20s 加入窗容忍過去，顯式預熱更穩。
+      # 不要傳 --reporter，理由見 e2e-e2ee.yml 同一步
       - name: Run warmup + 7p matrix against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo
-          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/_warmup.spec.ts tests/e2e-vue/mesh-diagnostic-7p.spec.ts --workers=1 --reporter=list"
+          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/_warmup.spec.ts tests/e2e-vue/mesh-diagnostic-7p.spec.ts --workers=1"
         env:
           CI: 'true'
+          PLAYWRIGHT_HTML_OPEN: 'never'
 
       - name: Upload Playwright report
         if: always()
@@ -65,4 +67,12 @@ jobs:
         with:
           name: playwright-report-7p
           path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-7p
+          path: test-results/
           retention-days: 14

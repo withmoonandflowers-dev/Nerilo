@@ -219,12 +219,15 @@ jobs:
       # 新到期日 2026-08-01（07-18 起算兩週）。已加每日 schedule 觸發，屆時樣本才會是
       # 每天各自獨立的一次，而不是同一天連推三筆湊出來的三次。
       # 移除 continue-on-error 是 ADR-0017 切 production 的門檻之一，不可提前。
+      # 不要傳 --reporter：reporter 由 playwright.vue.config.ts 宣告（含 html），
+      # 先前的 --reporter=list 蓋掉 config，底下的上傳報告步驟一路空跑。
       - name: Run Vue stable E2E against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo
-          "npx playwright test --config playwright.vue.config.ts --grep @vue-stable --workers=1 --reporter=list"
+          "npx playwright test --config playwright.vue.config.ts --grep @vue-stable --workers=1"
         env:
           CI: 'true'
+          PLAYWRIGHT_HTML_OPEN: 'never'
         continue-on-error: true
 
       - name: Upload Vue Playwright report

@@ -53,12 +53,15 @@ jobs:
       # _warmup 先跑：nuxt dev server 首次編譯各路由可吃 >10s，單 spec 冷啟動會撞掉
       # 第一個產品斷言（實測兩次：createRoom 的 10s waiting URL 窗）。暖機用純路由
       # 預熱而非真 spec——用真 spec 當暖機時它自己會變成冷啟動的受害者（run #3 實證）。
+      # 不要傳 --reporter：reporter 由 playwright.vue.config.ts 宣告（含 html）。
+      # 先前這裡傳 --reporter=list 蓋掉 config，html 從未產生，下面的上傳步驟一路空跑。
       - name: Run warmup + mesh-e2ee against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo
-          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/_warmup.spec.ts tests/e2e-vue/mesh-e2ee.spec.ts --workers=1 --reporter=list"
+          "npx playwright test --config playwright.vue.config.ts tests/e2e-vue/_warmup.spec.ts tests/e2e-vue/mesh-e2ee.spec.ts --workers=1"
         env:
           CI: 'true'
+          PLAYWRIGHT_HTML_OPEN: 'never'
 
       - name: Upload Playwright report
         if: always()
@@ -66,4 +69,13 @@ jobs:
         with:
           name: playwright-report-e2ee
           path: playwright-report/
+          retention-days: 14
+
+      # error-context.md／截圖在 test-results/，失敗診斷實際靠這包
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-e2ee
+          path: test-results/
           retention-days: 14

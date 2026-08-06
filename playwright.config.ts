@@ -4,6 +4,9 @@ export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60_000,
   retries: 0,
+  // reporter 在此宣告一次，npm script 與 CLI 不要再用 --reporter 覆寫，
+  // 否則 html 不會產生、CI 的「上傳報告」步驟空跑（見 playwright.vue.config.ts）。
+  reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://localhost:4173',
     trace: 'on-first-retry',
