@@ -1,12 +1,14 @@
 # 上板部署腳本（Hosting）
 # 使用方式：
-#   .\scripts\deploy.ps1           # 僅 build + firebase deploy --only hosting
-#   .\scripts\deploy.ps1 -Check    # 先跑 type-check、lint、test:run 再 build + deploy
-#   .\scripts\deploy.ps1 -Full     # build + firebase deploy（hosting + firestore + functions）
+#   .\scripts\deploy.ps1           # 驗證 production env + build + deploy Hosting
+#   .\scripts\deploy.ps1 -Check    # 先跑 type-check、lint、test:run
+#   .\scripts\deploy.ps1 -Full -ConfirmFunctionsAndBilling
+#                                  # 明確確認後才部署 Hosting + Firestore + Functions
 
 param(
     [switch]$Check,  # 上板前執行 type-check、lint、單元測試
-    [switch]$Full    # 部署全部（hosting + firestore + functions），預設僅 hosting
+    [switch]$Full,   # 部署全部（hosting + firestore + functions），預設僅 hosting
+    [switch]$ConfirmFunctionsAndBilling
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +28,12 @@ if (-not $ProjectRoot -or -not (Test-Path (Join-Path $ProjectRoot "package.json"
 Set-Location $ProjectRoot
 Write-Host "[deploy] 專案根目錄: $ProjectRoot" -ForegroundColor Cyan
 
+if ($Full -and -not $ConfirmFunctionsAndBilling) {
+    Write-Host "[deploy] 已阻擋：-Full 包含首次 Functions 部署與 Blaze 成本決策。" -ForegroundColor Red
+    Write-Host "[deploy] 完成 runtime、secrets、region 與預算審查後，另加 -ConfirmFunctionsAndBilling。" -ForegroundColor Yellow
+    exit 1
+}
+
 if ($Check) {
     Write-Host "[deploy] 執行上板前檢查（type-check、lint、單元測試）..." -ForegroundColor Yellow
     & npm run type-check
@@ -37,19 +45,12 @@ if ($Check) {
     Write-Host "[deploy] 檢查通過" -ForegroundColor Green
 }
 
-Write-Host "[deploy] 建置前端 (npm run build)..." -ForegroundColor Yellow
-& npm run build
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[deploy] build 失敗" -ForegroundColor Red
-    exit $LASTEXITCODE
-}
-
 if ($Full) {
-    Write-Host "[deploy] 部署全部 (firebase deploy)..." -ForegroundColor Yellow
-    & firebase deploy
+    Write-Host "[deploy] 執行受保護的完整部署..." -ForegroundColor Yellow
+    & npm run deploy:full -- --confirm-functions-and-billing
 } else {
-    Write-Host "[deploy] 部署 Hosting (firebase deploy --only hosting)..." -ForegroundColor Yellow
-    & firebase deploy --only hosting
+    Write-Host "[deploy] 驗證環境並部署 production Hosting..." -ForegroundColor Yellow
+    & npm run deploy:production
 }
 
 if ($LASTEXITCODE -ne 0) {

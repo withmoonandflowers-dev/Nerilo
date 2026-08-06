@@ -29,6 +29,9 @@ if (-not (Test-Path (Join-Path $ProjectRoot ".env.production")) -and
     exit 1
 }
 
+& node scripts/validate-firebase-web-env.mjs --from .env.local --from .env.production --project nerilo --label React-production
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 if (-not $Yes) {
     Write-Host ""
     Write-Host "  About to deploy to PRODUCTION (https://nerilo.web.app)." -ForegroundColor Yellow

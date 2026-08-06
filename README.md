@@ -100,7 +100,7 @@ Both scripts refuse to run while `.env.staging` / `.env.production` contain `REP
 |---|---|
 | Page loads, `.role-badge` stays empty, no errors in UI | Anonymous auth not enabled in your Firebase project. Console → Authentication → Sign-in method → Anonymous → Enable. |
 | `auth/network-request-failed` in console | Either your `.env.local` values are wrong, or the API key is restricted to a different referrer. Verify in Firebase Console → Project settings → General. |
-| `auth/configuration-not-found` | `VITE_FIREBASE_AUTH_DOMAIN` mismatch — it must be exactly `<project-id>.firebaseapp.com`. The older `.appspot.com` form (used by some legacy projects) won't work for Auth. |
+| `auth/configuration-not-found` | `VITE_FIREBASE_AUTH_DOMAIN` mismatch; it must be exactly `<project-id>.firebaseapp.com`. The older `.appspot.com` form (used by some legacy projects) won't work for Auth. |
 | `Failed to load resource: ERR_CONNECTION_REFUSED` to `127.0.0.1:9099` or `127.0.0.1:8080` | App is in test mode and emulators aren't running. Either: a) don't run with `--mode test`, or b) start emulators: `npx firebase emulators:start --only auth,firestore`. |
 | `npm run test:e2e` hangs at "Waiting for http://localhost:4173" | Vite startup blocked. On Windows, the Playwright `webServer.command` already uses `node ./node_modules/vite/bin/vite.js` directly to avoid the npm-shim issue. If you're still seeing this, run `npm run dev:test` in another terminal first and let Playwright reuse it. |
 | `npm run test:e2e:ci` exits with a Java version error | Install Java 21+ (Temurin). Required by Firebase Tools 15 emulators. |

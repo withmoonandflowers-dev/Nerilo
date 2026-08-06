@@ -50,6 +50,9 @@ if ($Placeholders) {
     exit 1
 }
 
+& node scripts/validate-firebase-web-env.mjs --from .env.staging --project nerilo-staging --label React-staging
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 if ($Check) {
     Write-Host "[deploy-staging] Running pre-deploy checks (type-check, lint, unit tests)..." -ForegroundColor Yellow
     & npm run type-check;  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

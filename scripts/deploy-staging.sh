@@ -49,6 +49,11 @@ if grep -E "^[^#].*REPLACE_ME_" .env.staging > /dev/null 2>&1; then
   exit 1
 fi
 
+node scripts/validate-firebase-web-env.mjs \
+  --from .env.staging \
+  --project nerilo-staging \
+  --label React-staging
+
 if [[ "$CHECK" -eq 1 ]]; then
   echo "[deploy-staging] Running pre-deploy checks..."
   npm run type-check

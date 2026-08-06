@@ -34,7 +34,7 @@ scripts\git-commit-tests.bat
 
 ## 環境需求
 
-- Node.js（建議 v18+）
+- Node.js 24（與 CI／lockfile 一致）
 - 專案根目錄已執行過 `npm install`
 - E2E 會自動啟動 `npm run dev:test`（port 4173），無需手動起 server
 - 依賴 WebRTC / Firebase 的 E2E 需可連線至 Firebase 專案（或使用 Emulator）
@@ -45,12 +45,12 @@ scripts\git-commit-tests.bat
 
 | 腳本 | 用途 |
 |------|------|
-| `deploy.ps1` | 建置 + `firebase deploy --only hosting` |
+| `deploy.ps1` | 驗證 production env + 建置 + 部署 Hosting |
 | `deploy.ps1 -Check` | 先 type-check、lint、單元測試，通過後再 build + deploy hosting |
-| `deploy.ps1 -Full` | 建置 + `firebase deploy`（hosting + firestore + functions） |
+| `deploy.ps1 -Full -ConfirmFunctionsAndBilling` | 明確確認後才部署 hosting + firestore + functions |
 | `deploy-safe.ps1` | 等同 `deploy.ps1 -Check`（安全上板） |
 
-詳見 [docs/上板與部署手冊.md](../docs/上板與部署手冊.md)。歷史文件已清理，若需還原可參考 `scripts/cleanup-removed-docs.bat` 中的刪除清單。
+詳見部署單一事實來源 [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)。
 
 ### 品質門檻（與 CI 一致）
 
@@ -114,7 +114,7 @@ scripts\git-commit-tests.bat
 
 | 腳本行為 | 對應 npm 指令 |
 |----------|----------------|
-| 上板（Hosting） | `npm run deploy` 或 `npm run build && firebase deploy --only hosting` |
+| 上板（Hosting） | `npm run deploy`（含 env／project guard） |
 | 安全上板（檢查+部署） | `npm run deploy:safe` |
 | 品質門檻（type-check + lint + 單元測試） | `npm run ci` 或 `npm run check` |
 | 快速 E2E | `npm run test:e2e -- tests/e2e/waiting-room.spec.ts ...` |
