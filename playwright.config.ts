@@ -9,7 +9,10 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://localhost:4173',
-    trace: 'on-first-retry',
+    // 同 playwright.vue.config.ts：retries=0 讓 'on-first-retry' 永遠觸發不到，
+    // e2e-tests.yml 的 test-results/ 失敗上傳因此一直是空的。
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   // 自動啟動開發伺服器
   // Use node-direct invocation so this works on Windows (where Node subprocesses

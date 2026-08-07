@@ -24,7 +24,13 @@ export default defineConfig({
   workers: 2,
   use: {
     baseURL: 'http://localhost:3210',
-    trace: 'on-first-retry',
+    // retries=0 時 'on-first-retry' 永遠觸發不到，等於沒有 trace：失敗時 test-results/
+    // 全空，CI 上傳步驟撈不到東西（2026-08-07 mesh-e2ee 排程紅時實證）。
+    // 不改用 retries 換 trace，重試會遮蔽 flake，違反 constitution 第 5 條誠實條款。
+    // 代價：retain-on-failure 對每個 test 都開 tracing。本檔 workers=2 的理由就是
+    // CPU 被餓死會讓 mesh 送達界線失準，若 7p 矩陣在此之後轉紅，先懷疑這一行。
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     // node 直呼 web-vue 本地 nuxt：repo 根的 npx 會抓最新版（4.4.5 dev server
