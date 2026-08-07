@@ -103,12 +103,34 @@ export interface CourierIOUBookConfig {
   pricing: CongestionPricingConfig;
 }
 
+const INITIAL_STORAGE_PRICE = 0.000_001;
+const STORAGE_DURATION_MS = 14 * 86_400_000;
+
+/**
+ * 冷啟動代管配額：一個還沒賺過點數的新節點，對單一信使買得起的密文位元組量
+ * （以初始價計；擁擠時價格上升，同樣的額度就買得少，這是定價曲線的本意）。
+ *
+ * 取 64 KiB。低於 CourierStore 的單房 5 MiB 與總預算 100 MiB 實體上限甚多，
+ * 但高於單筆上限 4 KiB，且足夠一段對話的離線寄存。
+ *
+ * 舊值是直接寫死的 0.01 點，只買得起約 714 bytes，比 store 自己允許的單筆
+ * 上限還小，等於新節點連一筆最大尺寸的紀錄都寄存不進去，離線送達在真實
+ * app 裡走不完（2026-08-07 三瀏覽器實測三次皆卡在此，迴歸鎖見
+ * tests/unit/CourierIOU.spec.ts 的「冷啟動額度」段）。額度仍然有界，
+ * 用完照樣拒收，反濫用性質不變。
+ */
+export const COLD_START_CUSTODY_BYTES = 64 * 1024;
+
 export const DEFAULT_COURIER_IOU_CONFIG: CourierIOUBookConfig = {
-  creditLimitPerIssuer: 0.01,
+  creditLimitPerIssuer: storageCost(
+    INITIAL_STORAGE_PRICE,
+    COLD_START_CUSTODY_BYTES,
+    STORAGE_DURATION_MS
+  ),
   quoteTtlMs: 30_000,
   pricingIntervalMs: 60_000,
-  storageDurationMs: 14 * 86_400_000,
-  initialStoragePrice: 0.000_001,
+  storageDurationMs: STORAGE_DURATION_MS,
+  initialStoragePrice: INITIAL_STORAGE_PRICE,
   contributionPricePerByte: 0.000_001,
   pricing: DEFAULT_CONGESTION_PRICING,
 };

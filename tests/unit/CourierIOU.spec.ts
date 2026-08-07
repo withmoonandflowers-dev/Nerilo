@@ -13,6 +13,8 @@ import {
 } from '../../src/core/relay/CourierService';
 import {
   CourierIOUBook,
+  COLD_START_CUSTODY_BYTES,
+  DEFAULT_COURIER_IOU_CONFIG,
   createDepositIOU,
   createContributionTransferDraft,
   createRepaymentRequest,
@@ -27,7 +29,7 @@ import { arrayBufferToBase64 } from '../../src/utils/crypto';
 import { computeDigest, recordsPeerLacks, maxEpochs } from '../../src/core/mesh/antiEntropy';
 import { buildRoomStore } from '../../src/core/relay/CourierService';
 import type { GossipMessage, P2PEnvelope } from '../../src/types';
-import { enc } from './_courierFixtures';
+import { enc, encSized } from './_courierFixtures';
 
 class BusEnd implements CourierBus {
   private handlers = new Map<string, Set<(env: P2PEnvelope) => void | Promise<void>>>();
@@ -397,5 +399,76 @@ describe('Courier IOU — V4 免費成員互補不受信使拒收影響', () => 
 
     expect(memberA.get(peerRecord.senderId)?.get(1)?.get(peerRecord.seq)).toBe(peerRecord);
     expect(memberB.get(localRecord.senderId)?.get(1)?.get(localRecord.seq)).toBe(localRecord);
+  });
+});
+
+/**
+ * 冷啟動額度迴歸鎖（2026-08-07）。
+ *
+ * 背景：舊的預設 creditLimitPerIssuer = 0.01 只買得起約 714 bytes 的 14 天代管，
+ * 比 CourierStore 自己允許的單筆上限（maxRecordBytes = 4 KiB）還小。等於一個
+ * 還沒賺過點數的新節點，連一筆最大尺寸的紀錄都寄存不進去，離線送達在真實
+ * app 裡走不完（三次三瀏覽器實測皆卡在此）。
+ *
+ * 這組測試釘住兩件事，防止再被調回去：
+ *  1. 經濟上限不得比實體上限更緊（新節點至少付得起一筆 maxRecordBytes）。
+ *  2. 額度仍然有界，用完照樣以 insufficient-credit 拒收（T5 的反濫用性質不變）。
+ */
+describe('Spec 001 冷啟動額度：新節點要付得起實體上限允許的寄存', () => {
+  const SIG = 'SIG';
+
+  /** 造一筆 recordBytes 恰為 totalBytes 的合法密文紀錄。 */
+  function sized(totalBytes: number, seq: number): GossipMessage {
+    return rec({ seq, content: encSized(totalBytes - SIG.length), signature: SIG });
+  }
+
+  async function freshCourier() {
+    const courier = await node();
+    const issuer = await node();
+    const book = new CourierIOUBook(
+      courier.nodeId, courier.sign, DEFAULT_COURIER_IOU_CONFIG, () => 1000
+    );
+    const [memberBus, courierBus] = linkedBuses();
+    const store = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    new CourierServer(courierBus, store, 'courier-uid', undefined, credit(courier), book).start();
+    const client = new CourierClient(memberBus, 'member-uid', 3000, member(issuer));
+    client.start();
+    return { book, store, client, issuer };
+  }
+
+  it('全新發票人付得起一筆 maxRecordBytes 的紀錄', async () => {
+    const { client, store } = await freshCourier();
+    const biggest = sized(DEFAULT_COURIER_CONFIG.maxRecordBytes, 1);
+    expect(recordBytes(biggest)).toBe(DEFAULT_COURIER_CONFIG.maxRecordBytes);
+    expect(await client.deposit(biggest)).toMatchObject({ accepted: true });
+    expect(store.stats().recordCount).toBe(1);
+  });
+
+  it('全新發票人足以寄存一段短對話（20 筆典型訊息）', async () => {
+    const { client, store } = await freshCourier();
+    for (let seq = 1; seq <= 20; seq++) {
+      expect(await client.deposit(sized(300, seq))).toMatchObject({ accepted: true });
+    }
+    expect(store.stats().recordCount).toBe(20);
+  });
+
+  it('冷啟動額度仍然有界：耗盡後以 insufficient-credit 拒收', async () => {
+    const { client, store, book, issuer } = await freshCourier();
+    const perRecord = 1024;
+    let accepted = 0;
+    let lastReason = '';
+    for (let seq = 1; seq <= 200; seq++) {
+      const result = await client.deposit(sized(perRecord, seq));
+      if (result.accepted) { accepted += 1; continue; }
+      lastReason = result.reason;
+      break;
+    }
+    expect(lastReason).toBe('insufficient-credit');
+    // 有界：接受的總量不超過冷啟動額度買得起的位元組數。
+    expect(accepted * perRecord).toBeLessThanOrEqual(COLD_START_CUSTODY_BYTES);
+    expect(book.availableCredit(issuer.nodeId)).toBeLessThan(
+      DEFAULT_COURIER_IOU_CONFIG.creditLimitPerIssuer
+    );
+    expect(store.stats().recordCount).toBe(accepted);
   });
 });
