@@ -119,7 +119,7 @@
     "eslint-plugin-react-refresh": "^0.4.5",
     "fast-check": "^3.23.2",
     "firebase-tools": "^15.18.0",
-    "jsdom": "^27.4.0",
+    "jsdom": "^30.0.1",
     "rollup": "^4.24.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.8",
