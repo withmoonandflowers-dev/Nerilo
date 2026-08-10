@@ -37,6 +37,15 @@ export default defineConfig(({ mode }) => ({
     port: 3000,
     host: true,
   },
+  optimizeDeps: {
+    // 只掃本 app 的進入點。預設會把 repo 下所有 *.html 當進入點，於是掃進
+    // examples/minimal-chat，那支 `import 'nerilo'` 自我參照到尚未建置的 dist/，
+    // 整個 dep-scan 就失敗（CI 跑 E2E 前不建 SDK，所以只在 CI 發作）。
+    // 掃描一失敗，Vite 改成執行期才發現依賴，重新最佳化時會強制整頁重載，
+    // 打中正在填表單的 E2E 就整個重來：2026-08-10 由 P0.2 的 trace 實證，
+    // 頁面在填完密碼、按下送出的瞬間 navigated to /login，表單回到初始狀態。
+    entries: ['index.html'],
+  },
   define: {
     // 在測試模式下允許 guest 用戶建立房間
     'import.meta.env.VITE_ALLOW_GUEST_CREATE_ROOM': mode === 'test' ? '"true"' : 'undefined',
