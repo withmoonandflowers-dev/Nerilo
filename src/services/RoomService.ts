@@ -258,36 +258,47 @@ export class RoomService {
    * - 狀態保護：closed / migrating 房間拒絕加入
    * - 自動激活：waiting 房間滿 2 人時自動轉為 open
    */
-  static async joinRoom(roomId: string, uid: string): Promise<void> {
-    logger.info('[RoomService] joinRoom called', { roomId, uid });
-
-    // Firebase SDK on the REST transport does not auto-retry 'failed-precondition'
-    // (which is what Firestore returns when the updateTime precondition on a write
-    // fails, i.e. another client wrote to the doc between our read and commit).
-    // gRPC transport returns 'aborted' for the same situation and the SDK retries;
-    // here we add our own retry to cover both transports.
+  /**
+   * 名冊類交易的共用重試。
+   *
+   * REST transport 的 updateTime 前置條件失敗會回 'failed-precondition'，gRPC 回
+   * 'aborted'，兩者 SDK 都不一定自己重試。'permission-denied' 也要算進來：rules 是
+   * 拿「已提交的文件」評估，且評在前置條件之前，別人在我們讀取後動了名冊，我們送出的
+   * 名冊就對不上，rules 的「不得增刪他人」先擋下，於是回 permission-denied 而不是
+   * aborted。重讀一次就會拿到正確名冊；真的無權時重試耗盡照樣往外拋。
+   */
+  private static async _withRosterRetry(
+    label: string,
+    ctx: Record<string, unknown>,
+    run: () => Promise<void>
+  ): Promise<void> {
     const MAX_ATTEMPTS = 4;
     let lastError: unknown;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        await this._joinRoomTransaction(db, roomId, uid);
+        await run();
         return;
       } catch (err: unknown) {
         const code: string = (err as { code?: string })?.code ?? '';
-        const isRetryable = code === 'failed-precondition' || code === 'aborted';
-        if (isRetryable && attempt < MAX_ATTEMPTS) {
-          const delayMs = 150 * attempt;
-          logger.warn('[RoomService] joinRoom transaction conflict, retrying', {
-            roomId, uid, attempt, code, delayMs,
-          });
-          await new Promise(r => setTimeout(r, delayMs));
-          lastError = err;
-          continue;
-        }
-        throw err;
+        const isRetryable =
+          code === 'failed-precondition' || code === 'aborted' || code === 'permission-denied';
+        if (!isRetryable || attempt >= MAX_ATTEMPTS) throw err;
+        const delayMs = 150 * attempt;
+        logger.warn(`[RoomService] ${label} transaction conflict, retrying`, {
+          ...ctx, attempt, code, delayMs,
+        });
+        await new Promise(r => setTimeout(r, delayMs));
+        lastError = err;
       }
     }
     throw lastError;
+  }
+
+  static async joinRoom(roomId: string, uid: string): Promise<void> {
+    logger.info('[RoomService] joinRoom called', { roomId, uid });
+    await this._withRosterRetry('joinRoom', { roomId, uid }, () =>
+      this._joinRoomTransaction(db, roomId, uid)
+    );
   }
 
   /** Inner transaction logic – extracted so the retry loop stays clean. */
@@ -412,64 +423,38 @@ export class RoomService {
    */
   static async leaveRoom(roomId: string, uid: string): Promise<void> {
     logger.info('[RoomService] leaveRoom called', { roomId, uid });
+    await this._withRosterRetry('leaveRoom', { roomId, uid }, async () => {
+      await runTransaction(db, async (transaction) => {
+        const roomDocRef = doc(db, 'p2pRooms', roomId);
+        const roomSnap = await transaction.get(roomDocRef);
 
-    const MAX_ATTEMPTS = 4;
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        await runTransaction(db, async (transaction) => {
-          const roomDocRef = doc(db, 'p2pRooms', roomId);
-          const roomSnap = await transaction.get(roomDocRef);
-
-          if (!roomSnap.exists()) {
-            // 房間已不存在，視為成功
-            return;
-          }
-
-          const roomData = roomSnap.data();
-          const participants: string[] = roomData.participants || [];
-          const newParticipants = participants.filter((p: string) => p !== uid);
-
-          // 若用戶本來就不在房間內，不需要寫入（避免空 commit 觸發 precondition）
-          if (newParticipants.length === participants.length) {
-            logger.info('[RoomService] leaveRoom - uid not in participants, no-op', { roomId, uid });
-            return;
-          }
-
-          // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
-          // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
-          const OPEN_TTL_MS = RoomService.PERSISTENT_TTL_MS;
-          const now = Date.now();
-          transaction.update(roomDocRef, {
-            participants: newParticipants,
-            participantCount: newParticipants.length,
-            lastActiveAt: now,
-            ttlExpireAt: Timestamp.fromMillis(now + OPEN_TTL_MS),
-          });
-        });
-        return; // success
-      } catch (err: unknown) {
-        const code: string = (err as { code?: string })?.code ?? '';
-        const isRetryable = code === 'failed-precondition' || code === 'aborted';
-        if (isRetryable && attempt < MAX_ATTEMPTS) {
-          const delayMs = 150 * attempt;
-          logger.warn('[RoomService] leaveRoom transaction conflict, retrying', {
-            roomId, uid, attempt, code, delayMs,
-          });
-          await new Promise(r => setTimeout(r, delayMs));
-          lastError = err;
-          continue;
+        if (!roomSnap.exists()) {
+          // 房間已不存在，視為成功
+          return;
         }
-        // Non-retryable or exhausted attempts: log but don't throw
-        // leaveRoom is best-effort; we don't want to break navigation on failure
-        logger.error('[RoomService] leaveRoom failed (non-retryable or exhausted)', {
-          roomId, uid, attempt, err,
+
+        const roomData = roomSnap.data();
+        const participants: string[] = roomData.participants || [];
+        const newParticipants = participants.filter((p: string) => p !== uid);
+
+        // 若用戶本來就不在房間內，不需要寫入（避免空 commit 觸發 precondition）
+        if (newParticipants.length === participants.length) {
+          logger.info('[RoomService] leaveRoom - uid not in participants, no-op', { roomId, uid });
+          return;
+        }
+
+        // 開發階段：即使房間暫時沒有任何 participants，也先不自動關閉房間
+        // 只更新 participants 陣列，讓房主或後續 UI 明確決定何時關閉房間
+        const OPEN_TTL_MS = RoomService.PERSISTENT_TTL_MS;
+        const now = Date.now();
+        transaction.update(roomDocRef, {
+          participants: newParticipants,
+          participantCount: newParticipants.length,
+          lastActiveAt: now,
+          ttlExpireAt: Timestamp.fromMillis(now + OPEN_TTL_MS),
         });
-        return;
-      }
-    }
-    // Exhausted retries — log but swallow to avoid breaking navigation
-    logger.error('[RoomService] leaveRoom exhausted retries', { roomId, uid, lastError });
+      });
+    });
   }
 
   /**
