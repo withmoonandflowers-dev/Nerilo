@@ -423,6 +423,18 @@ export class RoomService {
    */
   static async leaveRoom(roomId: string, uid: string): Promise<void> {
     logger.info('[RoomService] leaveRoom called', { roomId, uid });
+    // leaveRoom 是 best-effort：離房失敗不可以擋住導航，所以重試耗盡或不可重試
+    // 一律記錄後吞掉，絕不往外拋（joinRoom 相反，失敗必須讓呼叫端知道）。
+    try {
+      await this._leaveRoomWrite(roomId, uid);
+    } catch (err) {
+      logger.error('[RoomService] leaveRoom failed, swallowed to keep navigation working', {
+        roomId, uid, err,
+      });
+    }
+  }
+
+  private static async _leaveRoomWrite(roomId: string, uid: string): Promise<void> {
     await this._withRosterRetry('leaveRoom', { roomId, uid }, async () => {
       await runTransaction(db, async (transaction) => {
         const roomDocRef = doc(db, 'p2pRooms', roomId);

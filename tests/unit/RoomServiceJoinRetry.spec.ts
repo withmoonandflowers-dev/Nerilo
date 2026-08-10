@@ -89,10 +89,27 @@ describe('joinRoom 對併發名冊變動的重試', () => {
 });
 
 describe('leaveRoom 同樣要能撐過併發名冊變動', () => {
-  it('permission-denied 後重讀並成功', async () => {
+  beforeEach(() => {
     mockTransactionGet.mockResolvedValue(roomSnap(['owner-1', 'leaver-2']));
+  });
+
+  it('permission-denied 後重讀並成功', async () => {
     failWith = ['permission-denied'];
     await expect(RoomService.leaveRoom('room-1', 'leaver-2')).resolves.toBeUndefined();
     expect(mockRunTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  // leaveRoom 是 best-effort：離房失敗不可以擋住導航。2026-08-10 重構時一度把它
+  // 換成共用重試 helper 而讓錯誤外漏，這兩條就是為了不再犯。
+  it('重試耗盡也不往外拋（吞掉以免擋住導航）', async () => {
+    failWith = Array(6).fill('permission-denied');
+    await expect(RoomService.leaveRoom('room-1', 'leaver-2')).resolves.toBeUndefined();
+    expect(mockRunTransaction).toHaveBeenCalledTimes(4);
+  });
+
+  it('不可重試的錯誤也不往外拋', async () => {
+    failWith = ['unavailable'];
+    await expect(RoomService.leaveRoom('room-1', 'leaver-2')).resolves.toBeUndefined();
+    expect(mockRunTransaction).toHaveBeenCalledTimes(1);
   });
 });
