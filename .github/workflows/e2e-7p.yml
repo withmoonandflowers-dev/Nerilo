@@ -5,10 +5,6 @@
 name: E2E 7p Matrix
 
 on:
-  # TEMPORARY（2026-08-10）：驗證入房重試與 vite dep-scan 兩項修正。
-  # 這條 push 觸發驗完就移除，正常狀態只有 workflow_dispatch + schedule。
-  push:
-    branches: [master]
   workflow_dispatch:
   schedule:
     - cron: '30 20 * * *' # 04:30 台北，避開日常推送
