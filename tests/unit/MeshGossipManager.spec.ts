@@ -37,6 +37,8 @@ const mockTopologyManager = {
   // Spec 011：拓撲自適應接線
   updateParticipantCount: vi.fn(),
   getTargetNeighborCount: vi.fn().mockReturnValue(6),
+  // A4：心跳判定不可達 → 觸發鄰居替換
+  handleNeighborDisconnected: vi.fn().mockResolvedValue(undefined),
 };
 
 vi.mock('../../src/core/mesh/MeshTopologyManager', () => ({
@@ -258,6 +260,71 @@ describe('MeshGossipManager', () => {
       fireMismatch!();
       fireMismatch!(); // 重複觸發
       expect(events).toEqual([{ peerId: 'peer-1' }]); // 每 peer 至多一次
+
+      mockTopologyManager.getNeighbors.mockReturnValue([]);
+    });
+  });
+
+  // ── A4：心跳接線（此前 setSendFunction 從未接線，殭屍連線永不回收）─────────────
+  describe('心跳接線（A4）', () => {
+    function makeNeighbor(id: string) {
+      let ephCb: ((env: { type: string; from?: string; payload: unknown }) => void) | null = null;
+      return {
+        neighbor: {
+          getId: vi.fn().mockReturnValue(id),
+          getState: vi.fn().mockReturnValue('connected'),
+          send: vi.fn().mockResolvedValue(undefined),
+          sendDigest: vi.fn().mockResolvedValue(undefined),
+          sendEphemeral: vi.fn().mockResolvedValue(undefined),
+          onMessage: vi.fn(),
+          onDigest: vi.fn(),
+          onEphemeral: vi.fn().mockImplementation((cb: typeof ephCb) => {
+            ephCb = cb;
+            return () => {};
+          }),
+        },
+        fireEphemeral(env: { type: string; from?: string; payload: unknown }) {
+          ephCb?.(env);
+        },
+      };
+    }
+
+    it('週期到點會經 ephemeral 送出 system:ping（證明 sendPingTo 不再是 no-op）', async () => {
+      const { neighbor } = makeNeighbor('peer-hb');
+      mockTopologyManager.getNeighbors.mockReturnValue([neighbor]);
+      await manager.initialize();
+      vi.advanceTimersByTime(2000); // 掃描器接線
+
+      vi.advanceTimersByTime(30_000); // 一次心跳週期
+      const pings = neighbor.sendEphemeral.mock.calls.filter((c) => c[0] === 'system:ping');
+      expect(pings.length).toBeGreaterThanOrEqual(1);
+
+      mockTopologyManager.getNeighbors.mockReturnValue([]);
+    });
+
+    it('收到 system:ping 會回 system:pong', async () => {
+      const { neighbor, fireEphemeral } = makeNeighbor('peer-hb');
+      mockTopologyManager.getNeighbors.mockReturnValue([neighbor]);
+      await manager.initialize();
+      vi.advanceTimersByTime(2000);
+
+      fireEphemeral({ type: 'system:ping', payload: { type: 'system:ping', timestamp: 123, senderId: 'peer-hb' } });
+      const pongs = neighbor.sendEphemeral.mock.calls.filter((c) => c[0] === 'system:pong');
+      expect(pongs.length).toBe(1);
+      expect((pongs[0][1] as { pingTimestamp: number }).pingTimestamp).toBe(123);
+
+      mockTopologyManager.getNeighbors.mockReturnValue([]);
+    });
+
+    it('連續漏 ping（對方不回 pong）→ 判定不可達 → 觸發 handleNeighborDisconnected', async () => {
+      const { neighbor } = makeNeighbor('peer-zombie');
+      mockTopologyManager.getNeighbors.mockReturnValue([neighbor]);
+      await manager.initialize();
+      vi.advanceTimersByTime(2000);
+
+      // MAX_MISSED_PINGS = 3，每 30s 一次；三次無 pong 後判定不可達
+      vi.advanceTimersByTime(90_000);
+      expect(mockTopologyManager.handleNeighborDisconnected).toHaveBeenCalledWith('peer-zombie');
 
       mockTopologyManager.getNeighbors.mockReturnValue([]);
     });

@@ -55,8 +55,18 @@ export async function updateMeshIdentity(
     if (!participants.includes(firebaseUid)) {
       throw new Error('join-not-propagated'); // 可重試：join 尚未生效
     }
-    const meshIdentities = data.meshIdentities || {};
-    meshIdentities[firebaseUid] = {
+    // B6：以 dotted field path 只寫自己那一格，由 Firestore 在伺服器端原子合併。
+    //
+    // 此前是「讀整張 meshIdentities → 在本地插入自己 → 整份覆寫」。多人同時進場時
+    // 人人拿著各自的舊快照覆寫整張表：後到者的寫入會刪掉快照中沒有的他人條目，
+    // 於是被 meshIdentitiesChangeIsValid（affectedKeys 必須 ⊆ {自己}）判為
+    // permission-denied。7-10 人同時進場時 5 次重試（約 2 秒）會耗盡 → 拋錯 →
+    // MeshGossipManager.initialize() 一路往上拋（歷史事故 bb85879「三人同時入房必敗」
+    // 當時的修法是加重試，沒有解決根因）。
+    //
+    // dotted path 不讀不改他人條目，天然無 lost update、也不再觸發該規則，
+    // 上面的 getDoc 只剩「join 是否已傳播 / introducedBy 是否為房內成員」的驗證用途。
+    const entry = {
       userId,
       pubKey,
       ...(ecdhPubKey ? { ecdhPubKey } : {}),
@@ -65,7 +75,7 @@ export async function updateMeshIdentity(
       joinedAt: Date.now(),
     };
     await updateDoc(roomDoc, {
-      meshIdentities,
+      [`meshIdentities.${firebaseUid}`]: entry,
       topology: 'mesh', // 標記為 mesh 拓撲
     });
   };

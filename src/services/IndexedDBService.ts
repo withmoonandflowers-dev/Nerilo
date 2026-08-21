@@ -183,7 +183,13 @@ export class IndexedDBService {
   // ── 聊天紀錄 ─────────────────────────────────────────────────────────────
 
   async saveChatMessage(message: ChatMessage, roomId: string): Promise<void> {
-    await this.db.chats.add({
+    // 主鍵是 ++id 自增（Dexie 不支援更換主鍵，見上方 schema 註解），messageId 只是索引。
+    // 因此手動以 messageId 做 upsert：同一則訊息重存（金鑰晚到後 redisplayForKeyEpoch
+    // 重派、備援與 gossip 雙寫）會更新原列而非再 add 一列。避免兩個回歸：
+    // (1) 重載後 .reverse() 先吐較新的重複列，明文被舊佔位字串蓋回；
+    // (2) limit(100) 計「列」不計「訊息」，重複列會靜默截短房間歷史。
+    // 交易化以在並發重存時維持「查—改/增」的原子性。
+    const record = {
       messageId: message.messageId,
       from: message.from,
       to: message.to,
@@ -192,6 +198,14 @@ export class IndexedDBService {
       edited: message.edited,
       deleted: message.deleted,
       roomId,
+    };
+    await this.db.transaction('rw', this.db.chats, async () => {
+      const existing = await this.db.chats.where('messageId').equals(message.messageId).first();
+      if (existing?.id !== undefined) {
+        await this.db.chats.update(existing.id, record);
+      } else {
+        await this.db.chats.add(record);
+      }
     });
   }
 

@@ -32,20 +32,53 @@ export class FirestoreRoomDirectory implements IRoomDirectory {
 
   watchIdentities(onChange: (snapshot: RoomSnapshot) => void): () => void {
     const roomRef = doc(db, 'p2pRooms', this.roomId);
-    return onSnapshot(
-      roomRef,
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data() as {
-          meshIdentities?: Record<string, DirectoryIdentity>;
-          participants?: string[];
-        };
-        onChange({ meshIdentities: data.meshIdentities ?? {}, participants: data.participants ?? [] });
-      },
-      (error) => {
-        logger.warn('[FirestoreRoomDirectory] watchIdentities error', { error });
-      }
-    );
+    // A6：這是 mesh 唯一的名冊 push 通道（成員發現／rejoin 偵測／人數）。此前一次
+    // 暫時性 onSnapshot error 就會讓 listener 被永久移除、整條靜止且 UI 無感。
+    // 改為有界退避自動重訂閱：成功快照即重置退避；permission-denied 這類永久錯誤
+    // 由 MAX_RETRIES 上界收斂，不會無限重試。
+    const MAX_RETRIES = 5;
+    let unsub: (() => void) | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let stopped = false;
+
+    const subscribe = (): void => {
+      if (stopped) return;
+      unsub = onSnapshot(
+        roomRef,
+        (snap) => {
+          attempts = 0; // 收到快照＝連線健康，重置退避
+          if (!snap.exists()) return;
+          const data = snap.data() as {
+            meshIdentities?: Record<string, DirectoryIdentity>;
+            participants?: string[];
+          };
+          onChange({ meshIdentities: data.meshIdentities ?? {}, participants: data.participants ?? [] });
+        },
+        (error) => {
+          if (unsub) { unsub(); unsub = null; }
+          if (stopped || attempts >= MAX_RETRIES) {
+            logger.warn('[FirestoreRoomDirectory] watchIdentities error（不再重訂閱）', {
+              roomId: this.roomId, attempts, error,
+            });
+            return;
+          }
+          const delay = Math.min(1000 * 2 ** attempts, 15000);
+          attempts++;
+          logger.warn('[FirestoreRoomDirectory] watchIdentities error，將重訂閱', {
+            roomId: this.roomId, attempt: attempts, delay, error,
+          });
+          retryTimer = setTimeout(subscribe, delay);
+        }
+      );
+    };
+
+    subscribe();
+    return () => {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (unsub) unsub();
+    };
   }
 
   async getSnapshot(preferCached = false): Promise<RoomSnapshot> {

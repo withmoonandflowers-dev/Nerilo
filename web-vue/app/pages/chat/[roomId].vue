@@ -198,7 +198,16 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     isRoomOwner.value = room.ownerUid === uid // 房主＝座 0（first）；遊戲騎 mesh gossip（MeshGameBus）
     roomOwnerId.value = room.ownerUid ?? ''
     const svc = new MeshChatService(roomId.value, uid, undefined, undefined, undefined, readIntroducerHint(roomId.value, uid))
-    await svc.initialize()
+    // A8：initialize() 失敗也必須清理。MeshGossipManager 在初始化很早期就掛上
+    // 名冊 onSnapshot 與多組計時器（2s 鄰居掃描、4s keyx…），遠早於最容易拋錯的
+    // registerIdentity。此前失敗直接落到外層 catch，而 meshChat 仍是 null，
+    // onUnmounted 的 meshChat?.cleanup() 成 no-op → 每次進房失敗都疊加一份洩漏。
+    try {
+      await svc.initialize()
+    } catch (e) {
+      await svc.cleanup().catch(() => {})
+      throw e
+    }
     if (disposed) {
       await svc.cleanup()
       return

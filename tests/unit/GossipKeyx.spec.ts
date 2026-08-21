@@ -300,3 +300,39 @@ describe('Spec 012 P2：hydrate 重放 keyx', () => {
     expect(handler.getMaxKnownEpoch()).toBe(-1);
   });
 });
+
+/** A11：金鑰安裝後的 redisplay 只重派可 upsert 的顯示型訊息，game 事件非冪等須略過 */
+describe('redisplay 通道分派（A11）', () => {
+  function gameWire(content: string, seq: number): GossipMessage {
+    return { ...chatWire(content, seq), channel: 'game' };
+  }
+
+  it('game 密文不因金鑰安裝而重派（避免重放遊戲指令），chat 則正常重派', async () => {
+    const producer = await ecdhPair();
+    const me = await ecdhPair();
+    const roomKey = await generateRoomKey();
+    const payload = await buildKeyx(roomKey, ME, 0, producer, me.publicKey);
+
+    const { handler } = makeHandler();
+    handler.setKeyxPrivateKey(me.privateKey);
+    const shown: GossipMessage[] = [];
+    handler.onMessage((msg) => shown.push(msg));
+
+    // 金鑰未到：game 與 chat 密文各先到一次（佔位顯示各一）
+    const gameCt = await encryptRecordContent('{"move":1}', roomKey, 0);
+    const chatCt = await encryptRecordContent('一般聊天', roomKey, 0);
+    await handler.handleReceivedMessage(gameWire(gameCt, 5), 'n1');
+    await handler.handleReceivedMessage(chatWire(chatCt, 6), 'n1');
+    const gameShownFirst = shown.filter((m) => m.channel === 'game').length;
+
+    // keyx 後到 → 安裝金鑰 → redisplay。chat 應被重派成明文；game 不得再派。
+    await handler.handleReceivedMessage(keyxWire(payload, 1), 'n1');
+    await vi.waitFor(() =>
+      expect(shown.some((m) => m.channel !== 'game' && m.content === '一般聊天')).toBe(true)
+    );
+
+    // game 的派發次數在 keyx 前後不變（A11：redisplay 跳過 game）
+    const gameShownAfter = shown.filter((m) => m.channel === 'game').length;
+    expect(gameShownAfter).toBe(gameShownFirst);
+  });
+});

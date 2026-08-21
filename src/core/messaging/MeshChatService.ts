@@ -381,5 +381,8 @@ export class MeshChatService {
     await this.meshGossipManager.cleanup();
     this.messageListeners.clear();
     this.gameListeners.clear();
+    // A9：此前漏清這兩組，重進房疊加 → 舊監聽器殘留、reaction/已讀水位被重複通知。
+    this.reactionListeners.clear();
+    this.readListeners.clear();
   }
 }

@@ -59,7 +59,15 @@ export function useMeshTopology(options?: UseMeshTopologyOptions) {
       });
 
       const meshChatService = new MeshChatService(roomId, uid, chatStorage);
-      await meshChatService.initialize();
+      // A8：initialize() 失敗也必須清理。MeshGossipManager 初始化很早期就掛上名冊
+      // onSnapshot 與多組計時器，遠早於最容易拋錯的 registerIdentity；此前失敗直接
+      // 落到下方 catch，而 ref 尚未賦值 → cleanup() 成 no-op，重試進房逐次疊加洩漏。
+      try {
+        await meshChatService.initialize();
+      } catch (e) {
+        await meshChatService.cleanup().catch(() => {});
+        throw e;
+      }
       meshChatServiceRef.current = meshChatService;
 
       // 監聯連線狀態（透過 ref 呼叫，確保用最新的 callback）

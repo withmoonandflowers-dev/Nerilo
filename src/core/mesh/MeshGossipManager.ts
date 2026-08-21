@@ -5,6 +5,7 @@ import { GossipMessageHandler } from './GossipMessageHandler';
 import { RoomKeyCoordinator, rosterFromRoom } from './RoomKeyCoordinator';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
+import type { PingMessage, PongMessage } from './HeartbeatService';
 import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { PeerScoring } from '../relay/PeerScoring';
@@ -268,11 +269,23 @@ export class MeshGossipManager {
 
       // 5. 初始化心跳服務
       this.heartbeatService = new HeartbeatService(userId);
+      // 接回送 ping 的出口（此前從未接線，sendPingTo 一直是 no-op，missedPings 永不增，
+      // handleNeighborDisconnected 零觸發 → 靜默斷線的殭屍連線永不回收）。
+      // ping 走既有 ephemeral 通道：lossy 正是我們要的——bus 未 open 即丟棄，
+      // missedPings 照樣累加，滿 3 次（~90s）判定不可達。
+      this.heartbeatService.setSendFunction((peerId, msg) => {
+        const neighbor = this.topologyManager
+          ?.getNeighbors()
+          .find((n) => n.getId() === peerId);
+        if (neighbor && neighbor.getState() === 'connected') {
+          void neighbor.sendEphemeral('system:ping', msg);
+        }
+      });
       this.heartbeatService.onUnreachable((peerId) => {
         logger.warn('[MeshGossipManager] Peer unreachable, triggering neighbor replacement', {
           roomId: this.roomId, peerId,
         });
-        this.topologyManager?.handleNeighborDisconnected(peerId);
+        void this.topologyManager?.handleNeighborDisconnected(peerId);
       });
 
       // 6. 初始化拓撲（建立鄰居連線）
@@ -479,7 +492,26 @@ export class MeshGossipManager {
 
           // 暫態信號（typing）：lossy、不進 store/對帳。payload.userId = 送出者 mesh userId，
           // 只轉發給 typing 監聽器（UI 據此顯示「輸入中…」）。
+          // 心跳註冊：讓 isReachable/RTT 有初始狀態；sendPingTo 也會 lazy 初始化。
+          this.heartbeatService?.addPeer(peerId);
+
           neighbor.onEphemeral((env) => {
+            // 心跳 ping/pong（走 ephemeral，與 TYPING 同通道、以 type 區分）。
+            if (env.type === 'system:ping') {
+              const ping = env.payload as PingMessage | undefined;
+              if (ping && typeof ping.timestamp === 'number') {
+                const pong = HeartbeatService.createPong(ping, this.getUserId() ?? '');
+                void neighbor.sendEphemeral('system:pong', pong);
+              }
+              return;
+            }
+            if (env.type === 'system:pong') {
+              const pong = env.payload as PongMessage | undefined;
+              if (pong && typeof pong.pingTimestamp === 'number') {
+                this.heartbeatService?.handlePong(pong, peerId);
+              }
+              return;
+            }
             if (env.type !== 'TYPING') return;
             const p = env.payload as { userId?: unknown; isTyping?: unknown };
             if (typeof p?.userId !== 'string' || typeof p?.isTyping !== 'boolean') return;
@@ -507,6 +539,14 @@ export class MeshGossipManager {
         if (!liveConnections.has(conn)) {
           detach();
           this.roomDirDetachers.delete(conn);
+        }
+      }
+
+      // 心跳 peerState 清理：移除已不在鄰居列表中的 peer（換代/離場後不再累積）
+      if (this.heartbeatService) {
+        const liveIds = new Set(neighbors.map((n) => n.getId()));
+        for (const info of this.heartbeatService.getAllPeerInfo()) {
+          if (!liveIds.has(info.peerId)) this.heartbeatService.removePeer(info.peerId);
         }
       }
     }, 2000);

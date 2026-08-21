@@ -835,6 +835,8 @@ export class RoomService {
         });
       }
       callback(rooms);
+    }, (error) => {
+      logger.error('[RoomService] subscribeUserRooms 訂閱錯誤（A6：listener 已失效）', { uid, error });
     });
 
     return unsubscribe;
@@ -878,6 +880,8 @@ export class RoomService {
         ) : undefined,
         topology: data.topology || 'star',
       });
+    }, (error) => {
+      logger.error('[RoomService] subscribeRoom 訂閱錯誤（A6：listener 已失效，連帶 rejoin 偵測停擺）', { roomId, error });
     });
 
     return unsubscribe;

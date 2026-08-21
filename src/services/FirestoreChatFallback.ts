@@ -17,6 +17,7 @@ import {
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
 import { connectionStats } from '../core/metrics/ConnectionStats';
+import { logger } from '../utils/logger';
 import type { ChatMessage } from '../types';
 
 const MESSAGES_LIMIT = 100;
@@ -95,9 +96,17 @@ export function subscribeToFirestoreMessages(
   options?: SubscribeOptions
 ): () => void {
   const messagesRef = collection(db, 'p2pRooms', roomId, 'messages');
+  // A3：改「升冪 + limit」為「降冪 + limit」= 永遠訂閱最新 100 則。
+  // 舊查詢升冪取「最舊 100」，房間累積滿 100 則未過期備援訊息後，新訊息永遠落在
+  // 視窗外，備援投遞整條靜默失效（ADR-0037 §C 在 signals 踩過的同型 bug）。
+  // 降冪 tail 最新 N：新訊息 createdAt 最大，必落在視窗內以 'added' 觸發；被擠出視窗的
+  // 舊訊息以 'removed' 通知，本函式只處理 'added' 故不影響已顯示訊息。投遞順序不影響
+  // 顯示——上層 useChatMessages（React/Vue）皆以 messageId 去重且 sortByHLC 重排。
+  // 更久的歷史由本機 IndexedDB 與 mesh gossip 權威副本承擔，非備援訂閱職責。
+  // createdAt 為 rules 強制欄位（±30s 防重放），每則必有；單欄索引自動建立，無需複合索引。
   const q = query(
     messagesRef,
-    orderBy('timestamp', 'asc'),
+    orderBy('createdAt', 'desc'),
     limit(MESSAGES_LIMIT)
   );
 
@@ -109,45 +118,59 @@ export function subscribeToFirestoreMessages(
       if (change.type !== 'added') continue;
       const data = change.doc.data();
 
-      chain = chain.then(async () => {
-        const ts = data.timestamp;
-        const base = {
-          messageId: data.messageId as string,
-          from: data.from as string,
-          timestamp: ts?.toMillis?.() ?? ts ?? Date.now(),
-          edited: (data.edited as boolean) ?? false,
-          deleted: (data.deleted as boolean) ?? false,
-        };
+      // 每步各自 catch：onMessage（Vue 端 addMessage）或解密拋錯不得讓 chain 變 rejected。
+      // 否則後續所有 chain.then 的 callback 一律不執行，備援投遞從此永久靜默，
+      // 且每則新訊息再產生一個 unhandled rejection。單則失敗僅丟該則，不拖垮整條路徑。
+      chain = chain
+        .then(async () => {
+          const ts = data.timestamp;
+          const base = {
+            messageId: data.messageId as string,
+            from: data.from as string,
+            timestamp: ts?.toMillis?.() ?? ts ?? Date.now(),
+            edited: (data.edited as boolean) ?? false,
+            deleted: (data.deleted as boolean) ?? false,
+          };
 
-        if (data.encrypted) {
-          // 自己的密文：本機已有明文回顯，略過（sender key 無法解密自己的訊息）
-          if (options?.localUid && data.from === options.localUid) return;
+          if (data.encrypted) {
+            // 自己的密文：本機已有明文回顯，略過（sender key 無法解密自己的訊息）
+            if (options?.localUid && data.from === options.localUid) return;
 
-          let content: string | null = null;
-          if (options?.decrypt) {
-            try {
-              content = await options.decrypt(
-                data.encrypted as FallbackEncryptedContent,
-                data.from as string
-              );
-            } catch {
-              // 金鑰不在手上（重整後或未完成交換）：依拓撲決定佔位或跳過（見 SubscribeOptions）
+            let content: string | null = null;
+            if (options?.decrypt) {
+              try {
+                content = await options.decrypt(
+                  data.encrypted as FallbackEncryptedContent,
+                  data.from as string
+                );
+              } catch {
+                // 金鑰不在手上（重整後或未完成交換）：依拓撲決定佔位或跳過（見 SubscribeOptions）
+              }
             }
+            if (content === null) {
+              const skip =
+                typeof options?.skipUndecryptable === 'function'
+                  ? options.skipUndecryptable()
+                  : (options?.skipUndecryptable ?? false);
+              if (skip) return; // mesh 房：讓 gossip 權威副本以同 id 呈現，不佔位擋路
+              content = '[無法解密此訊息]';
+            }
+            onMessage({ ...base, content });
+          } else {
+            onMessage({ ...base, content: (data.content as string) ?? '' });
           }
-          if (content === null) {
-            const skip =
-              typeof options?.skipUndecryptable === 'function'
-                ? options.skipUndecryptable()
-                : (options?.skipUndecryptable ?? false);
-            if (skip) return; // mesh 房：讓 gossip 權威副本以同 id 呈現，不佔位擋路
-            content = '[無法解密此訊息]';
-          }
-          onMessage({ ...base, content });
-        } else {
-          onMessage({ ...base, content: (data.content as string) ?? '' });
-        }
-      });
+        })
+        .catch((err) => {
+          logger.error('[FirestoreChatFallback] message handler failed; skipping this one', {
+            roomId,
+            messageId: data.messageId,
+            error: err,
+          });
+        });
     }
+  }, (error) => {
+    // A6：此前無 error callback → 備援訊息訂閱失敗（permission-denied/暫時性）會靜默失效。
+    logger.error('[FirestoreChatFallback] 訊息訂閱錯誤（listener 已失效）', { roomId, error });
   });
 
   return unsubscribe;

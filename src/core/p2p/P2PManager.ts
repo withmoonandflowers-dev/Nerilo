@@ -91,6 +91,13 @@ export class P2PManager {
         logger.info('[P2PManager] Creating ChannelBus for remote DataChannel', {
           roomId: this.connectionManager['roomId'],
         });
+        // A10：peer 重進會帶來新的主 DataChannel。若先前已初始化過 service，先拆掉舊
+        // service 與舊 bus，否則 initializeServices 的 `if (!this.xxx)` 守衛會讓
+        // HelloNegotiator/檔案/媒體 service 續綁在已死的舊 channel 上（重進後失效無提示）。
+        if (this.servicesInitialized) {
+          this.resetServicesForRebind();
+          this.channelBus?.close();
+        }
         this.channelBus = new P2PChannelBus(event.channel);
 
         // 確保 DataChannel 已 open 後才初始化 services
@@ -158,6 +165,21 @@ export class P2PManager {
 
   /** 防止 initializeServices 被多次呼叫（initiator onopen + 非 initiator ondatachannel race） */
   private servicesInitialized = false;
+
+  /**
+   * A10：bus 換代（peer 重進）時拆掉舊 service，讓 initializeServices 對新 bus 重建。
+   * 只拆 service 層，不動 connectionManager / pc（連線仍在，只有 DataChannel 換了）。
+   */
+  private resetServicesForRebind(): void {
+    this.helloNegotiator?.dispose();
+    this.helloNegotiator = null;
+    if (this.mediaService) {
+      try { this.mediaService.stopLocalMedia(); } catch { /* ignore */ }
+    }
+    this.fileTransferService = null;
+    this.mediaService = null;
+    this.servicesInitialized = false;
+  }
 
   private initializeServices(): void {
     // 防止重複初始化：initiator 的 onopen 和非 initiator 的 ondatachannel 可能同時觸發

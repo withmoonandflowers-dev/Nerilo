@@ -76,12 +76,26 @@ export class RoomSignalingTransport implements SignalingTransport {
           orderBy('createdAt', 'asc'),
           limit(SUBSCRIBE_LIMIT)
         );
-    return onSnapshot(q, (snapshot) => {
-      for (const change of snapshot.docChanges()) {
-        if (change.type !== 'added') continue;
-        onAdded({ ...(change.doc.data() as Record<string, unknown>), signalId: change.doc.id });
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        for (const change of snapshot.docChanges()) {
+          if (change.type !== 'added') continue;
+          onAdded({ ...(change.doc.data() as Record<string, unknown>), signalId: change.doc.id });
+        }
+      },
+      // A5/A6：此前無 error callback → 查詢失敗（缺 (to,createdAt) 複合索引、permission-denied、
+      // 暫時性 transport error）會讓 listener 被永久移除且完全無聲，signaling 整條靜默死。
+      // 至少要記錄下來，讓「入站應答/signaling 停擺」在日誌可見而非黑箱。
+      (error) => {
+        logger.error('[RoomSignalingTransport] signals 訂閱錯誤（listener 已失效）', {
+          roomId: this.roomId,
+          channelLabel: this.channelLabel,
+          scoped: !!this.scopeToUid,
+          error,
+        });
       }
-    });
+    );
   }
 
   async send(data: Record<string, unknown>): Promise<void> {

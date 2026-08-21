@@ -75,6 +75,11 @@ export class GossipMessageHandler {
       for (const seqs of epochs.values()) {
         for (const msg of seqs.values()) {
           if (msg.channel === 'keyx') continue;
+          // A11：redisplay 是「聊天佔位 → 解密內容」的 UI upsert，只對可 upsert 的顯示型
+          // 訊息有意義。game 事件非冪等（MeshChatService 會把 channel:'game' 派給
+          // gameListeners），重派＝重放一次指令。依 Spec 021 §4.4「replay 按 channel 分派」
+          // 略過 game。（reaction/read reducer 冪等/單調，重派安全，故不擋。）
+          if (msg.channel === 'game') continue;
           if (msg.senderId === this.userId) continue; // 自己的訊息由應用層樂觀顯示
           if (!isEncryptedContent(msg.content) || contentEpoch(msg.content) !== keyEpoch) continue;
           try {

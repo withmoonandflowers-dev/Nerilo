@@ -543,5 +543,12 @@ export class MeshConnection {
     await this.p2pManager.close();
     this.messageListeners.clear();
     this.digestListeners.clear();
+    // A9：此前只清了 message/digest 兩組。其餘監聽器與緩衝也要清，否則換代/離場連線
+    // 的閉包殘留（sigRelay 閉包住 SigRelayRouter，尤其值得清）。
+    this.ephemeralListeners.clear();
+    this.sigRelayListeners.clear();
+    this.roomDirListeners.clear();
+    this.protocolMismatchListeners.clear();
+    this.sigRelayBuffer = [];
   }
 }

@@ -161,7 +161,16 @@ export class P2PConnectionManager {
 
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.sendSignal('ice', event.candidate);
+        // A7：同步事件 callback 內無法 await；補 catch，否則送信失敗（warm NACK /
+        // Firestore offline / rules 拒絕）會是 unhandled rejection，且 candidate 靜默遺失。
+        // trickle ICE 容忍單筆遺失，但至少要留下可觀測紀錄。
+        void this.sendSignal('ice', event.candidate).catch((err) => {
+          logger.warn('[P2PConnectionManager] ICE candidate 送出失敗（已略過該筆）', {
+            roomId: this.roomId,
+            to: this.remoteUid,
+            err,
+          });
+        });
       }
     };
 
@@ -182,8 +191,14 @@ export class P2PConnectionManager {
             connectionStats.recordIceRestartRecovered();
           }
           this.setState('connected');
-          // 連線成功後清理舊 session 的 signals（非阻塞）
-          this.cleanupOldSignals();
+          // 連線成功後清理舊 session 的 signals（刻意非阻塞，不拖住狀態處理）。
+          // A7：補 catch，否則 ensureSignaling 的動態 import 失敗會漏成 unhandled rejection。
+          void this.cleanupOldSignals().catch((err) => {
+            logger.warn('[P2PConnectionManager] cleanupOldSignals 失敗（略過）', {
+              roomId: this.roomId,
+              err,
+            });
+          });
           break;
         case 'disconnected':
           // 'disconnected' 是暫時性狀態，瀏覽器會嘗試自動恢復；
@@ -377,7 +392,10 @@ export class P2PConnectionManager {
           await this.flushPendingIceCandidates();
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
-          this.sendSignal('answer', answer);
+          // A7：必須 await。此前未 await，送 answer 失敗的 rejection 會逃出本 try/catch，
+          // 而本端已 setLocalDescription → 對端永遠停在 have-local-offer 直到 ready timeout。
+          // 改 await 後失敗會落入下方 catch 記錄（且不再是 unhandled rejection）。
+          await this.sendSignal('answer', answer);
           break;
         }
 
@@ -527,6 +545,14 @@ export class P2PConnectionManager {
     return this.pc;
   }
 
+  /**
+   * 已認證的對端 uid（來自 signal.from；Firestore rules 保證 from == auth.uid）。
+   * 尚未收到任何 signal 前為 null。供 star 路徑 E2EE 綁定寄件者身分（H-1）。
+   */
+  getRemoteUid(): string | null {
+    return this.remoteUid;
+  }
+
   getState(): ConnectionState {
     return this.state;
   }
@@ -605,6 +631,8 @@ export class P2PConnectionManager {
     this.cleanupSessionSignals().catch(() => {});
 
     this.setState('closed');
+    // A9：必須在 setState('closed') 之後才清（否則消費端收不到最後的 closed 事件）。
+    this.stateListeners.clear();
   }
 }
 
