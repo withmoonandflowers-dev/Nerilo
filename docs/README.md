@@ -19,4 +19,4 @@
 | [SOLUTION-multi-device-and-storage.md](SOLUTION-multi-device-and-storage.md) | 多裝置同步與儲存節點的分階段實作藍圖 |
 | architecture.puml / data-flow.puml / protocol.puml / shared-stream-flow.puml | 架構與流程圖 |
 
-根目錄：`README.md`、`CONTRIBUTING.md`。腳本說明見 `scripts/README.md`。清理緣由與驗證見 [清理說明.md](清理說明.md)。
+根目錄：`README.md`、`CONTRIBUTING.md`。腳本說明見 `scripts/README.md`。

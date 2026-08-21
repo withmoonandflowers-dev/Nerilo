@@ -114,7 +114,6 @@ The root `deploy:full` command is blocked unless Functions and Blaze billing are
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): React staging/production, Vue candidate preview, Firebase setup and rollback
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): what privacy actually means; adversaries; Sphinx-Lite limits; recommended user practices
 - [docs/MCP-GATEWAY.md](docs/MCP-GATEWAY.md): MCP setup, policy controls, honest runtime limits, browser-bridge production design
-- [docs/PR-5-analysis.md](docs/PR-5-analysis.md): analysis of the in-flight feature/multi-room-improvements branch
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): codebase architecture quick-reference
 
 Older zh-TW design docs in [docs/](docs/) (架構文件, 協議文件, 新功能接入SOP, 上板與部署手冊).

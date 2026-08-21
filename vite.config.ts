@@ -81,7 +81,7 @@ export default defineConfig(({ mode }) => ({
         // 業務邏輯（純函式 / 可 mock 的服務）
         'src/features/chat/hooks/useP2PArchitecture.ts',
         'src/features/chat/hooks/useChatMessages.ts',
-        'src/features/chat/MeshChatService.ts',
+        'src/core/messaging/MeshChatService.ts',
         'src/services/RoomService.ts',
         'src/services/RoomRequestService.ts',
       ],
