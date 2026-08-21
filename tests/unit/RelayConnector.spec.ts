@@ -125,3 +125,68 @@ describe('RelayConnector — responder (startListening)', () => {
     expect(rc.activeCount()).toBe(0);
   });
 });
+
+/**
+ * H-3：入站節流。自動應答任何來連＝任何登入者都能強迫本節點做 WebRTC 協商
+ * （藉 ICE candidate 取得 IP），並可重複觸發耗盡資源。
+ */
+describe('RelayConnector — 入站節流（H-3）', () => {
+  function rig() {
+    let emit: ((channelId: string, participants: string[]) => void) | null = null;
+    let made = 0;
+    const rc = new RelayConnector('me', {
+      makeConn: () => { made++; return makeFakeConn(); },
+      watchMyChannels: (_uid, onAdded) => { emit = onAdded; return () => undefined; },
+    });
+    rc.startListening();
+    return { rc, fire: (peer: string) => emit!(relayChannelId('me', peer), ['me', peer].sort()), made: () => made };
+  }
+
+  it('入站連線數有上限（超過即略過，不再自動應答）', async () => {
+    const { rc, fire, made } = rig();
+    for (let i = 0; i < 40; i++) fire(`attacker-${i}`);
+    await Promise.resolve();
+    // MAX_INBOUND_CONNECTIONS = 16
+    expect(made()).toBe(16);
+    expect(rc.activeCount()).toBe(16);
+  });
+
+  it('同一對端在冷卻期內重複開通道 → 不重複應答', async () => {
+    const { rc, fire, made } = rig();
+    fire('prober');
+    await Promise.resolve();
+    expect(made()).toBe(1);
+
+    // 模擬：對方刪掉通道文件後重建 → 再次觸發 'added'
+    await rc.closeAll();
+    fire('prober');
+    await Promise.resolve();
+    expect(made()).toBe(1); // 仍在冷卻期，未再建連
+  });
+
+  it('主動連出不受入站上限影響（自己要中繼幫忙時仍可連）', async () => {
+    const { rc, fire } = rig();
+    for (let i = 0; i < 40; i++) fire(`attacker-${i}`);
+    await Promise.resolve();
+    const conn = await rc.connectToRelayNode('my-chosen-relay');
+    expect(conn).toBeTruthy();
+  });
+
+  it('冷卻期過後，正當重連可被受理（不永久拒絕同一對端）', async () => {
+    vi.useFakeTimers();
+    try {
+      const { rc, fire, made } = rig();
+      fire('legit-peer');
+      await Promise.resolve();
+      expect(made()).toBe(1);
+
+      await rc.closeAll(); // 連線斷開
+      vi.advanceTimersByTime(6_000); // > INBOUND_COOLDOWN_MS (5s)
+      fire('legit-peer');
+      await Promise.resolve();
+      expect(made()).toBe(2); // 冷卻已過 → 重連被受理
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

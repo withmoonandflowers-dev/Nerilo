@@ -89,12 +89,33 @@ function defaultWatchMyChannels(
   });
 }
 
+/**
+ * H-3：入站連線上限。中繼是志願服務，但「自動應答任何來連」讓任何登入者都能
+ * 強迫本節點做 WebRTC 協商（藉 ICE candidate 取得本機 IP），且可重複觸發耗盡
+ * RTCPeerConnection 資源。同時服務的陌生來連以此為上界。
+ */
+const MAX_INBOUND_CONNECTIONS = 16;
+
+/**
+ * H-3：同一對端的入站冷卻。rules 已把 channelId 綁成 uid 對（一對只有一條通道），
+ * 但通道文件可被 participants 刪除後重建 → 再次觸發 'added'。
+ *
+ * 刻意取短（5s）：冷卻的安全價值只在「防高頻轟炸」——IP 在首次接觸就已揭露，
+ * 拉長視窗並不會多擋住什麼，卻會讓正當的斷線重連被拒。5s 足以擋掉緊迴圈式
+ * 重開通道，對真實重連幾乎無感。
+ */
+const INBOUND_COOLDOWN_MS = 5_000;
+
 export class RelayConnector {
   private readonly makeConn: NonNullable<RelayConnectorDeps['makeConn']>;
   private readonly watchMyChannels: NonNullable<RelayConnectorDeps['watchMyChannels']>;
   /** 自己發起的 channelId，監聽時略過（避免自己回應自己） */
   private readonly initiated = new Set<string>();
   private readonly active = new Map<string, RelayConnLike>();
+  /** H-3：入站連線數（只計 responder；主動連出不受上限約束） */
+  private inboundCount = 0;
+  /** H-3：對端 uid → 最近一次受理入站的時間戳（冷卻用） */
+  private readonly lastInboundAt = new Map<string, number>();
 
   constructor(private readonly localUid: string, deps: RelayConnectorDeps = {}) {
     this.makeConn = deps.makeConn ?? defaultMakeConn;
@@ -129,8 +150,25 @@ export class RelayConnector {
       if (this.active.has(channelId)) return; // 已在處理
       const remoteUid = participants.find((p) => p !== this.localUid);
       if (!remoteUid) return;
+
+      // H-3：入站節流。自動應答是中繼的本職，但不能無上限——否則任何登入者都能
+      // 強迫本節點協商 WebRTC 並取得 IP，或以量耗盡資源。
+      if (this.inboundCount >= MAX_INBOUND_CONNECTIONS) {
+        logger.warn('[RelayConnector] 入站已達上限，略過此來連', {
+          channelId, remoteUid, max: MAX_INBOUND_CONNECTIONS,
+        });
+        return;
+      }
+      const last = this.lastInboundAt.get(remoteUid);
+      if (last !== undefined && Date.now() - last < INBOUND_COOLDOWN_MS) {
+        logger.warn('[RelayConnector] 同一對端仍在冷卻期，略過此來連', { channelId, remoteUid });
+        return;
+      }
+      this.lastInboundAt.set(remoteUid, Date.now());
+
       const conn = this.makeConn(channelId, this.localUid, remoteUid, false); // responder
       this.active.set(channelId, conn);
+      this.inboundCount++;
       void conn.initialize().then(
         () => onIncoming?.(conn, remoteUid),
         (err) => logger.warn('[RelayConnector] responder initialize failed', { channelId, err })
@@ -143,6 +181,8 @@ export class RelayConnector {
     await Promise.all([...this.active.values()].map((c) => c.close().catch(() => undefined)));
     this.active.clear();
     this.initiated.clear();
+    this.inboundCount = 0; // H-3：名額隨連線關閉一併回收
+    // lastInboundAt 刻意保留：冷卻是防重複探測，不應因自己 closeAll 就歸零。
   }
 
   /** 目前 relay 連線數（監控/測試） */
