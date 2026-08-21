@@ -24,13 +24,11 @@ export interface EncryptedPayload {
   /**
    * Monotonic counter within epoch for replay protection.
    *
-   * Optional for backwards compatibility with callers that haven't been
-   * updated yet (ChatService, EncryptedChatPayload). When present,
-   * decryptMessage rejects payloads with seq <= last-seen for the same
-   * (senderId, epoch). Future work: make this mandatory once all callers
-   * are migrated.
+   * H-2：此前為選填，攻擊者只要「把 seq 欄位刪掉」就能整段跳過重放檢查。
+   * 現為必填：decryptMessage 對缺 seq 的 payload 一律拒收。encryptMessage
+   * 一直都會寫入本欄，故對真實流量無相容性影響。
    */
-  seq?: number;
+  seq: number;
 }
 
 export interface SenderKeyDistribution {
@@ -303,15 +301,19 @@ export class SenderKeyManager {
 
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(plaintext);
+    const seq = this.seqCounter++;
 
     const ciphertext = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
+      // H-2：把 (senderId, epoch, seq) 綁進 AEAD 的 additionalData。此前這三個欄位
+      // 是純明文中繼資料，中間人可把 seq 改成 MAX_SAFE_INTEGER 投遞，收端記錄後
+      // 該寄件者的所有後續訊息都被判為 replay 而丟棄（安靜的審查型 DoS）。
+      // 綁進 AAD 後任何竄改都會令解密失敗；順帶把寄件者身分也密碼學綁定。
+      { name: 'AES-GCM', iv, additionalData: buildSeqAad(this.localUserId, this.currentEpoch, seq) },
       this.currentSenderKey,
       encoded
     );
 
     this.messagesSinceRotation++;
-    const seq = this.seqCounter++;
 
     return {
       ciphertext: bufferToBase64(ciphertext),
@@ -329,16 +331,10 @@ export class SenderKeyManager {
     payload: EncryptedPayload,
     senderId: string
   ): Promise<string> {
-    // Replay protection: verify seq is strictly increasing per sender per epoch
-    if (typeof payload.seq === 'number') {
-      const seqKey = `${senderId}:${payload.senderKeyEpoch}`;
-      const lastSeq = this.peerSeqCounters.get(seqKey) ?? -1;
-      if (payload.seq <= lastSeq) {
-        throw new Error(
-          `Replay detected from ${senderId}: seq ${payload.seq} <= last ${lastSeq}`
-        );
-      }
-      this.peerSeqCounters.set(seqKey, payload.seq);
+    // H-2：seq 必填。此前檢查整段包在 `if (typeof seq === 'number')` 內，
+    // 攻擊者刪掉欄位即可繞過重放防護。
+    if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) {
+      throw new Error(`Missing seq from ${senderId}: replay protection requires it`);
     }
 
     // Try current key first
@@ -359,11 +355,23 @@ export class SenderKeyManager {
     const ciphertext = base64ToBuffer(payload.ciphertext);
     const iv = new Uint8Array(base64ToBuffer(payload.iv));
 
+    // H-2：先解密（AAD 綁 senderId/epoch/seq）。竄改任一欄位都會在此失敗，
+    // 且此時尚未動計數器——這是修掉「毒化計數器」DoS 的關鍵順序。
     const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv, additionalData: buildSeqAad(senderId, payload.senderKeyEpoch, payload.seq) },
       entry.key,
       ciphertext
     );
+
+    // 解密成功＝這則訊息確實出自持鑰者且 seq 未被竄改，才做重放判定與推進水位。
+    const seqKey = `${senderId}:${payload.senderKeyEpoch}`;
+    const lastSeq = this.peerSeqCounters.get(seqKey) ?? -1;
+    if (payload.seq <= lastSeq) {
+      throw new Error(
+        `Replay detected from ${senderId}: seq ${payload.seq} <= last ${lastSeq}`
+      );
+    }
+    this.peerSeqCounters.set(seqKey, payload.seq);
 
     return new TextDecoder().decode(decrypted);
   }
@@ -405,6 +413,19 @@ export class SenderKeyManager {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * H-2：AES-GCM 的 additionalData——把 (senderId, epoch, seq) 綁進認證範圍。
+ *
+ * 這三個欄位在線上是明文中繼資料，不綁進 AEAD 就是可鍛造的：改 seq 可毒化收端
+ * 的重放水位（審查型 DoS）、改 senderId 可張冠李戴。用固定分隔的正規化字串，
+ * 且 senderId 內的分隔字元先轉義，避免 ("a|1","2") 與 ("a","1|2") 撞出同一組 AAD。
+ */
+function buildSeqAad(senderId: string, epoch: number, seq: number): ArrayBuffer {
+  const escaped = senderId.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  const bytes = new TextEncoder().encode(`nsk1|${escaped}|${epoch}|${seq}`);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);

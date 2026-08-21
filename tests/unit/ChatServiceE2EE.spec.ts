@@ -295,6 +295,8 @@ describe('ChatService E2EE Integration', () => {
               ciphertext: encrypted.ciphertext,
               iv: encrypted.iv,
               senderKeyEpoch: encrypted.senderKeyEpoch,
+              // H-2：seq 為必填且綁進 AAD（產品端 sendMessage/editMessage 一直都會帶）
+              seq: encrypted.seq,
             },
           },
         })
@@ -581,6 +583,8 @@ describe('ChatService E2EE Integration', () => {
               ciphertext: encrypted.ciphertext,
               iv: encrypted.iv,
               senderKeyEpoch: encrypted.senderKeyEpoch,
+              // H-2：seq 為必填且綁進 AAD（產品端 editMessage 一直都會帶）
+              seq: encrypted.seq,
             },
           },
         })

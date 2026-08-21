@@ -148,7 +148,9 @@ export function useStarTopology(options?: UseStarTopologyOptions) {
             deviceId,
             roomId,
             chatStorage,
-            senderKeyManager
+            senderKeyManager,
+            // H-1：以 signaling 學到的已認證對端 uid 綁定入站寄件者身分
+            () => connectionManager.getRemoteUid()
           );
           chatServiceRef.current = chatService;
 

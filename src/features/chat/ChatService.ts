@@ -51,13 +51,21 @@ export class ChatService {
   /** 等待 ECDH 公鑰交換的 peer 列表 */
   private pendingKeyExchangePeers: Set<string> = new Set();
 
+  /**
+   * 取得「本連線已認證的對端 uid」。star 為雙人直連，對端 uid 來自 signaling
+   * （Firestore rules 保證 from == auth.uid）。回 null 表示尚未學到（早期）。
+   * 用於 H-1：把入站訊息的寄件者身分綁到認證對端，而非信任 payload 自述欄位。
+   */
+  private getExpectedPeerUid: () => string | null;
+
   constructor(
     channelBus: P2PChannelBus,
     localUid: string,
     deviceId: string,
     roomId: string,
     chatStorage: IChatStorage = indexedDBService,
-    senderKeyManager: SenderKeyManager | null = null
+    senderKeyManager: SenderKeyManager | null = null,
+    getExpectedPeerUid: () => string | null = () => null
   ) {
     this.channelBus = channelBus;
     this.localUid = localUid;
@@ -66,6 +74,7 @@ export class ChatService {
     this.chatStorage = chatStorage;
     this.hlc = new HybridLogicalClock(localUid.slice(0, 8));
     this.senderKeyManager = senderKeyManager;
+    this.getExpectedPeerUid = getExpectedPeerUid;
     this.setupHandlers();
   }
 
@@ -311,6 +320,31 @@ export class ChatService {
   // ── 訊息接收 ──────────────────────────────────────────────────────────
 
   private async handleChatMessage(envelope: P2PEnvelope): Promise<void> {
+    // H-1：寄件者身分綁定。star 路徑此前完全信任 payload 自述的 from/senderId 來查解密
+    // 金鑰、且無簽章，惡意 peer 可冒名注入（往對方本地歷史塞「你說過的話」、或把自己的
+    // sender key 註冊成他人 uid）。這裡以「傳輸層 envelope.from」為權威來源，再兩道防線：
+    //  (a) 任何入站訊息都不得聲稱來自本機身分 —— 擋自我冒充注入；
+    //  (b) 已學到認證對端 uid 時，寄件者必須等於它 —— 擋冒充房內第三方。
+    // envelope.from 本身雖非傳輸層強綁定，但雙人房只有兩個合法成員，(a)+(b) 已封住
+    // 可利用面；3 人以上走 mesh/GossipMessageHandler，那條有完整 ECDSA 簽章＋身分綁定。
+    const senderUid = extractUid(envelope.from);
+    if (senderUid === this.localUid) {
+      logger.warn('[ChatService][H-1] 拒絕：入站訊息聲稱來自本機身分', {
+        type: envelope.type,
+        from: envelope.from,
+      });
+      return;
+    }
+    const expectedPeer = this.getExpectedPeerUid();
+    if (expectedPeer && senderUid !== expectedPeer) {
+      logger.warn('[ChatService][H-1] 拒絕：寄件者與認證對端不符', {
+        type: envelope.type,
+        from: envelope.from,
+        expectedPeer,
+      });
+      return;
+    }
+
     switch (envelope.type) {
       case 'MSG_SEND':
         await this.handleMessageSend(envelope);
@@ -344,7 +378,9 @@ export class ChatService {
     if (raw.encrypted && this.senderKeyManager) {
       // 加密訊息：解密 content
       const encPayload = raw as unknown as EncryptedChatPayload;
-      const senderId = extractUid(encPayload.from);
+      // H-1：以 envelope.from（已在 handleChatMessage 綁定認證對端）查金鑰與標記寄件者，
+      // 不用 payload 內攻擊者可控的 encPayload.from。
+      const senderId = extractUid(envelope.from);
       try {
         const plaintext = await this.senderKeyManager.decryptMessage(
           encPayload.encrypted as EncryptedPayload,
@@ -352,7 +388,7 @@ export class ChatService {
         );
         message = {
           messageId: encPayload.messageId,
-          from: encPayload.from,
+          from: envelope.from,
           to: encPayload.to,
           content: plaintext,
           timestamp: encPayload.timestamp,
@@ -361,14 +397,14 @@ export class ChatService {
         };
       } catch (err) {
         logger.error('[ChatService][E2EE] Failed to decrypt message', {
-          from: encPayload.from,
+          from: envelope.from,
           epoch: encPayload.encrypted?.senderKeyEpoch,
           error: err,
         });
         // 無法解密時以佔位訊息通知使用者（deps 仍保留，維持排序）
         message = {
           messageId: encPayload.messageId,
-          from: encPayload.from,
+          from: envelope.from,
           to: encPayload.to,
           content: '[無法解密此訊息]',
           timestamp: encPayload.timestamp,
@@ -379,6 +415,8 @@ export class ChatService {
     } else {
       // 明文模式
       message = raw as unknown as ChatMessage;
+      // H-1：寄件者一律以認證的 envelope.from 為準，不採 payload 自述的 from。
+      message.from = envelope.from;
     }
 
     // Merge HLC timestamp
@@ -432,7 +470,14 @@ export class ChatService {
     if (!this.senderKeyManager) return;
 
     const payload = envelope.payload as ECDHPubKeyPayload;
-    const peerUid = payload.userId;
+    // H-1：對端身分以認證的 envelope.from 為準，不採 payload.userId（攻擊者可控）。
+    const peerUid = extractUid(envelope.from);
+    if (payload.userId && extractUid(payload.userId) !== peerUid) {
+      logger.warn('[ChatService][H-1] ECDH_PUBKEY：payload.userId 與認證對端不符，以對端為準', {
+        from: envelope.from,
+        claimed: payload.userId,
+      });
+    }
 
     // 忽略自己的廣播（防止未來 bus 拓撲改變後的自迴路）
     if (peerUid === this.localUid) return;
@@ -471,6 +516,17 @@ export class ChatService {
 
     const payload = envelope.payload as SenderKeyDistPayload;
 
+    // H-1：sender key 一律註冊在「認證對端 uid」名下，不用 payload.senderId（攻擊者可控，
+    // 此前可把自己的金鑰註冊成他人 uid → 冒名發訊）。payload.senderId 若與之不符則丟棄。
+    const senderId = extractUid(envelope.from);
+    if (payload.senderId && extractUid(payload.senderId) !== senderId) {
+      logger.warn('[ChatService][H-1] 拒絕 SENDER_KEY_DIST：payload.senderId 與認證對端不符', {
+        from: envelope.from,
+        claimed: payload.senderId,
+      });
+      return;
+    }
+
     // 匯入 sender 的 ECDH 公鑰
     const keyData = base64ToBuffer(payload.ecdhPublicKey);
     const senderECDHKey = await crypto.subtle.importKey(
@@ -484,7 +540,7 @@ export class ChatService {
     // 接收 sender key
     await this.senderKeyManager.receiveSenderKey(
       {
-        senderId: payload.senderId,
+        senderId,
         epoch: payload.epoch,
         encryptedKeys: payload.encryptedKeys,
       },
@@ -494,7 +550,7 @@ export class ChatService {
     this.e2eeReady = true;
 
     logger.info('[ChatService][E2EE] Received sender key', {
-      from: payload.senderId,
+      from: senderId,
       epoch: payload.epoch,
     });
 
