@@ -168,8 +168,7 @@ service cloud.firestore {
                 && request.resource.data.status == 'closed'))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
              'status', 'closedAt', 'participants', 'participantCount',
-             'lastActiveAt', 'ttlExpireAt', 'meshIdentities', 'topology',
-             'pendingMergeRequestId', 'pendingSplitPlanId', 'version',
+             'lastActiveAt', 'ttlExpireAt', 'meshIdentities', 'topology', 'version',
              'capabilityHint', 'kind', 'roomName', 'isPrivate', 'ownerName',
              'hostMigrationEpoch', 'previousRoomId', 'lineageRootRoomId'
            ]);
