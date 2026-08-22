@@ -314,3 +314,55 @@ describe('Spec 018：第四道閘門（產生方交接寬限）', () => {
     expect(lastKeyx(sendKeyx).keys.every((k) => k.epoch === 0)).toBe(true);
   });
 });
+
+/**
+ * B5 驗證：殭屍 participant（join 成功但 meshIdentity 未註冊／舊 client 無 ecdhPubKey）
+ * 會不會讓閘門 1 永不通過，使整房拿不到房間金鑰。
+ */
+describe('B5：殭屍 participant 對 keyx 分發的影響', () => {
+  it('有一位 participant 未註冊 ecdh 身分 → keyx 永不分發（即使長時間穩定）', async () => {
+    const { coord, sendKeyx, applyLocalKey, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    // participants 有 3 人，但只有 2 人在 meshIdentities 且帶 ecdhPubKey
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 3, // ← 第三人是殭屍
+    });
+
+    await tickStable(coord, 50); // 遠超穩定窗
+    expect(sendKeyx).not.toHaveBeenCalled();
+    expect(applyLocalKey).not.toHaveBeenCalled();
+  });
+
+  it('殭屍離開後（participantCount 回正）→ 分發恢復，證明鎖死來源是該閘門', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    const members = [
+      { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+      { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+    ];
+    loadRoster.mockResolvedValue({ members, participantCount: 3 });
+    await tickStable(coord, 20);
+    expect(sendKeyx).not.toHaveBeenCalled();
+
+    loadRoster.mockResolvedValue({ members, participantCount: 2 });
+    await tickStable(coord, 5);
+    expect(sendKeyx).toHaveBeenCalled();
+  });
+
+  it('名冊帶 ecdhPubKey 缺失的成員（舊 client）→ 同樣鎖住', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'old-client' }, // 無 ecdhPubKey → 不計入 eligible
+      ],
+      participantCount: 2,
+    });
+    await tickStable(coord, 30);
+    expect(sendKeyx).not.toHaveBeenCalled();
+  });
+});

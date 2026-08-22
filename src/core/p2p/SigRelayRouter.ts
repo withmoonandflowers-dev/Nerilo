@@ -53,7 +53,13 @@ export class SigRelayRouter implements SignalRelayBus {
   private links = new Map<string, { link: SigRelayLink; unsub: () => void }>();
   private inboundHandlers = new Set<(env: SignalEnvelope) => void | Promise<void>>();
   private replay: BufferedEnv[] = [];
-  private pendingAcks = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
+  // expectFrom（B2）：這筆等待對應「哪一位鄰居」。ref = from-nonce 對同一封信封固定，
+  // 而 relay() 逐一試介紹人時沿用同一個 ref——不記來源的話，前一位逾時者遲到的 ACK
+  // 會解掉現任介紹人的等待，讓 relay() 誤報成功（實際可能誰都沒送到）。
+  private pendingAcks = new Map<
+    string,
+    { resolve: () => void; reject: (e: Error) => void; expectFrom: string }
+  >();
 
   constructor(
     private readonly localUid: string,
@@ -93,7 +99,7 @@ export class SigRelayRouter implements SignalRelayBus {
     // 直連優先：to 就是我的暖鄰居（rejoin 重協商等情境），一跳都不用。
     const direct = this.links.get(env.to);
     if (direct?.link.isOpen()) {
-      await this.sendAndAwaitAck(direct.link, { kind: 'env', env, hops: 0 }, ref);
+      await this.sendAndAwaitAck(direct.link, { kind: 'env', env, hops: 0 }, ref, env.to);
       return;
     }
 
@@ -103,7 +109,7 @@ export class SigRelayRouter implements SignalRelayBus {
       if (uid === env.to || !link.isOpen()) continue;
       tried.push(uid);
       try {
-        await this.sendAndAwaitAck(link, { kind: 'env', env, hops: 0 }, ref);
+        await this.sendAndAwaitAck(link, { kind: 'env', env, hops: 0 }, ref, uid);
         return;
       } catch (err) {
         // 這位介紹人不通（NACK/逾時），試下一位。內插字串供 e2e 診斷。
@@ -140,10 +146,16 @@ export class SigRelayRouter implements SignalRelayBus {
 
   // ── 內部 ────────────────────────────────────────────────────────────────────
 
-  private async sendAndAwaitAck(link: SigRelayLink, wire: SigRelayWire, ref: string): Promise<void> {
+  private async sendAndAwaitAck(
+    link: SigRelayLink,
+    wire: SigRelayWire,
+    ref: string,
+    expectFrom: string
+  ): Promise<void> {
     const ackPromise = new Promise<void>((resolve, reject) => {
       // 同 ref 併發等待不會發生（manager 逐 signal 串行送）；後到覆蓋前者是安全簡化。
-      this.pendingAcks.set(ref, { resolve, reject });
+      // 但「序列重試不同介紹人」會重用同一個 ref，故記下這筆等的是誰（B2）。
+      this.pendingAcks.set(ref, { resolve, reject, expectFrom });
     });
     const timer = setTimeout(() => {
       const p = this.pendingAcks.get(ref);
@@ -183,7 +195,9 @@ export class SigRelayRouter implements SignalRelayBus {
     switch (wire.kind) {
       case 'ack': {
         const p = this.pendingAcks.get(wire.ref);
-        if (p) {
+        // B2：只接受來自「現正等待對象」的確認。前一位逾時介紹人遲到的 ACK
+        // 與現任的 ref 相同，不比對來源就會誤解現任的等待。
+        if (p && p.expectFrom === fromUid) {
           this.pendingAcks.delete(wire.ref);
           p.resolve();
         }
@@ -191,7 +205,7 @@ export class SigRelayRouter implements SignalRelayBus {
       }
       case 'nack': {
         const p = this.pendingAcks.get(wire.ref);
-        if (p) {
+        if (p && p.expectFrom === fromUid) { // B2：同上，只認現正等待對象
           this.pendingAcks.delete(wire.ref);
           p.reject(new Error(`SigRelayRouter: 介紹人 NACK（${wire.reason}）`));
         }

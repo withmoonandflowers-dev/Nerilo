@@ -6,7 +6,7 @@
  *
  * @vitest-environment node
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SigRelayRouter, type SigRelayLink, type SigRelayWire } from '../../src/core/p2p/SigRelayRouter';
 import { WarmColdSignalingTransport } from '../../src/core/p2p/WarmColdSignalingTransport';
 import type { SignalEnvelope } from '../../src/core/p2p/SignalEnvelope';
@@ -231,5 +231,77 @@ describe('T3 整合 — warm 經介紹人送達、cold 零寫入', () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(gotAtC.map((r) => r.signalId)).toEqual(['sig-offer']);
     expect(coldLog).toEqual([]); // 介紹路徑成功 → Firestore 零寫入
+  });
+});
+
+/**
+ * B2 驗證：pendingAcks 以 ref（= from-nonce）為鍵，而 relay() 逐一試介紹人時沿用同一個 ref。
+ * 介紹人 X1 逾時後換 X2，此時 X1 遲到的 ACK 會不會誤解 X2 的等待。
+ */
+describe('B2：pendingAcks 跨介紹人污染', () => {
+  /** 可手動控制何時回 ACK 的假 link */
+  function controllableLink(): SigRelayLink & { ackNow: (ref: string) => void; sent: SigRelayWire[] } {
+    const handlers = new Set<(w: SigRelayWire) => void>();
+    const sent: SigRelayWire[] = [];
+    const link = {
+      isOpen: () => true,
+      send: async (w: SigRelayWire) => { sent.push(w); },
+      onWire: (h: (w: SigRelayWire) => void) => { handlers.add(h); return () => handlers.delete(h); },
+      ackNow: (ref: string) => handlers.forEach((h) => h({ kind: 'ack', ref } as SigRelayWire)),
+      sent,
+    };
+    return link as never;
+  }
+
+  it('X1 逾時後遲到的 ACK 不再解掉 X2 的等待（B2 修正）', async () => {
+    vi.useFakeTimers();
+    try {
+      const router = new SigRelayRouter('me');
+      const x1 = controllableLink();
+      const x2 = controllableLink();
+      router.attachNeighbor('x1', x1);
+      router.attachNeighbor('x2', x2);
+
+      const e = env('me', 'target', 'n1');
+      const p = router.relay(e);
+      // 先綁定拒絕斷言，避免 rejection 早於 handler 附掛而被回報成 unhandled
+      const rejected = expect(p).rejects.toThrow(/無暖路徑可達/);
+      await Promise.resolve(); await Promise.resolve();
+      expect(x1.sent.length).toBe(1); // 先試 x1
+
+      // x1 逾時 → 換 x2
+      await vi.advanceTimersByTimeAsync(2_600);
+      await Promise.resolve(); await Promise.resolve();
+      expect(x2.sent.length).toBe(1);
+
+      // x1 現在才回遲到的 ACK（ref 與 x2 那筆相同）→ 必須被忽略
+      x1.ackNow('me-n1');
+      await Promise.resolve(); await Promise.resolve();
+
+      // x2 仍在等；等到它自己也逾時 → relay 才如實 reject（無暖路徑）
+      await vi.advanceTimersByTimeAsync(2_600);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('現任介紹人自己的 ACK 仍正常解掉等待（未誤傷正常路徑）', async () => {
+    vi.useFakeTimers();
+    try {
+      const router = new SigRelayRouter('me');
+      const x1 = controllableLink();
+      router.attachNeighbor('x1', x1);
+
+      const p = router.relay(env('me', 'target', 'n2'));
+      await Promise.resolve(); await Promise.resolve();
+      expect(x1.sent.length).toBe(1);
+
+      x1.ackNow('me-n2');
+      await Promise.resolve(); await Promise.resolve();
+      await expect(p).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
