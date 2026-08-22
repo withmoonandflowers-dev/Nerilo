@@ -83,7 +83,6 @@ export default defineConfig(({ mode }) => ({
         'src/features/chat/hooks/useChatMessages.ts',
         'src/core/messaging/MeshChatService.ts',
         'src/services/RoomService.ts',
-        'src/services/RoomRequestService.ts',
       ],
       exclude: ['node_modules', 'tests'],
     },
