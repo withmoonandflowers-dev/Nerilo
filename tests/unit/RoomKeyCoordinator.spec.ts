@@ -366,3 +366,75 @@ describe('B5：殭屍 participant 對 keyx 分發的影響', () => {
     expect(sendKeyx).not.toHaveBeenCalled();
   });
 });
+
+/** B5 第 1 項：分發受阻的原因可查詢（讓上層說得出「還在等什麼」） */
+describe('B5：keyx 受阻狀態可觀測', () => {
+  it('殭屍 participant → reason=awaiting-members，並回報還缺幾位', async () => {
+    const { coord, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 4, // 兩位尚未註冊
+    });
+    await tickStable(coord, 3);
+
+    const s = coord.getKeyxStatus();
+    expect(s.reason).toBe('awaiting-members');
+    expect(s.pendingMembers).toBe(2);
+  });
+
+  it('blockedForMs 隨時間累加（同一原因不重設起算點）', async () => {
+    const { coord, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 3,
+    });
+    // blockSince 取 Date.now()，故查詢時基必須與之一致
+    const base = Date.now();
+    await coord.tick();
+    const t0 = coord.getKeyxStatus(base);
+    await coord.tick(); // 第二輪仍是同一原因 → 起算點不該被重設
+    const t1 = coord.getKeyxStatus(base + 30_000);
+    expect(t0.reason).toBe('awaiting-members');
+    expect(t1.reason).toBe('awaiting-members');
+    expect(t1.blockedForMs).toBeGreaterThanOrEqual(t0.blockedForMs + 29_000);
+  });
+
+  it('分發成功後 reason 回到 none', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 2,
+    });
+    await tickStable(coord);
+    expect(sendKeyx).toHaveBeenCalled();
+    expect(coord.getKeyxStatus().reason).toBe('none');
+  });
+
+  it('非產生方不算「被擋」（正常分工，不該對使用者說明）', async () => {
+    // 本機 userId 排序不是最小 → 非產生方
+    const { coord, loadRoster } = await setup({ localUserId: 'z-user' });
+    const other = await ecdhPair();
+    const me = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: await spkiB64(other.publicKey) },
+        { userId: 'z-user', ecdhPubKey: await spkiB64(me.publicKey) },
+      ],
+      participantCount: 2,
+    });
+    await tickStable(coord);
+    expect(coord.getKeyxStatus().reason).toBe('none');
+  });
+});

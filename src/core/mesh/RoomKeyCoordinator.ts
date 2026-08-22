@@ -68,6 +68,25 @@ const STABILITY_TICKS = 1;
  */
 const HANDOVER_GRACE_TICKS = 3;
 
+/**
+ * 分發被擋住的原因（B5 可觀測性）。
+ * 'none' 涵蓋「已分發」與「本節點非產生方」——兩者都不是異常，不需對使用者說明。
+ */
+export type KeyxBlockReason =
+  | 'none'
+  | 'self-not-in-roster' // 自己的 ecdh 身分尚未傳播到名冊
+  | 'awaiting-members' // 有 participant 尚未註冊 ecdh 身分（B5 的殭屍情境）
+  | 'roster-unstable' // 名冊仍在震盪，等連續穩定
+  | 'handover-grace'; // Spec 018 交接寬限中
+
+export interface KeyxStatus {
+  reason: KeyxBlockReason;
+  /** reason === 'awaiting-members' 時：還缺幾位尚未註冊身分 */
+  pendingMembers: number;
+  /** 目前這個原因已持續多久（毫秒）；none 為 0 */
+  blockedForMs: number;
+}
+
 export class RoomKeyCoordinator {
   /** 上次分發所用的名冊簽章（userId 排序 join）；相同則不重發 */
   private distributedRosterSig: string | null = null;
@@ -78,7 +97,36 @@ export class RoomKeyCoordinator {
   /** 交接寬限已延遲的 tick 數（Spec 018 閘門 4；窗盡不重置，liveness 有界） */
   private handoverWaitTicks = 0;
 
+  /** 目前被哪道閘門擋住（B5 可觀測性；none = 未被擋） */
+  private blockReason: KeyxBlockReason = 'none';
+  /** blockReason 維持同一值的起始時間（毫秒）；換原因即重設 */
+  private blockSince = 0;
+  /** awaiting-members 時尚未註冊 ecdh 身分的人數 */
+  private pendingMembers = 0;
+
   constructor(private deps: RoomKeyCoordinatorDeps) {}
+
+  /**
+   * B5：分發為何還沒發生。此前各道閘門只是靜默 return，一位 participant 遲遲不註冊
+   * mesh 身分就能讓整房永遠等不到房間金鑰，60 秒後退成「必須確認明文」——
+   * 而使用者完全看不出原因。這裡把狀態透出，讓上層能誠實說明還在等什麼。
+   */
+  getKeyxStatus(now: number = Date.now()): KeyxStatus {
+    return {
+      reason: this.blockReason,
+      pendingMembers: this.pendingMembers,
+      blockedForMs: this.blockReason === 'none' ? 0 : Math.max(0, now - this.blockSince),
+    };
+  }
+
+  /** 記錄擋住的原因；同一原因持續時不重設起算點（才量得出「卡多久」）。 */
+  private setBlock(reason: KeyxBlockReason, pendingMembers = 0, now: number = Date.now()): void {
+    if (this.blockReason !== reason) {
+      this.blockReason = reason;
+      this.blockSince = now;
+    }
+    this.pendingMembers = pendingMembers;
+  }
 
   /**
    * 週期評估並在需要時分發金鑰。冪等：同一穩定名冊多次呼叫只分發一次。
@@ -115,18 +163,38 @@ export class RoomKeyCoordinator {
     else { this.lastSeenSig = sig; this.stableCount = 0; }
 
     // 閘門 1：自己的 ecdhPubKey 尚未在名冊（傳播中）→ 等
-    if (!ids.includes(this.deps.localUserId)) return;
+    if (!ids.includes(this.deps.localUserId)) {
+      this.setBlock('self-not-in-roster');
+      return;
+    }
     // 2 人以上才啟用密文化（只有自己 → 無對象可封，維持明文相容）
-    if (eligible.length < 2) return;
+    if (eligible.length < 2) {
+      this.setBlock('none'); // 單人房不是異常，不對使用者說明
+      return;
+    }
     // 閘門 1（續）：仍有 participant 未註冊 ecdh 身分 → 等全員就緒才分發，
-    // 避免以殘缺名冊搶先分發（雙產生方 epoch 碰撞的主因）
-    if (participantCount > 0 && eligible.length < participantCount) return;
+    // 避免以殘缺名冊搶先分發（雙產生方 epoch 碰撞的主因）。
+    // B5：這道閘門沒有逃生窗——一位遲遲不註冊的 participant 會讓整房停在這裡，
+    // 故記錄原因與人數，讓上層說得出「還在等幾位」。
+    if (participantCount > 0 && eligible.length < participantCount) {
+      this.setBlock('awaiting-members', participantCount - eligible.length);
+      return;
+    }
     // 閘門 2：名冊尚未連續穩定 → 等（濾掉形成期瞬時不一致視圖）
-    if (this.stableCount < STABILITY_TICKS) return;
+    if (this.stableCount < STABILITY_TICKS) {
+      this.setBlock('roster-unstable');
+      return;
+    }
     // 閘門 3：非（完整穩定名冊的）最小者 → 非產生方
-    if (this.deps.localUserId !== sortedIds[0]) return;
+    if (this.deps.localUserId !== sortedIds[0]) {
+      this.setBlock('none'); // 非產生方是正常分工，不是被擋
+      return;
+    }
 
-    if (sig === this.distributedRosterSig) return; // 此名冊已分發
+    if (sig === this.distributedRosterSig) {
+      this.setBlock('none'); // 已分發
+      return;
+    }
 
     // 閘門 4（Spec 018）：交接寬限——環空、也未觀察到任何 keyx，但房間已運轉
     // → 等既有 keyx 抵達（開不開得了無所謂，epoch metadata 是明文）。
@@ -139,6 +207,7 @@ export class RoomKeyCoordinator {
       this.handoverWaitTicks < HANDOVER_GRACE_TICKS
     ) {
       this.handoverWaitTicks++;
+      this.setBlock('handover-grace');
       logger.info('[RoomKeyCoordinator] handover grace — deferring distribution', {
         waitTick: this.handoverWaitTicks,
         graceTicks: HANDOVER_GRACE_TICKS,
@@ -173,6 +242,7 @@ export class RoomKeyCoordinator {
       await this.deps.sendKeyx(JSON.stringify(payload));
       this.deps.applyLocalKey(roomKey, epoch);
       this.distributedRosterSig = sig;
+      this.setBlock('none'); // 分發成功 → 不再處於被擋狀態
       logger.info('[RoomKeyCoordinator] distributed keyx', {
         epoch,
         members: eligible.length - 1,

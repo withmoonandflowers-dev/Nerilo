@@ -2,7 +2,8 @@ import { IdentityManager } from './IdentityManager';
 import { SecurityManager } from './SecurityManager';
 import { MeshTopologyManager } from './MeshTopologyManager';
 import { GossipMessageHandler } from './GossipMessageHandler';
-import { RoomKeyCoordinator, rosterFromRoom } from './RoomKeyCoordinator';
+import { RoomKeyCoordinator, rosterFromRoom, type KeyxStatus, type KeyxBlockReason } from './RoomKeyCoordinator';
+import { warnIfKeyxStuck as warnKeyx, KEYX_NOT_BLOCKED } from './keyxStuckWarning';
 import type { MeshConnection } from './MeshConnection';
 import { HeartbeatService } from './HeartbeatService';
 import type { PingMessage, PongMessage } from './HeartbeatService';
@@ -50,6 +51,7 @@ export class MeshGossipManager {
   private static readonly KEYX_EXCHANGE_TIMEOUT_MS = 60_000;
   /** keyx 協調啟動時刻（逾時計算基準）；null = 尚未啟動 */
   private keyxStartedAt: number | null = null;
+  private lastWarnedKeyxReason: KeyxBlockReason | null = null; // B5：已吼過的受阻原因
   /**
    * 暫態信號（typing）監聽器。走 ns:'presence' lossy 通道，不進 gossip 日誌/對帳。
    * 對齊星型 ChatService.onTyping 的 {userId,isTyping} 契約，讓 UI 兩路可共用。
@@ -562,9 +564,12 @@ export class MeshGossipManager {
     // 立即先跑一次（縮短形成期到密文化的空窗），再進週期
     void this.keyCoordinator.tick();
     this.keyxInterval = setInterval(() => {
-      void this.keyCoordinator?.tick();
+      void this.keyCoordinator?.tick().then(() => {
+        this.lastWarnedKeyxReason = warnKeyx(this.roomId, this.getKeyxStatus(), this.lastWarnedKeyxReason, MeshGossipManager.KEYX_EXCHANGE_TIMEOUT_MS);
+      });
     }, MeshGossipManager.KEYX_TICK_MS);
   }
+
 
   /**
    * 發送訊息
@@ -704,6 +709,11 @@ export class MeshGossipManager {
    *  - 交換逾時（KEYX_EXCHANGE_TIMEOUT_MS）仍未就緒 → 'plaintext'（fail-visible 升級；可恢復）
    *  - 其餘 → 'exchanging'
    */
+  /** B5：keyx 被哪道閘門擋住、擋多久（無協調器＝明文房 → 'none'）。 */
+  getKeyxStatus(): KeyxStatus {
+    return this.keyCoordinator?.getKeyxStatus() ?? KEYX_NOT_BLOCKED;
+  }
+
   getEncryptionState(): EncryptionState {
     const coordinatorActive = this.keyCoordinator !== null;
     return deriveEncryptionState({

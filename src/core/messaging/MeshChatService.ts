@@ -1,4 +1,5 @@
 import { MeshGossipManager } from '../mesh/MeshGossipManager';
+import type { KeyxStatus } from '../mesh/RoomKeyCoordinator';
 import type { IChatStorage } from '../../ports';
 import { indexedDBService } from '../../services/IndexedDBService';
 import type { ChatMessage, GossipMessage, P2PEnvelope } from '../../types';
@@ -289,6 +290,11 @@ export class MeshChatService {
   }
 
   /** 加密狀態（ADR-0026 R2）：encrypted / exchanging / plaintext（真降級）。 */
+  /** B5：keyx 分發被擋的原因（供 UI 說明「加密還沒上來」是在等什麼） */
+  getKeyxStatus(): KeyxStatus {
+    return this.meshGossipManager.getKeyxStatus();
+  }
+
   getEncryptionState(): EncryptionState {
     return this.meshGossipManager.getEncryptionState();
   }
