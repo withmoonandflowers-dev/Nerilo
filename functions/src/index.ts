@@ -9,7 +9,6 @@ export {
   cleanupExpiredRooms,
   cleanupStaleSignals,
   cleanupExpiredInbox,
-  cleanupExpiredRoomRequests,
 } from './cleanupRooms';
 
 // 設定使用者角色
