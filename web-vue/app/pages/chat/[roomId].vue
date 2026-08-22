@@ -152,26 +152,9 @@ let disposed = false
 // mesh 覆蓋率顯示與健康燈（Spec 011 Q4/Q5；語義見 composables/useMeshHealth）
 const { meshHealth, statusText, updateCoverage } = useMeshHealth(connectionState, memberCount)
 
-// 在房內收到訊息即已讀（節流 5s，metadata 寫入）
-let lastReadWriteAt = 0
-function touchRead() {
-  if (!user.value || !roomId.value) return
-  const now = Date.now()
-  if (now - lastReadWriteAt < 5_000) return
-  lastReadWriteAt = now
-  RoomService.markRead(roomId.value, user.value.uid).catch(() => {})
-}
-
-// 送訊後 bump 房間活躍度（節流 10s；只寫 lastActiveAt/ttl metadata，
-// 讓其他成員的列表排序/未讀點亮，內容不經伺服器）
-let lastBumpAt = 0
-function touchActivity() {
-  if (!roomId.value) return
-  const now = Date.now()
-  if (now - lastBumpAt < 10_000) return
-  lastBumpAt = now
-  RoomService.bumpActivity(roomId.value).catch(() => {})
-}
+// 房間 metadata 節流寫入（已讀/活躍度）與分頁互斥（B1）：見同名 composable
+const { touchRead, touchActivity } = useRoomActivity(() => roomId.value, () => user.value?.uid)
+const { otherTabActive, acquireTab, releaseTab } = useRoomTabLock()
 
 async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) {
   // 人數簿記必須在互斥鎖之前：第三人的 join snapshot 常落在 mesh 初始化的
@@ -188,6 +171,12 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     if (room.status !== 'open' || effectiveCount < 2) return
 
     if (currentTopology.value === 'mesh') return // 已建立，勿重複初始化
+
+    // B1：同一房只讓一個分頁參與 mesh。兩頁共用同一組 mesh 身分（senderId 來自
+    // IndexedDB 金鑰對），同時參與會讓其中一頁的訊息被收端當重複默默丟掉。
+    // 拿不到鎖就明說「已在另一個分頁開啟」，不要靜默半動作。
+    if (!(await acquireTab(roomId.value))) return // B1：已在別的分頁開著，不重複參與 mesh
+    if (disposed) return
 
     featureLog('chat', 'architecture_decided', { roomId: roomId.value, type: 'mesh', from: currentTopology.value })
 
@@ -331,6 +320,7 @@ onUnmounted(() => {
   typingUnsub?.()
   fallbackUnsub?.()
   if (meshStateInterval) clearInterval(meshStateInterval)
+  releaseTab()
   meshChat?.cleanup().catch(() => {})
   meshChat = null
   credits.stopEarning()
@@ -736,6 +726,11 @@ async function leaveRoom() {
         <span class="chat__reply-text">{{ replyingTo.text }}</span>
       </div>
       <button type="button" class="chat__reply-cancel" data-testid="reply-cancel" aria-label="取消回覆" @click="replyingTo = null">✕</button>
+    </div>
+
+    <!-- B1：同房只允許一個分頁參與 mesh（兩頁共用同一組 mesh 身分，同時參與會掉訊息）。 -->
+    <div v-if="otherTabActive" class="chat__e2ee-warn" data-testid="other-tab-notice">
+      ⚠️ 這個聊天室已在另一個分頁開啟。請回到那個分頁繼續，或關閉它後重新整理這頁。
     </div>
 
     <!-- Spec 009：gossip 協議版本不合的常駐提示（訊息無法互通，請雙方更新）。 -->

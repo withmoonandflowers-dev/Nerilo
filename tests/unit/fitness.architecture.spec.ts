@@ -23,7 +23,8 @@ const ROOT = join(__dirname, '../..');
 const GOD_FILE_BASELINE: Record<string, number> = {
   'src/features/chat/ChatPage.tsx': 1204,
   // 1172→1168（2026-07-17 Spec 006：主題循環鈕移除＋遊戲旗標抽 lib/gameRoomFlag，反向調低）
-  'web-vue/app/pages/chat/[roomId].vue': 1168,
+  // 1168→1160（B1）：分頁互斥與房間 metadata 節流抽成 composable（棘輪反向調低）
+  'web-vue/app/pages/chat/[roomId].vue': 1160,
   // 1055→988（2026-07-16）：updateMeshIdentity 抽至 meshIdentityRegistry.ts（棘輪反向調低）
   'src/services/RoomService.ts': 988,
   // 862→795（2026-07-17 Spec 006：砍中繼卡＋P2P 目錄＋主題鈕，反向調低）
