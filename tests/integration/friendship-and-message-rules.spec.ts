@@ -341,3 +341,92 @@ describe('Firestore Rules: 房間刪除（M-5）', withEmulator(() => {
     await deleteDoc(doc(db, 'p2pRooms', ROOM));
   });
 }));
+
+// ─────────────────────────────────────────────────────────────────────────
+// M-3：房間成員注入
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('Firestore Rules: 房間成員注入（M-3）', withEmulator(() => {
+  beforeEach(async () => {
+    await clearEmulatorData();
+  });
+
+  function newRoom(owner: string, participants: string[]) {
+    return {
+      ownerUid: owner,
+      ownerName: '攻擊者自訂名',
+      roomName: '你有一筆款項待領取',
+      participants,
+      isPrivate: false,
+      status: 'waiting',
+      createdAt: Date.now(),
+    };
+  }
+
+  it('建房只帶自己 → 放行', async () => {
+    const token = await createTestUser(UID_A);
+    const { db } = await signInWithToken('m3-ok', token);
+    await setDoc(doc(db, 'p2pRooms', 'm3-ok'), newRoom(UID_A, [UID_A]));
+  });
+
+  it('M-3：建房時把受害者塞進 participants → 擋下', async () => {
+    const token = await createTestUser(UID_A);
+    const { db } = await signInWithToken('m3-inject-create', token);
+    await assertDenied(() =>
+      setDoc(doc(db, 'p2pRooms', 'm3-inject'), newRoom(UID_A, [UID_A, UID_VICTIM]))
+    );
+  });
+
+  it('M-3：建房後把受害者加進 participants（無好友關係）→ 擋下', async () => {
+    const token = await createTestUser(UID_A);
+    const { db } = await signInWithToken('m3-inject-update', token);
+    await setDoc(doc(db, 'p2pRooms', 'm3-upd'), newRoom(UID_A, [UID_A]));
+    await assertDenied(() =>
+      updateDoc(doc(db, 'p2pRooms', 'm3-upd'), {
+        participants: [UID_A, UID_VICTIM].sort(),
+        participantCount: 2,
+      })
+    );
+  });
+
+  it('DM 正當流程：對方先送出好友邀請 → 房主可把他加進 DM 房', async () => {
+    // FriendService.accept() 當下的真實狀態：pending 且 requestedBy = 對方
+    const fid = pairId(UID_A, UID_B);
+    await adminDb().collection('friendships').doc(fid).set({
+      uids: [UID_A, UID_B].sort(),
+      names: { [UID_B]: 'B' },
+      requestedBy: UID_B, // 對方先邀請我 → 同意訊號
+      status: 'pending',
+      createdAt: new Date(),
+    });
+    const token = await createTestUser(UID_A);
+    const { db } = await signInWithToken('m3-dm', token);
+    await setDoc(doc(db, 'p2pRooms', 'm3-dm'), newRoom(UID_A, [UID_A]));
+    await updateDoc(doc(db, 'p2pRooms', 'm3-dm'), {
+      participants: [UID_A, UID_B].sort(),
+      participantCount: 2,
+      status: 'open',
+      kind: 'dm',
+    });
+  });
+
+  it('M-3：好友邀請是我送的（對方未表態）→ 仍不得把對方加進房', async () => {
+    const fid = pairId(UID_A, UID_B);
+    await adminDb().collection('friendships').doc(fid).set({
+      uids: [UID_A, UID_B].sort(),
+      names: { [UID_A]: 'A' },
+      requestedBy: UID_A, // 我自己送的，對方沒同意
+      status: 'pending',
+      createdAt: new Date(),
+    });
+    const token = await createTestUser(UID_A);
+    const { db } = await signInWithToken('m3-selfreq', token);
+    await setDoc(doc(db, 'p2pRooms', 'm3-selfreq'), newRoom(UID_A, [UID_A]));
+    await assertDenied(() =>
+      updateDoc(doc(db, 'p2pRooms', 'm3-selfreq'), {
+        participants: [UID_A, UID_B].sort(),
+        participantCount: 2,
+      })
+    );
+  });
+}));

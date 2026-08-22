@@ -156,6 +156,37 @@ service cloud.firestore {
              ['meshIdentities', 'topology']);
     }
 
+    // M-3：房主把「別人」加進 participants 需要對方的同意訊號。
+    // 唯一有此需求的正當流程是 FriendService.accept() 建 DM 房（1 人房 → 2 人房），
+    // 且當下必然存在一筆好友關係：對方是 requestedBy（他先邀請我），或已 accepted。
+    // 沒有這道檢查時，任何人都能把任意受害者加進自己的房間做內容注入。
+    function friendshipConsented(otherUid) {
+      let fid = request.auth.uid < otherUid
+        ? request.auth.uid + '_' + otherUid
+        : otherUid + '_' + request.auth.uid;
+      let path = /databases/$(database)/documents/friendships/$(fid);
+      return exists(path)
+        && (get(path).data.status == 'accepted'
+            || get(path).data.requestedBy == otherUid);
+    }
+
+    // 沒有新增任何成員（移除與純欄位更新都走這條）
+    function noMembersAdded() {
+      return request.resource.data.participants.toSet()
+        .difference(resource.data.participants.toSet()).size() == 0;
+    }
+
+    // 唯一允許的新增形態：自己的 1 人房 → 2 人 DM，且對方已表達同意。
+    function ownerAddsOneConsentedMember() {
+      let oldP = resource.data.participants;
+      let newP = request.resource.data.participants;
+      return oldP.size() == 1
+        && oldP[0] == request.auth.uid
+        && newP.size() == 2
+        && (newP[0] == request.auth.uid || newP[1] == request.auth.uid)
+        && friendshipConsented(newP[0] == request.auth.uid ? newP[1] : newP[0]);
+    }
+
     // 房主仍可管理房間生命週期與產品 metadata，但只能改已知欄位，且一般更新
     // 不得偷換 ownerUid。participants 清空只允許同時關房。
     function isOwnerManagedUpdate() {
@@ -166,6 +197,7 @@ service cloud.firestore {
         && (request.auth.uid in request.resource.data.participants
             || (request.resource.data.participants.size() == 0
                 && request.resource.data.status == 'closed'))
+        && (noMembersAdded() || ownerAddsOneConsentedMember()) // M-3
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
              'status', 'closedAt', 'participants', 'participantCount',
              'lastActiveAt', 'ttlExpireAt', 'meshIdentities', 'topology', 'version',
@@ -259,8 +291,12 @@ service cloud.firestore {
       // 且 ownerUid 必須是當前用戶
       allow create: if isAuthenticated() &&
         request.resource.data.ownerUid == request.auth.uid &&
-        request.auth.uid in request.resource.data.participants &&
-        request.resource.data.participants.size() == request.resource.data.participants.toSet().size() &&
+        // M-3：建房時 participants 只能是自己。此前只要求「自己在名單內」，
+        // 於是任何人都能建一間房、同時把受害者塞進 participants——受害者的房間列表
+        // 就會冒出一間攻擊者控制、房名與房主名皆由攻擊者指定的房（釣魚介面）。
+        // 產品流建房一律只帶自己（DashboardPage / dashboard.vue / FriendService 皆傳 []）。
+        request.resource.data.participants.size() == 1 &&
+        request.resource.data.participants[0] == request.auth.uid &&
         participantsWithinCap(request.resource.data) &&
         validMaxParticipantsOnCreate(request.resource.data) &&
         request.auth.token.firebase.sign_in_provider != "anonymous";
@@ -490,6 +526,10 @@ service cloud.firestore {
           && request.auth.uid in chanParticipants()
           && request.resource.data.from == request.auth.uid
           && request.resource.data.type in ['offer', 'answer', 'ice']
+          // M-8：此前站級 relay signals 只驗文件大小，payload 結構完全不驗，
+          // 惡意 peer 可投遞任意形狀的 payload，防線全押在收端 setRemoteDescription /
+          // addIceCandidate 的容錯上。複用房內 signals 的同一道 SDP/ICE 欄位驗證。
+          && isValidSignalPayload(request.resource.data)
           && request.resource.size() < 10 * 1024
           && request.resource.data.expiresAt is timestamp
           && request.resource.data.expiresAt > request.time
