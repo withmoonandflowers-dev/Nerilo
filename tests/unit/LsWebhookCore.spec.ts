@@ -10,6 +10,8 @@ import {
   resolvePlanChange,
   extractUid,
   extractEvent,
+  extractSubscriptionId,
+  applySubscriptionChange,
 } from '../../netlify/functions/_lib/webhook-core';
 
 const SECRET = 'test-webhook-secret';
@@ -84,5 +86,44 @@ describe('extractUid / extractEvent', () => {
         data: { attributes: { status: 'active' } },
       })
     ).toEqual({ eventName: 'subscription_updated', status: 'active' });
+  });
+});
+
+describe('extractSubscriptionId / applySubscriptionChange（M-6）', () => {
+  it('取得訂閱 id（字串與數字皆正規化為字串）', () => {
+    expect(extractSubscriptionId({ data: { id: 'sub_123' } })).toBe('sub_123');
+    expect(extractSubscriptionId({ data: { id: 456 } })).toBe('456');
+    expect(extractSubscriptionId({})).toBeNull();
+    expect(extractSubscriptionId({ data: { id: 'x'.repeat(200) } })).toBeNull();
+  });
+
+  it('pro 事件把訂閱加進集合，方案為 pro', () => {
+    expect(applySubscriptionChange([], 'sub_a', 'pro')).toEqual({
+      activeSubscriptions: ['sub_a'],
+      effectivePlan: 'pro',
+    });
+  });
+
+  it('同一訂閱重複 pro 事件不重複累加（冪等）', () => {
+    expect(applySubscriptionChange(['sub_a'], 'sub_a', 'pro').activeSubscriptions).toEqual(['sub_a']);
+  });
+
+  it('最後一筆訂閱到期 → 降為 free', () => {
+    expect(applySubscriptionChange(['sub_a'], 'sub_a', 'free')).toEqual({
+      activeSubscriptions: [],
+      effectivePlan: 'free',
+    });
+  });
+
+  it('M-6 核心：攻擊者掛在受害者 uid 的訂閱到期，不影響受害者自己的訂閱', () => {
+    // 受害者自己的 sub_victim 仍有效，攻擊者的 sub_attacker 到期
+    const r = applySubscriptionChange(['sub_victim', 'sub_attacker'], 'sub_attacker', 'free');
+    expect(r.activeSubscriptions).toEqual(['sub_victim']);
+    expect(r.effectivePlan).toBe('pro'); // 不被降級
+  });
+
+  it('移除不存在的訂閱不會誤降級', () => {
+    const r = applySubscriptionChange(['sub_victim'], 'sub_unknown', 'free');
+    expect(r.effectivePlan).toBe('pro');
   });
 });

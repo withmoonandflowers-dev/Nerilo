@@ -14,21 +14,33 @@
 import type { Context } from '@netlify/functions';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
 import {
   verifySignature,
   resolvePlanChange,
   extractUid,
   extractEvent,
+  extractSubscriptionId,
+  applySubscriptionChange,
   type LsWebhookPayload,
 } from './_lib/webhook-core';
 
-function adminAuth() {
+function ensureApp() {
   if (getApps().length === 0) {
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
     if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT not configured');
     initializeApp({ credential: cert(JSON.parse(raw)) });
   }
+}
+
+function adminAuth() {
+  ensureApp();
   return getAuth();
+}
+
+function adminDb() {
+  ensureApp();
+  return getFirestore();
 }
 
 export default async (req: Request, _context: Context): Promise<Response> => {
@@ -68,12 +80,42 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     return new Response('No uid in custom data', { status: 200 });
   }
 
+  const subscriptionId = extractSubscriptionId(payload);
+  if (!subscriptionId && plan === 'free') {
+    // M-6：無法歸因到哪一筆訂閱時，絕不執行降級——否則一則無 id 的事件就能
+    // 把使用者踢下 pro。升級無此顧慮（誤升只是多給權益），故僅擋降級。
+    console.warn('[ls-webhook] Downgrade without subscription id — skipped', { eventName, uid });
+    return new Response('Downgrade without subscription id', { status: 200 });
+  }
+
   try {
     const auth = adminAuth();
     const user = await auth.getUser(uid); // uid 不存在會 throw
+
+    // M-6：方案由「該 uid 目前有效的訂閱集合」推導，不由單一事件直接決定。
+    let effectivePlan = plan;
+    if (subscriptionId) {
+      const ref = adminDb().collection('entitlements').doc(uid);
+      effectivePlan = await adminDb().runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const current = (snap.exists ? snap.data()?.activeSubscriptions : []) ?? [];
+        const next = applySubscriptionChange(
+          Array.isArray(current) ? (current as string[]) : [],
+          subscriptionId,
+          plan
+        );
+        tx.set(
+          ref,
+          { activeSubscriptions: next.activeSubscriptions, plan: next.effectivePlan, updatedAt: Date.now() },
+          { merge: true }
+        );
+        return next.effectivePlan;
+      });
+    }
+
     const existing = user.customClaims ?? {};
-    await auth.setCustomUserClaims(uid, { ...existing, plan });
-    console.log('[ls-webhook] Plan updated', { uid, plan, eventName });
+    await auth.setCustomUserClaims(uid, { ...existing, plan: effectivePlan });
+    console.log('[ls-webhook] Plan updated', { uid, plan: effectivePlan, eventName, subscriptionId });
     return new Response('OK', { status: 200 });
   } catch (err) {
     console.error('[ls-webhook] Failed to set claim', { uid, plan, err: String(err) });

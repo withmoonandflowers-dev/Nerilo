@@ -62,10 +62,43 @@ export interface LsWebhookPayload {
     custom_data?: Record<string, unknown>;
   };
   data?: {
+    /** LS 訂閱 id；用來分辨「是哪一筆訂閱」在變動（M-6） */
+    id?: string | number;
     attributes?: {
       status?: string;
     };
   };
+}
+
+/** 取 LS 訂閱 id（正規化為字串；無或格式不符回 null） */
+export function extractSubscriptionId(payload: LsWebhookPayload): string | null {
+  const id = payload.data?.id;
+  if (typeof id === 'number' && Number.isFinite(id)) return String(id);
+  if (typeof id !== 'string') return null;
+  if (id.length < 1 || id.length > 128) return null;
+  return id;
+}
+
+/**
+ * M-6：以「該 uid 目前有效的訂閱集合」推導方案，而非讓單一事件直接決定。
+ *
+ * checkout 的 custom_data.uid 由客戶端填寫，伺服器端無從驗證它是否為付款人本人。
+ * 此前一則 subscription_expired 就直接把該 uid 設成 free——攻擊者只要用自己的訂閱
+ * 掛上受害者 uid，再取消，就能把一位真正的付費使用者降級。
+ *
+ * 改以集合語義後：expired 只移除「那一筆」訂閱，受害者自己的訂閱仍在集合裡，
+ * 方案維持 pro。攻擊者仍可「贈送」pro（他自己付錢），那不構成傷害。
+ */
+export function applySubscriptionChange(
+  activeSubscriptions: string[],
+  subscriptionId: string,
+  plan: Plan
+): { activeSubscriptions: string[]; effectivePlan: Plan } {
+  const set = new Set(activeSubscriptions.filter((s) => typeof s === 'string' && s.length > 0));
+  if (plan === 'pro') set.add(subscriptionId);
+  else set.delete(subscriptionId);
+  const next = [...set];
+  return { activeSubscriptions: next, effectivePlan: next.length > 0 ? 'pro' : 'free' };
 }
 
 /** 從 checkout 帶入的 custom_data 取 Firebase uid（無或格式不符回 null） */
