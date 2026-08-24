@@ -22,6 +22,7 @@ export { InMemoryChatStorage } from '../core/storage/InMemoryChatStorage';
 
 // 公開資料型別
 export type { ChatMessage, HLCTimestamp } from '../types';
+export type { NeriloStatus, NeriloTransportState, NeriloEncryptionState } from '../core/messaging/status';
 export type { ReactionEvent, ReactionOp, ReactionMap } from '../core/messaging/reactions';
 export type { ReadEvent, ReadState } from '../core/messaging/readReceipts';
 

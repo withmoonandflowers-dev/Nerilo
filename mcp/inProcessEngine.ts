@@ -10,6 +10,7 @@ import type { IChatEngine } from '../src/sdk/index';
 import type { ChatMessage } from '../src/types';
 import type { ReactionEvent, ReactionOp } from '../src/core/messaging/reactions';
 import type { ReadEvent } from '../src/core/messaging/readReceipts';
+import type { NeriloStatus } from '../src/core/messaging/status';
 
 interface RoomBus {
   messages: ChatMessage[];
@@ -138,5 +139,19 @@ export class InProcessChatEngine implements IChatEngine {
     const off = () => bus.typingListeners.delete(listener);
     this.unsubs.push(off);
     return off;
+  }
+
+  /**
+   * 狀態透出（Spec 024）。in-process demo 的誠實值：同 process 直達＝p2p；
+   * 本引擎無 E2EE（MCP-GATEWAY.md 明示），加密軸恆 degraded，不得謊報 ready。
+   * 狀態恆定，onStatus 只在訂閱當下發一次即滿足契約（同值不重發）。
+   */
+  getStatus(): NeriloStatus {
+    return { transport: 'p2p', encryption: 'degraded' };
+  }
+
+  onStatus(listener: (s: NeriloStatus) => void): () => void {
+    listener(this.getStatus());
+    return () => {};
   }
 }

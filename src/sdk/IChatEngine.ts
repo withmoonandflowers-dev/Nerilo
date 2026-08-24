@@ -1,6 +1,7 @@
 import type { ChatMessage } from '../types';
 import type { ReactionEvent, ReactionOp } from '../core/messaging/reactions';
 import type { ReadEvent } from '../core/messaging/readReceipts';
+import type { NeriloStatus } from '../core/messaging/status';
 
 /**
  * 傳輸中立的聊天引擎契約(SDK 注入縫)。
@@ -30,4 +31,11 @@ export interface IChatEngine {
 
   sendTyping(isTyping: boolean): Promise<void>;
   onTyping(listener: (data: { userId: string; isTyping: boolean }) => void): () => void;
+
+  /**
+   * 連線與加密狀態（Spec 024；0.10.0 起為必要方法，自帶引擎需實作——CHANGELOG 有破壞性說明）。
+   * getStatus 是同步快照；onStatus 訂閱變更（訂閱當下先收一次目前狀態，之後同值不重發）。
+   */
+  getStatus(): NeriloStatus;
+  onStatus(listener: (s: NeriloStatus) => void): () => void;
 }

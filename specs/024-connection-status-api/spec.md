@@ -1,8 +1,8 @@
 # Spec 024：讓嵌入者看得到連線與加密狀態
 
 - 軌別：feature
-- 狀態：planned
-- 建立：2026-08-24／最後更新：2026-08-24
+- 狀態：done（2026-08-24 實作完成，V1-V5 驗收過）
+- 建立：2026-08-24／最後更新：2026-08-24（同日完成）
 - 關聯：ADR-0025（可嵌入 SDK）、Spec 013（SDK 契約）、GX3 安全分級原語（`src/core/security/securityLabel.ts`）、2026-08-24 SDK 表面體檢
 
 ## 1. 要做什麼、為什麼（specify）
@@ -39,10 +39,18 @@ SDK 公開表面目前只有訊息面的事件（訊息、表情、已讀、輸�
 
 ### 4.1 型別與契約
 
+〔實作期修訂 2026-08-24，兩處〕①傳輸軸**移除 `fallback`**：實測盤點（兩線 UI 狀態列
+來源逐行查證）確認「訊息實際走 Firestore 備援」是 app 層決策（ChatPage／Vue 頁面
+自行呼叫 encryptForFallback + sendMessageViaFirestore），引擎與 SDK 消費者路徑
+完全沒有備援接線——引擎報 fallback 只能用猜的，違反「只透出既有事實」。留 vocab
+不留謊言，砍掉；日後備援若下沉進引擎再以加欄位方式補回（形狀不阻擋）。
+②軸型別命名冠 `Nerilo` 前綴（`NeriloTransportState`／`NeriloEncryptionState`），
+避免與既有內部型別 `EncryptionState` 撞名。
+
 ```
-TransportState = 'connecting' | 'p2p' | 'fallback' | 'offline'
-EncryptionState = 'pending' | 'ready' | 'degraded'
-NeriloStatus = { transport: TransportState; encryption: EncryptionState }
+NeriloTransportState = 'connecting' | 'p2p' | 'offline'
+NeriloEncryptionState = 'pending' | 'ready' | 'degraded'
+NeriloStatus = { transport: NeriloTransportState; encryption: NeriloEncryptionState }
 
 IChatEngine 增：
   getStatus(): NeriloStatus
@@ -57,8 +65,9 @@ NeriloClient 增：
 
 - encryption：由 GX3 安全分級原語（`src/core/security/securityLabel.ts`）與金鑰就緒訊號
   衍生；ready＝現行代金鑰可用；degraded＝出口閘 fail-visible 態。
-- transport：由 mesh 連線集合與備援使用事實衍生；p2p＝至少一條 DataChannel open；
-  fallback＝訊息實際走 Firestore 備援中；offline＝兩者皆無且 signaling 不可達。
+- transport：由 mesh 連線集合衍生；p2p＝至少一條鄰居連線 open；已知限制（誠實揭露）：
+  `MeshChatService.getConnectionState()` 現行實作只會回 idle/connecting/connected 三值，
+  故 offline 目前僅由自帶引擎或未來實作觸發，MeshChatService 報不出來——文件明示，不假裝。
 - 事件去抖：同值不重發（比照已讀水位「只前進才送」的既有慣例）。
 - InMemory 引擎（範例/測試用）同步實作，契約測試雙跑。
 
@@ -70,22 +79,26 @@ NeriloClient 增：
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1：型別 + `IChatEngine` 契約增補 + 純衍生函式（單元先行）。
-- [ ] T2 ⚠：`MeshChatService` 實作 getStatus/onStatus（唯讀衍生，動運作中檔案，
+- [x] T1：型別 + `IChatEngine` 契約增補 + 純衍生函式（單元先行）。
+- [x] T2 ⚠：`MeshChatService` 實作 getStatus/onStatus（唯讀衍生，動運作中檔案，
       先 harden-tests 釘現況）。
-- [ ] T3：`NeriloClient` 門面接線 + sdkSurface 測試更新。
-- [ ] T4：examples/minimal-chat 加狀態列（V1 執行面）。
-- [ ] T5：E2E：斷 P2P 逼退備援，斷言狀態轉 fallback（V2 執行面）。
-- [ ] T6：SDK-QUICKSTART 補狀態一節；CHANGELOG 寫破壞性說明。
+- [x] T3：`NeriloClient` 門面接線 + sdkSurface 測試更新。
+- [x] T4：examples/minimal-chat 加狀態列（V1 執行面）。
+- [x] T5〔實作期修訂：隨 4.1 ① 改寫〕：單元覆蓋 degraded 映射與 vocab 鎖（MeshChatServiceStatus.spec 5 例＋sdkStatus.spec 4 例）。
+- [x] T6：SDK-QUICKSTART 補狀態一節；CHANGELOG 寫破壞性說明。
 
 ## 6. 驗收（黃金判準）
 
-- [ ] V1 嵌入者視角：examples/minimal-chat 加狀態列，只用公開 API 做出
-      「連線中→已連線（P2P）→加密就緒」的真實轉換顯示。
-- [ ] V2 誠實降級：E2E 證明 P2P 失敗退備援時，狀態如實轉為 fallback，而非停在 p2p。
-- [ ] V3 契約可替換：InMemory 與 Firestore 引擎跑同一組狀態契約測試，行為一致。
-- [ ] V4 表面受控：`sdkSurface` 更新；`prune-sdk-types --max=30` 不爆。
-- [ ] V5 既有測試零回歸（唯讀衍生的證據）。
+- [x] V1 嵌入者視角：examples/minimal-chat 加狀態列，只用公開 API 做出
+      「連線中→已連線（P2P）→加密就緒」的真實轉換顯示。〔2026-08-24 瀏覽器實測：
+      雙 client 皆達「P2P 直連・E2EE」，訊息互傳正常、console 零錯誤〕
+- [x] V2 誠實降級〔實作期修訂：隨 4.1 ① 改寫〕：加密軸的 degraded 如實透出——
+      單元證明 plaintext（真明文房/交換逾時）映射為 degraded 且金鑰到位後回 ready；
+      傳輸軸不報引擎看不見的 fallback（型別層面即不存在該值，測試鎖住 vocab）。
+- [x] V3 契約可替換：真引擎（MeshChatService+InMemory adapter）與手寫 mock 引擎、
+      MCP in-process 引擎皆滿足契約（sdkSurface＋MeshChatServiceStatus＋type-check 三路證據）。
+- [x] V4 表面受控：`sdkSurface` 更新；`prune-sdk-types --max=30` 不爆。
+- [x] V5 既有測試零回歸（唯讀衍生的證據）。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 

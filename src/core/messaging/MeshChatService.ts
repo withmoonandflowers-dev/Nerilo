@@ -8,6 +8,7 @@ import type { ReactionEvent, ReactionOp } from './reactions';
 import type { ReadEvent } from './readReceipts';
 import { PlaintextConfirmRequiredError, type EncryptionState } from './encryptionGate';
 import { sendGateDecision, type SecurityLevel } from '../security/securityLabel';
+import { deriveStatus, statusEquals, type NeriloStatus } from './status';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
 import { logger } from '../../utils/logger';
@@ -365,6 +366,53 @@ export class MeshChatService {
     }
   }
 
+  // ── SDK 狀態透出（Spec 024）────────────────────────────
+  /** 狀態變更監聽器；有訂閱者才輪詢（500ms），無訂閱者零成本。 */
+  private statusListeners: Set<(s: NeriloStatus) => void> = new Set();
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private lastStatus: NeriloStatus | null = null;
+
+  /** 目前狀態快照（同步）：兩軸皆為既有 getter 的純翻譯（status.ts），無新狀態機。 */
+  getStatus(): NeriloStatus {
+    return deriveStatus(this.getConnectionState(), this.getEncryptionState());
+  }
+
+  /**
+   * 訂閱狀態變更。訂閱當下先對該監聽器發一次目前狀態；之後同值不重發。
+   * 內部以 500ms 輪詢翻譯既有 getter（底層無變更事件可掛；輪詢只在有訂閱者時運轉）。
+   */
+  onStatus(listener: (s: NeriloStatus) => void): () => void {
+    this.statusListeners.add(listener);
+    const current = this.getStatus();
+    if (this.lastStatus === null) this.lastStatus = current;
+    try {
+      listener(current);
+    } catch (error) {
+      logger.error('[MeshChatService] Error in status listener', { error });
+    }
+    if (this.statusTimer === null) {
+      this.statusTimer = setInterval(() => {
+        const s = this.getStatus();
+        if (this.lastStatus !== null && statusEquals(this.lastStatus, s)) return;
+        this.lastStatus = s;
+        this.statusListeners.forEach((l) => {
+          try {
+            l(s);
+          } catch (error) {
+            logger.error('[MeshChatService] Error in status listener', { error });
+          }
+        });
+      }, 500);
+    }
+    return () => {
+      this.statusListeners.delete(listener);
+      if (this.statusListeners.size === 0 && this.statusTimer !== null) {
+        clearInterval(this.statusTimer);
+        this.statusTimer = null;
+      }
+    };
+  }
+
   /**
    * mesh 覆蓋狀況：connected=已連上的鄰居數、known=已發現的鄰居數（含未連上）、
    * targetNeighbors=拓撲目標鄰居數 k（Spec 011；partial mesh 下 k < n-1 是設計常態）。
@@ -390,5 +438,12 @@ export class MeshChatService {
     // A9：此前漏清這兩組，重進房疊加 → 舊監聽器殘留、reaction/已讀水位被重複通知。
     this.reactionListeners.clear();
     this.readListeners.clear();
+    // Spec 024：狀態輪詢與監聽器一併清，重進房不殘留計時器。
+    if (this.statusTimer !== null) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
+    this.statusListeners.clear();
+    this.lastStatus = null;
   }
 }

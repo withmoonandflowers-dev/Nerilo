@@ -16,6 +16,7 @@ import {
   InMemoryRoomDirectoryHub,
   InMemoryChatStorage,
   type NeriloClient,
+  type NeriloStatus,
 } from 'nerilo';
 // turnkey 工廠在 subpath（架構收斂 2026-07）
 import { createChatClient } from 'nerilo/firestore';
@@ -55,6 +56,27 @@ function append(peer: 'alice' | 'bob', from: string, text: string, self: string)
   log.scrollTop = log.scrollHeight;
 }
 
+/**
+ * 狀態列（Spec 024）：只用公開 API（client.onStatus）呈現真實轉換
+ * 「連線中 → 已連線（P2P）→ 加密就緒」。不猜、不寫死。
+ */
+const TRANSPORT_TEXT: Record<NeriloStatus['transport'], string> = {
+  connecting: '連線中…',
+  p2p: 'P2P 直連',
+  offline: '離線',
+};
+const ENCRYPTION_TEXT: Record<NeriloStatus['encryption'], string> = {
+  pending: '🔑 金鑰交換中',
+  ready: '🔒 E2EE',
+  degraded: '⚠️ 未加密',
+};
+
+function wireStatus(peer: 'alice' | 'bob', client: NeriloClient): void {
+  client.onStatus((s) => {
+    $(`e2ee-${peer}`).textContent = `${TRANSPORT_TEXT[s.transport]}・${ENCRYPTION_TEXT[s.encryption]}`;
+  });
+}
+
 function wireComposer(peer: 'alice' | 'bob', client: NeriloClient): void {
   const input = $(`input-${peer}`) as HTMLInputElement;
   const button = $(`send-${peer}`) as HTMLButtonElement;
@@ -79,13 +101,15 @@ async function main(): Promise<void> {
   alice.onMessage((m) => append('alice', m.from, alice.decode(m).text, 'alice'));
   bob.onMessage((m) => append('bob', m.from, bob.decode(m).text, 'bob'));
 
+  // 連線前就掛狀態列：能看到 connecting/pending → p2p/ready 的真實轉換（Spec 024 V1）
+  wireStatus('alice', alice);
+  wireStatus('bob', bob);
+
   setStatus('連線中（WebRTC 直連 + ECDH 金鑰交換）…');
   await Promise.all([alice.connect(), bob.connect()]);
 
   wireComposer('alice', alice);
   wireComposer('bob', bob);
-  $('e2ee-alice').textContent = '🔒 E2EE';
-  $('e2ee-bob').textContent = '🔒 E2EE';
   setStatus(`已連線：alice=${alice.userId ?? '?'}，bob=${bob.userId ?? '?'}。在任一側輸入即可互傳。`);
 
   // 生命週期：離開頁面時清理連線。

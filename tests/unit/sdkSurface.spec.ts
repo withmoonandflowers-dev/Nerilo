@@ -80,11 +80,19 @@ describe('SDK 公開表面（P3 publishable surface）', () => {
       onRead: noop,
       sendTyping: async () => {},
       onTyping: noop,
+      // Spec 024：狀態是 0.10.0 起的必要契約——自帶引擎必須實作
+      getStatus: () => ({ transport: 'p2p', encryption: 'ready' }),
+      onStatus: (l) => { l({ transport: 'p2p', encryption: 'ready' }); return () => {}; },
     };
     const client = new NeriloClient(engine);
     await client.connect();
     expect(client.userId).toBe('me');
     expect(await client.sendMessage('hi')).toBe('id-1');
+    // 狀態面（Spec 024）：快照與訂閱（訂閱當下先收一次）皆走公開表面
+    expect(client.status).toEqual({ transport: 'p2p', encryption: 'ready' });
+    const seen: unknown[] = [];
+    client.onStatus((s) => seen.push(s));
+    expect(seen).toEqual([{ transport: 'p2p', encryption: 'ready' }]);
     await client.dispose();
   });
 

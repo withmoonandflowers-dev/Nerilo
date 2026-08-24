@@ -76,10 +76,30 @@ await client.dispose();
 | `markReadUpTo(messages)` | 標記已讀水位並廣播（只前進時送，天然限流） |
 | `readCountFor(msg)` | 某訊息的已讀人數（排除作者與自己） |
 | `setTyping(isTyping)` / `onTyping(cb)` | 輸入中狀態 |
+| `status` / `onStatus(cb)` | 連線與加密狀態（見下節） |
 | `userId` | 本機身分（connect 後才有值） |
 | `dispose()` | 退訂所有事件並清理連線 |
 
 只有這個門面與注入契約算穩定 API。內部的 mesh/gossip/crypto 類別不列入公開契約，可能改。
+
+### 連線與加密狀態（0.10.0 起）
+
+`client.status` 回同步快照，`client.onStatus(cb)` 訂閱變更（訂閱當下先收一次，之後同值不重發）：
+
+```ts
+client.onStatus(({ transport, encryption }) => {
+  // transport: 'connecting' | 'p2p' | 'offline'
+  // encryption: 'pending'（金鑰交換中）| 'ready'（可加密送出）| 'degraded'（明文態，送出會被閘住）
+  statusBar.textContent = `${transport} / ${encryption}`;
+});
+```
+
+用途：等 `encryption === 'ready'` 再開放送出介面（或遊戲開局）；`degraded` 時提示使用者而非默默失敗。
+
+誠實邊界：狀態是既有內部事實的翻譯，不是新監測系統。①預設引擎（mesh）目前不會報
+`offline`（內部連線判定只有 idle/connecting/connected 三值），該值保留給自帶引擎與未來實作。
+②「訊息退 Firestore 備援」是應用層決策，引擎看不到，所以狀態裡沒有 fallback——我們不報
+引擎無法證明的事。③自帶 `IChatEngine` 的實作者：0.10.0 起 `getStatus`/`onStatus` 是必要方法。
 
 ## 接真實後端
 

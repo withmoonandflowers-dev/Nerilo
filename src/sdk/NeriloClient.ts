@@ -3,6 +3,7 @@ import type { IChatEngine } from './IChatEngine';
 import { applyReaction, hasReacted, type ReactionMap } from '../core/messaging/reactions';
 import { applyRead, readCount, orderKeyOf, type ReadState } from '../core/messaging/readReceipts';
 import { encodeContent, decodeContent } from '../core/messaging/messageContent';
+import type { NeriloStatus } from '../core/messaging/status';
 
 /** 已讀水位比對用的最小訊息形狀(timestamp 必有,hlc 可選)。 */
 export interface Positioned {
@@ -103,6 +104,19 @@ export class NeriloClient {
   readCountFor(msg: ChatMessage): number {
     const me = this.userId ?? msg.from;
     return readCount(this.reads, orderKeyOf(msg), msg.from, [me]);
+  }
+
+  // ── 連線與加密狀態（Spec 024）────────────────────────────
+  /** 目前狀態快照：{ transport: connecting|p2p|offline, encryption: pending|ready|degraded }。 */
+  get status(): NeriloStatus {
+    return this.engine.getStatus();
+  }
+
+  /** 訂閱狀態變更（訂閱當下先收一次目前狀態；同值不重發）；回傳退訂函式。 */
+  onStatus(cb: (s: NeriloStatus) => void): () => void {
+    const unsub = this.engine.onStatus(cb);
+    this.unsubs.push(unsub);
+    return unsub;
   }
 
   // ── 輸入中 ─────────────────────────────────────────────

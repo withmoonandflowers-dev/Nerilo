@@ -111,6 +111,10 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'InMemorySignalingHub',
       'InMemorySignalingTransport',
       'NeriloClient',
+      // Spec 024：狀態 API 型別（0.10.0）
+      'NeriloEncryptionState',
+      'NeriloStatus',
+      'NeriloTransportState',
       'Positioned',
       'RawSignalDoc',
       'ReactionEvent',
