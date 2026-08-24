@@ -180,6 +180,8 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'RawChannel',
       'RawChannelInit',
       'RawPayload',
+      // Spec 025：房間共享狀態（LWW＋晚進者快照補齊）
+      'SharedState',
       'createTransportClient',
     ]);
   });

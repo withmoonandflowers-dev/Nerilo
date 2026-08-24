@@ -18,6 +18,48 @@ npm install nerilo
 - **四道可注入的縫**：signaling（誰幫忙交換連線資訊）、directory（房間名冊）、storage（本機訊息儲存）、身分（你傳進來的 userId）。全部可替換。
 - **省略後端會怎樣**：不注入 signaling/directory/storage 時，`initialize()` 才動態載入預設的 Firestore/IndexedDB。省略者延後載入，代表「全部注入」這條路徑的靜態相依圖裡沒有 Firebase。
 
+## 按資料類型選通道（先看這張表）
+
+不要從「我在做什麼遊戲/應用」出發，從「我要搬的資料長什麼樣」出發。六類資料各有對的通道，
+選錯通道的症狀也列給你：
+
+| # | 資料類型 | 例子 | 用什麼 | 選錯的症狀 |
+|---|---|---|---|---|
+| 1 | 高頻易失流 | 每 tick 輸入、游標、姿態 | `openRawChannel(peer, label, {ordered:false, maxRetransmits:0})` | 用可靠通道→延遲堆積；用訊息層→撞每秒 10 則限流 |
+| 2 | 可靠會話事件 | 回合指令、開局訊號、成交確認 | `openRawChannel(peer, label, {ordered:true})`（不設 maxRetransmits＝不限重傳） | 用易失通道→關鍵指令消失 |
+| 3 | 持久可靠訊息 | 聊天、跨會話事件 | `NeriloClient.sendMessage`（恰好一次＋離線信使） | 用 raw 通道→斷線期間的訊息永久消失 |
+| 4 | 共享狀態 | 記分板、房間設定、出席表 | `client.sharedState()`（LWW＋晚進者自動補齊） | 用事件通道→晚進的人永遠不知道現況 |
+| 5 | 大型二進位 | 資產、回放檔 | **尚未提供**（SDK 面缺口，已列追蹤）；先自行分塊走可靠 raw 通道 | — |
+| 6 | 發現與感知 | 房間列表、成員、連線/加密狀態 | `IRoomCatalog`＋`peers()/onPeerChange`＋`status/onStatus` | 自己輪詢猜→慢且錯 |
+
+三個入口的分工：`nerilo/transport`（類 1/2/4/6 的成員面）、`nerilo`＋`nerilo/firestore`
+（類 3 與類 6 的大廳面）。同一個 mesh 地基（連線、身分、房間金鑰）三個入口共用。
+
+```ts
+import { createTransportClient } from 'nerilo/transport';
+
+const client = await createTransportClient({ roomId, userId /*, signaling, directory, identityNamespace */ });
+await client.connect();
+client.onStatus(({ transport, encryption }) => { /* 類6：等 ready 再開玩 */ });
+
+// 類1：60Hz 輸入（掉了就掉，dropped() 有計數）
+const inputs = await client.openRawChannel(peerId, 'inputs', { ordered: false, maxRetransmits: 0 });
+inputs.send(frameBytes);
+
+// 類2：回合指令（同一 API，改參數＝可靠保序）
+const turns = await client.openRawChannel(peerId, 'turns', { ordered: true });
+turns.send(JSON.stringify({ t: 'end-turn' }));
+
+// 類4：共享狀態（晚進者連上自動拿到現況；label 'state' 為保留字）
+const state = client.sharedState();
+state.set('score', { p1: 3, p2: 1 });
+state.onChange((view, keys) => renderScoreboard(view));
+```
+
+各類的誠實邊界：類 1/2 的可靠性只及連線存續期間（重連不補送、不去重——需要跨斷線
+保證就用類 3）；類 4 是 per-key LWW（高頻並發改同一 key 會互蓋；晚進者拿到現況、
+看不到歷史過程，這與前向保密設計一致）；類 2 保序但無「恰好一次」（重連後要不要重發由你判斷）。
+
 ## 最小範例（零 Firebase，單頁可跑）
 
 用全記憶體的參考 adapter，不需要任何後端帳號。適合先把 API 跑起來、寫整合測試、或做同頁展示。
@@ -190,6 +232,9 @@ client.onRawChannel((ch) => {
   （參考 block-brawl：每 frame 帶最近 8 tick）。
 - 通道生命週期綁 mesh 連線：mesh 重連時通道跟著斷（`onClose` 透出），重開由你決定。
 - `openRawChannel` 對未連上的 peer 直接拋錯，不等待。先用 `peers()`／`onPeerChange` 確認。
+- label `state` 為保留字（給 `client.sharedState()` 的共享狀態層，0.11.0 起），你的通道請避開。
+- 同源多實例（同機雙分頁）必傳 `identityNamespace`（各實例獨有值），否則持久身分被共用、
+  mesh 把對方當自己、永不連線——而且沒有錯誤訊息。
 
 ## 只要 signaling，不要整個聊天客戶端
 

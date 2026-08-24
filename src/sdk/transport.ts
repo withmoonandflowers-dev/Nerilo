@@ -15,11 +15,13 @@
 import { MeshGossipManager } from '../core/mesh/MeshGossipManager';
 import { sealRawFrame, openRawFrame, type RawPayload, type RawKeyPort } from '../core/p2p/RawChannelCrypto';
 import { deriveStatus, statusEquals, type NeriloStatus } from '../core/messaging/status';
+import { SharedStateImpl, STATE_CHANNEL_LABEL, type SharedState } from './sharedState';
 import type { SignalingFactory } from '../core/p2p/SignalingTransport.types';
 import type { IRoomDirectory } from '../ports';
 import { logger } from '../utils/logger';
 
 export type { RawPayload, NeriloStatus };
+export type { SharedState } from './sharedState';
 
 export interface RawChannelInit {
   ordered?: boolean;
@@ -131,8 +133,30 @@ export class NeriloTransportClient {
   private lastStatus: NeriloStatus | null = null;
   private wiredManagers = new WeakSet<object>();
   private disposed = false;
+  private _sharedState: SharedStateImpl | null = null;
+  /** sharedState() 尚未被呼叫前到達的 state 通道：緩衝待領（不可關——對端不會重開）。 */
+  private pendingStateChannels: RawChannelImpl[] = [];
 
   constructor(private manager: MeshGossipManager) {}
+
+  /**
+   * 房間共享狀態（Spec 025）：per-key LWW、晚進者連上自動補齊現況快照。
+   * label 'state' 為保留字（內部分流，不進 onRawChannel）。lazy 單例。
+   */
+  sharedState(): SharedState {
+    if (!this._sharedState) {
+      this._sharedState = new SharedStateImpl({
+        localId: () => this.userId,
+        peers: () => this.peers(),
+        onPeerChange: (cb) => this.onPeerChange(cb),
+        openStateChannel: (peerId) => this.openRawChannel(peerId, STATE_CHANNEL_LABEL, { ordered: true }),
+        onStatus: (cb) => this.onStatus(cb),
+        currentEpoch: () => this.manager.getContentKeyRing()?.getSendKeyWithEpoch()?.epoch ?? null,
+      });
+      for (const ch of this.pendingStateChannels.splice(0)) this._sharedState.acceptInbound(ch);
+    }
+    return this._sharedState;
+  }
 
   async connect(): Promise<void> {
     await this.manager.initialize();
@@ -198,6 +222,10 @@ export class NeriloTransportClient {
     if (this.disposed) return;
     this.disposed = true;
     if (this.poll !== null) { clearInterval(this.poll); this.poll = null; }
+    this._sharedState?.dispose();
+    this._sharedState = null;
+    this.pendingStateChannels.forEach((c) => c.close());
+    this.pendingStateChannels = [];
     this.channels.forEach((c) => c.close());
     this.channels.clear();
     this.rawListeners.clear();
@@ -237,6 +265,13 @@ export class NeriloTransportClient {
         if (!keys) { dc.close(); return; }
         const ch = new RawChannelImpl(peerId, label, dc, keys);
         this.channels.add(ch);
+        // 保留 label 分流（Spec 025）：state 通道給狀態層，不進嵌入者的 onRawChannel。
+        // 尚未建立狀態層＝緩衝待領（不可關閉：對端視通道為已建立、不會重開）。
+        if (label === STATE_CHANNEL_LABEL) {
+          if (this._sharedState) this._sharedState.acceptInbound(ch);
+          else this.pendingStateChannels.push(ch);
+          return;
+        }
         this.rawListeners.forEach((l) => {
           try { l(ch); } catch (error) {
             logger.error('[NeriloTransportClient] onRawChannel listener error', { error });
