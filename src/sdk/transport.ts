@@ -13,6 +13,7 @@
  */
 
 import { MeshGossipManager } from '../core/mesh/MeshGossipManager';
+import type { EncryptionState } from '../core/messaging/encryptionGate';
 import { sealRawFrame, openRawFrame, type RawPayload, type RawKeyPort } from '../core/p2p/RawChannelCrypto';
 import { deriveStatus, statusEquals, type NeriloStatus } from '../core/messaging/status';
 import { SharedStateImpl, STATE_CHANNEL_LABEL, type SharedState } from './sharedState';
@@ -135,6 +136,29 @@ class RawChannelImpl implements RawChannel {
 
 const OPEN_TIMEOUT_MS = 10_000;
 
+/**
+ * transport client 對 mesh 層的窄依賴（型別防洩層）。
+ * 不能直接把 MeshGossipManager 放進公開型別：它的 d.ts 會把整個 mesh 內臟
+ * （MeshConnection/P2PManager/HelloNegotiator…共 40+ 檔）拖進 npm 型別表面
+ * （prune-sdk-types 抓到的外洩）。MeshGossipManager 以結構型別滿足本介面。
+ */
+export interface TransportMeshPort {
+  initialize(): Promise<void>;
+  cleanup(): Promise<void>;
+  isInitialized(): boolean;
+  getUserId(): string | null;
+  getEncryptionState(): EncryptionState;
+  getConnectionState(): { neighborCount: number; totalNeighbors: number };
+  getConnectedNeighborIds(): string[];
+  getNeighborConnection(peerId: string): {
+    getP2PManager(): {
+      openRawDataChannel(label: string, init?: RTCDataChannelInit): RTCDataChannel;
+      onRawDataChannel(receiver: (label: string, channel: RTCDataChannel) => void): void;
+    };
+  } | undefined;
+  getContentKeyRing(): RawKeyPort | null;
+}
+
 export class NeriloTransportClient {
   private channels = new Set<RawChannelImpl>();
   private rawListeners = new Set<(ch: RawChannel) => void>();
@@ -150,7 +174,7 @@ export class NeriloTransportClient {
   private pendingStateChannels: RawChannelImpl[] = [];
   private _files: FileTransferManager | null = null;
 
-  constructor(private manager: MeshGossipManager) {}
+  constructor(private manager: TransportMeshPort) {}
 
   /**
    * 房間共享狀態（Spec 025）：per-key LWW、晚進者連上自動補齊現況快照。

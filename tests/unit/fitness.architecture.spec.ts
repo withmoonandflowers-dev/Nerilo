@@ -182,6 +182,9 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'RawPayload',
       // Spec 025：房間共享狀態（LWW＋晚進者快照補齊）
       'SharedState',
+      // 型別防洩層（2026-08-25）：client 依賴窄 port 而非 MeshGossipManager，
+      // 否則 mesh 內臟 40+ 檔 d.ts 全進 npm 型別表面（prune-sdk-types 抓到）
+      'TransportMeshPort',
       'createTransportClient',
     ]);
   });

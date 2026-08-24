@@ -13,7 +13,9 @@ import { readFileSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs
 import { dirname, join, normalize, relative } from 'node:path';
 
 const ROOT = 'dist/types';
-const ENTRIES = [`${ROOT}/sdk/index.d.ts`, `${ROOT}/sdk/firestore.d.ts`];
+// transport 入口 2026-08-25 補列：Spec 023 開第三入口時漏了這裡,型別檔被修剪掉
+// （npm 消費者拿得到 JS 拿不到型別）——OS dogfood(NeriloLab)抓到。
+const ENTRIES = [`${ROOT}/sdk/index.d.ts`, `${ROOT}/sdk/firestore.d.ts`, `${ROOT}/sdk/transport.d.ts`];
 const maxArg = process.argv.find((a) => a.startsWith('--max='));
 const MAX = maxArg ? Number(maxArg.split('=')[1]) : Infinity;
 
