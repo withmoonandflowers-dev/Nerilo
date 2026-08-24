@@ -175,6 +175,10 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
     // 誠實邊界（無恰好一次、掉了就掉有計數、通道生命週期綁 mesh）寫在
     // transport.ts doc comment 與 SDK-QUICKSTART，不得只在這裡加名字就上架。
     expect(exportedNames('src/sdk/transport.ts')).toEqual([
+      // Spec 026：檔案傳輸（offer/accept、分塊、SHA-256 驗證）
+      'FileOffer',
+      'FileReceive',
+      'FileSend',
       'NeriloStatus',
       'NeriloTransportClient',
       'RawChannel',

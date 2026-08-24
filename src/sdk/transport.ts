@@ -16,12 +16,14 @@ import { MeshGossipManager } from '../core/mesh/MeshGossipManager';
 import { sealRawFrame, openRawFrame, type RawPayload, type RawKeyPort } from '../core/p2p/RawChannelCrypto';
 import { deriveStatus, statusEquals, type NeriloStatus } from '../core/messaging/status';
 import { SharedStateImpl, STATE_CHANNEL_LABEL, type SharedState } from './sharedState';
+import { FileTransferManager, FILE_CHANNEL_LABEL, type FileSend, type FileOffer } from './fileTransfer';
 import type { SignalingFactory } from '../core/p2p/SignalingTransport.types';
 import type { IRoomDirectory } from '../ports';
 import { logger } from '../utils/logger';
 
 export type { RawPayload, NeriloStatus };
 export type { SharedState } from './sharedState';
+export type { FileSend, FileReceive, FileOffer } from './fileTransfer';
 
 export interface RawChannelInit {
   ordered?: boolean;
@@ -50,6 +52,8 @@ class RawChannelImpl implements RawChannel {
   private inDropped = 0;
   /** 密封序列化鏈：保證 ordered 通道上 frame 依 send 呼叫順序出去。 */
   private sendChain: Promise<void> = Promise.resolve();
+  /** 開封序列化鏈：ordered 通道的到達順序不得被非同步解密重排；close 事件也排在它後面。 */
+  private recvChain: Promise<void> = Promise.resolve();
 
   constructor(
     readonly peerId: string,
@@ -59,7 +63,7 @@ class RawChannelImpl implements RawChannel {
   ) {
     dc.binaryType = 'arraybuffer';
     dc.onmessage = (ev) => {
-      void (async () => {
+      this.recvChain = this.recvChain.then(async () => {
         try {
           const payload = await openRawFrame(this.keys, new Uint8Array(ev.data as ArrayBuffer));
           this.msgListeners.forEach((l) => {
@@ -71,11 +75,15 @@ class RawChannelImpl implements RawChannel {
           this.inDropped++;
           logger.warn('[RawChannel] inbound frame dropped', { label: this.label, error });
         }
-      })();
+      });
     };
     dc.onclose = () => {
-      this.closeListeners.forEach((l) => {
-        try { l(); } catch { /* ignore */ }
+      // close 事件排在入站鏈之後：已到達但尚在解密的訊息（例如對方關閉前的最後一句
+      // 拒收/完成訊息）必須先送達消費者，否則上層只看得到「連線中斷」（Spec 026 競態）。
+      void this.recvChain.finally(() => {
+        this.closeListeners.forEach((l) => {
+          try { l(); } catch { /* ignore */ }
+        });
       });
     };
   }
@@ -117,7 +125,11 @@ class RawChannelImpl implements RawChannel {
   droppedInbound(): number { return this.inDropped; }
 
   close(): void {
-    try { this.dc.close(); } catch { /* ignore */ }
+    // 先讓密封鏈沖完再關：拒收/完成/取消等控制訊息也走非同步密封，
+    // 同步關會把「最後一句話」關在門裡（Spec 026 實測踩到的競態）。
+    void this.sendChain.finally(() => {
+      try { this.dc.close(); } catch { /* ignore */ }
+    });
   }
 }
 
@@ -136,6 +148,7 @@ export class NeriloTransportClient {
   private _sharedState: SharedStateImpl | null = null;
   /** sharedState() 尚未被呼叫前到達的 state 通道：緩衝待領（不可關——對端不會重開）。 */
   private pendingStateChannels: RawChannelImpl[] = [];
+  private _files: FileTransferManager | null = null;
 
   constructor(private manager: MeshGossipManager) {}
 
@@ -156,6 +169,29 @@ export class NeriloTransportClient {
       for (const ch of this.pendingStateChannels.splice(0)) this._sharedState.acceptInbound(ch);
     }
     return this._sharedState;
+  }
+
+  /** 檔案傳輸管理器（Spec 026）；lazy——入站 offer 到達時也會建（未註冊 handler＝自動拒收）。 */
+  private files(): FileTransferManager {
+    if (!this._files) {
+      this._files = new FileTransferManager({
+        openFileChannel: (peerId) => this.openRawChannel(peerId, FILE_CHANNEL_LABEL, { ordered: true }),
+      });
+    }
+    return this._files;
+  }
+
+  /**
+   * 傳檔給指定 peer（Spec 026）：offer/accept、分塊、ack 視窗、SHA-256 驗證。
+   * 上限 64MB；斷線＝失敗不續傳。label 'file' 為保留字。
+   */
+  sendFile(peerId: string, data: Uint8Array, meta?: { name?: string; mime?: string }): FileSend {
+    return this.files().sendFile(peerId, data, meta);
+  }
+
+  /** 收檔處理器（單一 handler）。未註冊＝一律自動拒收（防記憶體塞爆，Spec 026 Q2）。 */
+  onFileOffer(cb: (offer: FileOffer) => void): () => void {
+    return this.files().onFileOffer(cb);
   }
 
   async connect(): Promise<void> {
@@ -224,6 +260,7 @@ export class NeriloTransportClient {
     if (this.poll !== null) { clearInterval(this.poll); this.poll = null; }
     this._sharedState?.dispose();
     this._sharedState = null;
+    this._files = null;
     this.pendingStateChannels.forEach((c) => c.close());
     this.pendingStateChannels = [];
     this.channels.forEach((c) => c.close());
@@ -270,6 +307,11 @@ export class NeriloTransportClient {
         if (label === STATE_CHANNEL_LABEL) {
           if (this._sharedState) this._sharedState.acceptInbound(ch);
           else this.pendingStateChannels.push(ch);
+          return;
+        }
+        // 保留 label 分流（Spec 026）：file 通道給檔案層（未註冊 handler 由它自動拒收）
+        if (label === FILE_CHANNEL_LABEL) {
+          this.files().acceptInbound(ch);
           return;
         }
         this.rawListeners.forEach((l) => {

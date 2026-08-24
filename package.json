@@ -80,7 +80,8 @@
     "mcp": "npm run mcp:build && node dist-mcp/nerilo-mcp.mjs",
     "qa:pack-smoke": "node scripts/check-pack-consumable.mjs",
     "example:latency": "npm run build:sdk && vite --config examples/transport-latency/vite.config.ts",
-    "example:state": "npm run build:sdk && vite --config examples/shared-state/vite.config.ts"
+    "example:state": "npm run build:sdk && vite --config examples/shared-state/vite.config.ts",
+    "example:file": "npm run build:sdk && vite --config examples/file-transfer/vite.config.ts"
   },
   "dependencies": {
     "@netlify/functions": "^5.3.0",

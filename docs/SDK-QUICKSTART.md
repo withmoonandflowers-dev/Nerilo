@@ -29,7 +29,7 @@ npm install nerilo
 | 2 | 可靠會話事件 | 回合指令、開局訊號、成交確認 | `openRawChannel(peer, label, {ordered:true})`（不設 maxRetransmits＝不限重傳） | 用易失通道→關鍵指令消失 |
 | 3 | 持久可靠訊息 | 聊天、跨會話事件 | `NeriloClient.sendMessage`（恰好一次＋離線信使） | 用 raw 通道→斷線期間的訊息永久消失 |
 | 4 | 共享狀態 | 記分板、房間設定、出席表 | `client.sharedState()`（LWW＋晚進者自動補齊） | 用事件通道→晚進的人永遠不知道現況 |
-| 5 | 大型二進位 | 資產、回放檔 | **尚未提供**（SDK 面缺口，已列追蹤）；先自行分塊走可靠 raw 通道 | — |
+| 5 | 大型二進位 | 資產、回放檔 | `sendFile(peer, bytes)`／`onFileOffer(cb)`（分塊+進度+SHA-256 驗證） | 用訊息層→撞 64KB 與限流；自己刻→重複發明分塊協議 |
 | 6 | 發現與感知 | 房間列表、成員、連線/加密狀態 | `IRoomCatalog`＋`peers()/onPeerChange`＋`status/onStatus` | 自己輪詢猜→慢且錯 |
 
 三個入口的分工：`nerilo/transport`（類 1/2/4/6 的成員面）、`nerilo`＋`nerilo/firestore`
@@ -58,7 +58,20 @@ state.onChange((view, keys) => renderScoreboard(view));
 
 各類的誠實邊界：類 1/2 的可靠性只及連線存續期間（重連不補送、不去重——需要跨斷線
 保證就用類 3）；類 4 是 per-key LWW（高頻並發改同一 key 會互蓋；晚進者拿到現況、
-看不到歷史過程，這與前向保密設計一致）；類 2 保序但無「恰好一次」（重連後要不要重發由你判斷）。
+看不到歷史過程，這與前向保密設計一致）；類 2 保序但無「恰好一次」（重連後要不要重發由你判斷）；
+類 5 上限 64MB、收方同意才收（未註冊 handler＝自動拒收）、斷線＝失敗不續傳（更大的資產走
+CDN/自有後端，P2P 房間不是搬它們的工具）。保留 label：`state`／`file`。
+
+```ts
+// 類5：傳資產/回放檔（收方同意制）
+B.onFileOffer((offer) => {
+  const rx = offer.accept();               // 或 offer.reject('不收')
+  rx.onProgress((got, total) => bar(got / total));
+  rx.done.then(({ data, name }) => save(name, data));
+});
+const tx = A.sendFile(peerId, bytes, { name: 'replay.bin' });
+await tx.done;                             // resolve＝對方 SHA-256 驗證通過
+```
 
 ## 最小範例（零 Firebase，單頁可跑）
 

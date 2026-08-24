@@ -196,6 +196,7 @@ describe('NeriloTransportClient（Spec 023 T5）', () => {
     let closed = false;
     ch.onClose(() => { closed = true; });
     ch.close();
+    await flush(); // close 是 flush-then-close（Spec 026 修訂）：沖掉待送/待收後才發 onClose
     expect(closed).toBe(true);
     ch.send('after-close');
     await flush();

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nerilo 檔案傳輸驗證（Spec 026）</title>
+    <style>
+      body { font-family: ui-monospace, monospace; margin: 2rem; background: #14141c; color: #ddd; }
+      #log { white-space: pre-wrap; background: #101018; padding: 1rem; border-radius: 8px; min-height: 10rem; }
+      #verdict.pass { color: #7c6; } #verdict.fail { color: #e66; }
+      progress { width: 320px; }
+    </style>
+  </head>
+  <body>
+    <h1>檔案傳輸（4MB，真 WebRTC＋房金鑰密封）</h1>
+    <div>A → B：<progress id="bar" max="100" value="0"></progress> <span id="pct">0%</span></div>
+    <div id="log">初始化中…</div>
+    <div id="verdict">－</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

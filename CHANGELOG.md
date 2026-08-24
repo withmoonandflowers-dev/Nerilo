@@ -6,6 +6,11 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 
 ### 新增
 
+- 檔案傳輸（Spec 026）：`NeriloTransportClient.sendFile`／`onFileOffer`——offer/accept
+  同意制、16KB 分塊＋ack 視窗流控、進度事件、端到端 SHA-256 驗證、取消。上限 64MB，
+  斷線＝失敗不續傳。通道 label `file` 成為保留字。實測 4MB 含加密 0.91s（4.4 MB/s）。
+- `RawChannel` 語義修正：`close()` 改為先沖掉待送/待收再關（flush-then-close），
+  入站解密序列化（修正 ordered 通道可能被非同步解密重排的潛在缺陷）。
 - 房間共享狀態（Spec 025）：`NeriloTransportClient.sharedState()`——per-key LWW、
   晚進者連上自動補齊現況快照、刪除以墓碑防復活；全數走 raw 通道房金鑰密封管線。
   單 key 值上限 8KB、全狀態 64KB，超限拋錯不靜默截斷。通道 label `state` 成為保留字。
