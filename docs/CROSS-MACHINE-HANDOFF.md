@@ -2,7 +2,7 @@
 
 > 目的:讓另一台電腦只靠 `git clone` 就能接手分析與開發。
 > 本文件是原機器操作知識的「可共享蒸餾版」,**不含任何金鑰或機密**。
-> 最後更新:2026-07-03。行動前請先用 `git log` / `gh pr list` 驗證現況。
+> 最後更新:2026-08-24(§6d 架構現況校正)。行動前請先用 `git log` / `gh pr list` 驗證現況。
 
 > 2026-07-16 起，會變動的完成度、測試基線與優先序統一維護在
 > [CURRENT-STATUS.md](CURRENT-STATUS.md)。本檔其餘段落保留跨機器操作知識與歷史脈絡，
@@ -175,6 +175,50 @@ plan claim 讀取管道已就緒(usePlan hook,付款鏈路驗證時已確認徽�
 
 **另一項使用者操作(資料保留,非阻塞)**:原生 TTL policy 需跑
 `bash scripts/setup-ttl-policies.sh`(需 gcloud + GCP 權限),不跑僅過期資料不自動清。
+
+## 6d. 架構現況校正(2026-08-24 全面查證,以程式碼為準)
+
+一次以程式碼為準的架構盤點,推翻了幾條散落在文件裡的敘述。**這些是最容易誤導接手者的點**,
+另一台機器的本機 `CLAUDE.md` 不入版控、拿不到這些更新,故記在這裡。
+
+**(1) ADR-0023 的「star 退役」只對 Vue 線成立。**
+React 線(**目前的 production**)仍是雙路徑:`useP2PArchitecture` 判定 3+ 走 mesh、2 人走 star,
+`ChatPage.tsx` 同時持有 `useStarTopology` 與 `useMeshTopology`(star→mesh 會遷移,mesh→star 不降級)。
+ADR-0023 的兩處總表原本只寫「✅ 完成」,已補上範圍註記(修訂五本文其實一直是對的)。
+連帶事實:typing／語音視訊／檔案傳輸**目前只有 star 路徑有**;warm signaling 只有 mesh 有,
+所以 **React 雙人房是 100% Firestore signaling**。
+
+**(2) onion 中繼整組已 PARK,`RelayManager` 零實例化。**
+2026-07-26 起 `RelayManager` 移入 `src/core/relay/onion/`,產品流連 `new` 都沒有
+(它的 `sendViaRelay()` 全 repo 零呼叫,卻每場 mesh 跑一次 NAT 偵測與三組計時器,付成本換零功能)。
+`src/core/relay/` 頂層留下的才是活的(courier 寄存、relay overlay、RoomDirectoryGossip、PeerScoring)。
+**對外文件不得把 onion 路由宣稱為現行隱私能力**——它沒有在跑。
+另:`PeerScoring` 現在只閘控 gossip 收訊(灰名單 + duplicate/invalid/delivery 記錄),不再管 relay 資格。
+
+**(3) courier 與 relay overlay 只在 Vue 線接線。**
+唯一啟動點是 `web-vue` 的 dashboard(`useCourierNode` / `useNodePresence`),
+且只在該頁掛載期間有效(「開著頁面才在幫忙」)。**React production 線完全沒有這些能力。**
+
+**(4) TURN 的本機與 production 不同,別混談(此點我一度弄錯,特別記下)。**
+- 本機開發與 E2E:`.env.local`／`.env.staging` 都沒設 `VITE_TURN_*` → **STUN-only**。
+  在本機重現「對稱 NAT 穿不過」類問題時,本來就沒有 TURN 可用。
+- Production:`firebase-deploy.yml` 於 build 時從 GitHub secrets 注入 `VITE_TURN_*`(見 §4)。
+  最後一次正面證據是 2026-07-04 的 `smoke:prod` S2,relay→relay RTT 169ms。
+- 另兩個來源是空的:`public/community-turn.json` 的 `servers` 為空陣列;
+  動態 TURN 依賴的 `getIceServers` Function 未部署。
+- **要確認 production TURN 現在還有效,跑 `npm run smoke:prod` 看 S2**,不要只看本機 env 下結論。
+
+**(5) >20 人的 super-node 到不了。**
+`SuperNodeElection` 非測試引用為 0,且房間容量硬上限是 10(`roomCapacity.ts`:預設 5、絕對上限 10,
+firestore.rules 為最終防線)。拓撲表那一列只是 `AdaptiveTopologyManager` 的策略字串,不是現行能力。
+
+**(6) 兩個集合是死路徑。**
+`p2pRooms/{roomId}/relay` 與 `/inbox/...` 由 PARK 的 `core/transport` 使用,
+`firestore.rules` 無對應 match(被 catch-all 擋掉),客戶端進不去。
+`functions/src/cleanupRooms.ts` 的 `cleanupExpiredInbox` 服務的就是這條進不去的路徑
+(反正 Functions 也沒部署)。
+
+**最可靠的文件順序**:`docs/CURRENT-STATUS.md` > 本檔 > ADR > 各機器本機的 `CLAUDE.md`。
 
 ## 7. 刻意的設計決定(不要翻案)
 
