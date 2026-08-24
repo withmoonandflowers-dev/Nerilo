@@ -6,7 +6,7 @@
 
 - Nerilo 是可嵌入的 P2P 韌性資料傳遞層；聊天是參考應用，不是最終產品邊界。
 - repo 已於 2026-07-16 轉為公開（Apache-2.0）；GitHub Actions 額度限制解除。
-- SDK 版本 `0.9.0` 已於 2026-08-24 發佈 npm（`npm install nerilo`）；乾淨環境安裝驗證過兩個進入點（主入口 14 匯出、firestore subpath 4 匯出）。API 在 0.x 階段尚未鎖定。
+- SDK `0.10.0` 已於 2026-08-24 發佈 npm；三個進入點（nerilo／nerilo/firestore／nerilo/transport）乾淨環境安裝驗證過（16/5/2 執行期匯出）。含狀態 API（Spec 024）、房間目錄（Spec 014）、遊戲原始通道（Spec 023）；IChatEngine 破壞性變更見 CHANGELOG。API 在 0.x 階段尚未鎖定。
 - React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版已有隔離的 `nerilo-staging` 手動 preview pipeline，但尚未取得切 production 資格，也尚未由本機完成首次 preview deploy。
 - Firebase Functions 未部署。Hosting 與 Firestore rules/indexes 由 master push workflow 部署；需 Blaze／Cloud Build 的 Functions 能力仍刻意排除。
 - Lemon Squeezy／Netlify webhook 付款鏈已驗證，但 store 仍在 test mode。Pro 首個伺服器端強制權益＝房間容量 10 人（Spec 011）；發放路徑補完（2026-07-18）：手動發放 scripts/grant-plan.mjs、web-vue 建房 sheet 升級入口（PlanCapacityLine）、兩線付款後 focus 強制刷新 token、rules 整合測試 token.plan 五例。
