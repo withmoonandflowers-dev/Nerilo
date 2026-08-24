@@ -256,7 +256,15 @@ export async function createTransportClient(config: {
   userId: string;
   signaling?: SignalingFactory;
   directory?: IRoomDirectory;
+  /**
+   * 身分命名空間：同源多實例（同機雙分頁）時必傳（各實例獨有值，如每分頁的 userId），
+   * 否則預設持久身分被共用，mesh 把對方當自己、永不連線（block-brawl 實測踩到）。
+   */
+  identityNamespace?: string;
 }): Promise<NeriloTransportClient> {
-  const manager = new MeshGossipManager(config.roomId, config.userId, config.signaling, config.directory);
+  const manager = new MeshGossipManager(
+    config.roomId, config.userId, config.signaling, config.directory,
+    undefined, config.identityNamespace
+  );
   return new NeriloTransportClient(manager);
 }

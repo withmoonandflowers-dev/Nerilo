@@ -6,6 +6,9 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 
 ### 新增
 
+- `identityNamespace` 注入縫（IdentityManager／MeshGossipManager／createTransportClient）：
+  同源多實例嵌入（同機雙分頁）時各實例可有獨立持久 mesh 身分。省略＝既有行為。
+  未傳時同源多實例會共用身分導致 mesh 永不連線（block-brawl 實測發現）。
 - 房間目錄契約（Spec 014）：`IRoomCatalog`／`CatalogRoom`（list／watch／publish／
   unpublish 四動作），主入口附 `InMemoryRoomCatalog(+Hub)` 參考實作；
   `nerilo/firestore` 加 `createFirestoreRoomCatalog`（包既有公開房列表與建房/關房，

@@ -1,7 +1,7 @@
 # Spec 023：讓嵌入者開低延遲原始通道（openRawChannel）
 
 - 軌別：feature
-- 狀態：implementing（T1-T7 完成；餘 T8 block-brawl 換裝＝V1）
+- 狀態：done（2026-08-24 全數完成，V1-V5 驗收過）
 - 建立：2026-08-24／最後更新：2026-08-24
 - 關聯：ADR-0025（可嵌入 SDK）、block-brawl `docs/nerilo-integration.md` 方案 A（`規劃/點子停車場.md:12`）、Spec 005（p2p2p signaling）、Spec 013（SDK 契約）
 
@@ -97,12 +97,22 @@ RawChannel {
       runner（Playwright Chromium 關節流）。單頁雙 client 真 WebRTC（loopback 條件下與雙分頁
       等價於延遲量測目的）。
 - [x] T7：SDK-QUICKSTART 加「遊戲傳輸」一節（含 Q1 的加密語義與丟棄語義，誠實揭露）。
-- [ ] T8：block-brawl 換裝（V1 執行面）。
+- [x] T8：block-brawl 換裝完成（自建 RTCPeerConnection 全移除，改 createTransportClient
+      + openRawChannel；等 Spec 024 狀態 ready 再開通道；逾時 4s→8s）。
 
 ## 6. 驗收（黃金判準）
 
-- [ ] V1 外部嵌入者實證：block-brawl 的自建 DataChannel 換成本 API，遊戲邏輯零改動，
-      lockstep 對戰通過既有的世界雜湊一致驗證。
+- [x] V1 外部嵌入者實證〔2026-08-24 雙分頁實測〕：block-brawl 換裝後遊戲邏輯零改動
+      （scenes/lockstep 未動，僅 net 層），WebRTC 直連（transport='rtc' 非 fallback），
+      lockstep 對戰兩端 tick 660/720/780 世界雜湊逐一相等、跑逾 900 tick 零 netError；
+      該 repo 單元 163 例全綠。
+
+〔實作期發現（T8 揭露的 SDK 缺口，當日修復）〕同源多實例身分共用：持久 mesh 身分
+儲存鍵固定（mesh_default），同機雙分頁共用同一身分 → mesh 把對方當自己、永不連線
+（名冊齊全但 totalNeighbors 恆 0、無錯誤訊息，極難診斷）。修：IdentityManager／
+MeshGossipManager／createTransportClient 增 `identityNamespace` 注入縫，
+同源多實例嵌入必傳（省略＝既有單身分行為，零影響）。這正是 dogfood 的價值：
+此缺口任何單元測試都抓不到（單 context 內身分生成有 race 掩護），只有真雙分頁會現形。
 - [x] V2 E2EE 不變量：TransportClient.spec 斷言線上 frame 不含明文 bytes；金鑰未就緒
       時丟棄計數=1 且對端零收（零明文洩出）。
 - [x] V3 延遲預算〔實作期修訂＋實測數字，2026-08-24〕：端到端 p95 差值法在實測中

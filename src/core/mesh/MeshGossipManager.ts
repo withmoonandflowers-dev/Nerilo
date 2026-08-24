@@ -91,9 +91,10 @@ export class MeshGossipManager {
     private signalingFactory?: SignalingFactory, // 省略＝Firestore；SDK 注入自架後端
     private directory?: IRoomDirectory, // 省略＝initialize() 時動態載入 Firestore（本檔靜態圖無 firebase）
     /** 介紹人 uid（Spec 005 T4 邀請連結會合）：先連他、名冊標注 introducedBy 供他人耐心等 warm。 */
-    private introducerUid?: string
+    private introducerUid?: string,
+    identityNamespace?: string // 同源多實例必傳（Spec 023；語義見 IdentityManager.storageKey）
   ) {
-    this.identityManager = new IdentityManager();
+    this.identityManager = new IdentityManager(identityNamespace);
     this.securityManager = new SecurityManager();
   }
 
@@ -709,9 +710,7 @@ export class MeshGossipManager {
   }
 
   /** 房間金鑰環（raw 通道密封用）；messageHandler 未起回 null。 */
-  getContentKeyRing(): RoomContentKeyRing | null {
-    return this.messageHandler?.getContentKeyRing() ?? null;
-  }
+  getContentKeyRing(): RoomContentKeyRing | null { return this.messageHandler?.getContentKeyRing() ?? null; }
 
   /**
    * 檢查是否已初始化

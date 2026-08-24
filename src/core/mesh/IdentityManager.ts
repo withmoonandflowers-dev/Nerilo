@@ -88,6 +88,16 @@ export class IdentityManager {
   private keyPair: CryptoKeyPair | null = null;
   private userId: string | null = null;
   /**
+   * 儲存鍵（Spec 023 實作期發現）：預設 'mesh_default'＝一個 origin 一個身分。
+   * 同源多實例嵌入（同機雙分頁遊戲、同頁多 client 示範）會共用同一身分 → mesh
+   * 把對方當自己、永不連線。嵌入者可傳 namespace 讓每個實例有自己的持久身分。
+   */
+  private readonly storageKey: string;
+
+  constructor(identityNamespace?: string) {
+    this.storageKey = identityNamespace ? `mesh_${identityNamespace}` : IDB_KEY;
+  }
+  /**
    * ECDH P-256 金鑰對（keyx 成對封裝房間內容金鑰，ADR-0023 P2-②c）。
    * 與 ECDSA 身分金鑰分離：ECDSA 只能簽/驗，ECDH 只能協商，SubtleCrypto 不可混用。
    * 持久化 → 全員斷線重生後，日誌裡舊 keyx（封給舊 ECDH 公鑰）仍開得了 → 歷史金鑰可補齊
@@ -153,7 +163,7 @@ export class IdentityManager {
   private async ensureEcdhKeyPair(): Promise<void> {
     try {
       const db = await openIdentityDB();
-      const stored = await idbGet<StoredKeyPair>(db, IDB_KEY);
+      const stored = await idbGet<StoredKeyPair>(db, this.storageKey);
       db.close();
       if (stored?.ecdhPublicKeyData && stored?.ecdhPrivateKeyData) {
         this.ecdhKeyPair = await this.importEcdhKeyPair(
@@ -209,13 +219,13 @@ export class IdentityManager {
   /** 把 ECDH 金鑰材料合併寫回 IndexedDB blob（保留既有 ECDSA 欄位）。 */
   private async persistEcdhKeyPair(pubB64: string, privB64: string): Promise<void> {
     const db = await openIdentityDB();
-    const existing = (await idbGet<StoredKeyPair>(db, IDB_KEY)) ?? undefined;
+    const existing = (await idbGet<StoredKeyPair>(db, this.storageKey)) ?? undefined;
     if (!existing?.publicKeyData || !existing?.privateKeyData) {
       // 理論上 ECDSA 已先存；缺則不覆寫（避免寫出殘缺 blob），留待下次
       db.close();
       throw new Error('ECDSA key blob missing; skip ECDH merge');
     }
-    await idbPut(db, IDB_KEY, {
+    await idbPut(db, this.storageKey, {
       ...existing,
       ecdhPublicKeyData: pubB64,
       ecdhPrivateKeyData: privB64,
@@ -294,7 +304,7 @@ export class IdentityManager {
       if (migrated) return migrated;
 
       const db = await openIdentityDB();
-      const stored = await idbGet<StoredKeyPair>(db, IDB_KEY);
+      const stored = await idbGet<StoredKeyPair>(db, this.storageKey);
       db.close();
 
       if (!stored?.publicKeyData || !stored?.privateKeyData) {
@@ -338,7 +348,7 @@ export class IdentityManager {
       };
 
       const db = await openIdentityDB();
-      await idbPut(db, IDB_KEY, stored);
+      await idbPut(db, this.storageKey, stored);
       db.close();
 
       logger.info('[IdentityManager] Saved key pair to IndexedDB');

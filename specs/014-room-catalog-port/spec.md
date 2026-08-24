@@ -1,7 +1,7 @@
 # Spec 014：補一個輕量的「可加入房間目錄」契約
 
 - 軌別：feature
-- 狀態：implementing（2026-08-24 T1-T6 完成；餘 T7 block-brawl 大廳換裝＝V1）
+- 狀態：done（2026-08-24 全數完成，V1-V5 驗收過）
 - 建立：2026-07-25／最後更新：2026-07-25
 - 關聯：ADR-0025（可嵌入 SDK）、ADR-0027（room directory gossip）、`src/ports/IRoomDirectory.ts`、
   `src/services/RoomService.ts:901`（`getPublicRooms`）、block-brawl `docs/nerilo-integration.md`（缺口 1）
@@ -127,12 +127,13 @@ Firestore 版不新增授權面：沿用 `getPublicRooms` 既有的
 - [x] T4：契約測試雙跑：InMemory 單元 4 例＋Firestore emulator 整合 2 例（真實 rules）。
 - [x] T5：fitness 表面快照納入 4+1 新匯出；prune-sdk-types、pack 冒煙（主入口 16 執行期匯出）全綠。
 - [x] T6：SDK-QUICKSTART 增「房間目錄」一節，明寫與 `IRoomDirectory` 的差別與四條誠實邊界。
-- [ ] T7：block-brawl 大廳改用本契約（V1）。
+- [x] T7：block-brawl 大廳換裝完成（broadcastCatalog.js 實作本契約，openLobby 變薄殼）。
 
 ## 6. 驗收（黃金判準）
 
-- [ ] V1 外部嵌入者實證：block-brawl 的大廳目錄改為本契約實作，**遊戲邏輯零改動**
-      （只換工廠），沿用 Spec 013 的驗收精神，用真的消費者證明縫是真的。
+- [x] V1 外部嵌入者實證〔2026-08-24〕：block-brawl 大廳目錄改為本契約的 BroadcastChannel
+      實作（LobbyScene／connection 零改動，openLobby 變契約薄殼）；契約測試與 Nerilo
+      InMemoryRoomCatalog 並排 3+3 例全綠＋跨分頁 2 例；雙分頁實測建房→列表→加入全通。
 - [x] V2 契約可替換：同一組契約測試同時套用 InMemory 與 Firestore 版，行為一致
       （比照 block-brawl `test/nerilo-signaling.test.js` 的雙跑法）。
 - [x] V3 公開表面受控：`sdkSurface` 顯性納入新匯出；`prune-sdk-types --max=30` 不爆。
