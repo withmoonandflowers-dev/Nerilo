@@ -69,21 +69,22 @@ if (hits.length > 0) {
   console.log(`✓ [gate] ${ENTRY} 靜態圖無 firebase（掃過 ${scanned} 檔）`);
 }
 
-// ── 檢查 2：dist/index.js eager 進入點 ──
-const DIST = 'dist/index.js';
-if (existsSync(join(ROOT, DIST))) {
-  const built = readFileSync(join(ROOT, DIST), 'utf8');
-  // eager bundle 內不得出現 firebase 的靜態 import；firebase 應只在 --splitting 的動態 chunk。
-  const matches = built.match(/from\s*["'](firebase\/[^"']+|[^"']*config\/firebase[^"']*)["']/g) || [];
-  if (matches.length > 0) {
-    failed = true;
-    console.error(`✗ [gate] ${DIST} eager 進入點含 firebase 靜態 import：${matches.join(', ')}`);
-    console.error('  → 確認 build:sdk 有 --splitting，且只有動態 import() 觸及 firebase。');
+// ── 檢查 2：eager 進入點（index 與 transport；Spec 023 起兩個都要 firebase-free）──
+for (const DIST of ['dist/index.js', 'dist/transport.js']) {
+  if (existsSync(join(ROOT, DIST))) {
+    const built = readFileSync(join(ROOT, DIST), 'utf8');
+    // eager bundle 內不得出現 firebase 的靜態 import；firebase 應只在 --splitting 的動態 chunk。
+    const matches = built.match(/from\s*["'](firebase\/[^"']+|[^"']*config\/firebase[^"']*)["']/g) || [];
+    if (matches.length > 0) {
+      failed = true;
+      console.error(`✗ [gate] ${DIST} eager 進入點含 firebase 靜態 import：${matches.join(', ')}`);
+      console.error('  → 確認 build:sdk 有 --splitting，且只有動態 import() 觸及 firebase。');
+    } else {
+      console.log(`✓ [gate] ${DIST} eager 進入點無 firebase 靜態 import`);
+    }
   } else {
-    console.log(`✓ [gate] ${DIST} eager 進入點無 firebase 靜態 import`);
+    console.warn(`⚠ [gate] ${DIST} 不存在，跳過 dist 檢查（CI 請先跑 npm run build:sdk）`);
   }
-} else {
-  console.warn(`⚠ [gate] ${DIST} 不存在，跳過 dist 檢查（CI 請先跑 npm run build:sdk）`);
 }
 
 process.exit(failed ? 1 : 0);

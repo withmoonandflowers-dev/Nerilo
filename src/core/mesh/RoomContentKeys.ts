@@ -73,6 +73,21 @@ export class RoomContentKeyRing {
     return this.sendEpoch !== null;
   }
 
+  /**
+   * 目前送出金鑰與其 epoch（Spec 023 raw 通道用；唯讀）。無金鑰回 null。
+   * raw 通道不走字串信封（每 byte 都是延遲），需要裸 CryptoKey 做二進位密封。
+   */
+  getSendKeyWithEpoch(): { key: CryptoKey; epoch: number } | null {
+    if (this.sendEpoch === null) return null;
+    const key = this.keyRing.get(this.sendEpoch);
+    return key ? { key, epoch: this.sendEpoch } : null;
+  }
+
+  /** 指定 epoch 的金鑰（Spec 023 raw 通道收端選鑰；唯讀）。無則 undefined。 */
+  getKeyForEpoch(epoch: number): CryptoKey | undefined {
+    return this.keyRing.get(epoch);
+  }
+
   /** 金鑰環中已知最高 epoch（-1 = 尚無金鑰）；供產生方交接時 epoch 單調遞增。 */
   getMaxKnownEpoch(): number {
     let max = -1;

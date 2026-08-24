@@ -12,6 +12,8 @@ import { CHANNEL_INIT, type Envelope, type P2PEnvelope } from '../../types';
 
 /** 不可靠狀態幀通道的 DataChannel label（ADR-0019） */
 const STATE_CHANNEL_LABEL = 'state';
+/** raw 通道 label 前綴（Spec 023）：與主/state/gossip 通道命名空間隔離，避免相撞。 */
+const RAW_CHANNEL_PREFIX = 'raw:';
 
 export class P2PManager {
   private connectionManager: P2PConnectionManager;
@@ -115,6 +117,18 @@ export class P2PManager {
         // 不可靠狀態幀通道（遠端建立，answerer 收到）
         logger.info('[P2PManager] State channel received', { roomId: this.roomId });
         this.stateChannel = new StateChannel(event.channel);
+      } else if (event.channel.label.startsWith(RAW_CHANNEL_PREFIX)) {
+        // raw 通道（Spec 023）：對端開的低延遲原始通道。不進 gossip/service 管線，
+        // 直接交給註冊的接收者；沒人註冊就關掉（不悄悄堆積）。
+        const rawLabel = event.channel.label.slice(RAW_CHANNEL_PREFIX.length);
+        if (this.rawChannelReceiver) {
+          this.rawChannelReceiver(rawLabel, event.channel);
+        } else {
+          logger.warn('[P2PManager] raw channel received but no receiver registered — closing', {
+            roomId: this.roomId, label: rawLabel,
+          });
+          event.channel.close();
+        }
       }
     };
 
@@ -161,6 +175,27 @@ export class P2PManager {
     logger.info('[P2PManager] initialize completed', {
       roomId: this.connectionManager['roomId'],
     });
+  }
+
+  // ── raw 通道（Spec 023）────────────────────────────────
+  /** 對端開的 raw 通道的接收者；由 transport 層註冊。 */
+  private rawChannelReceiver: ((label: string, channel: RTCDataChannel) => void) | null = null;
+
+  /** 註冊 raw 通道接收者（收「對端開的」通道；label 已去前綴）。 */
+  onRawDataChannel(receiver: (label: string, channel: RTCDataChannel) => void): void {
+    this.rawChannelReceiver = receiver;
+  }
+
+  /**
+   * 在既有連線上開一條 raw DataChannel（Spec 023 T2）。SCTP 已建立後
+   * 加開通道不需重新協商 SDP，對端由 ondatachannel 直接收到。
+   * init 參數（ordered/maxRetransmits/maxPacketLifeTime）直通 WebRTC 原生語義。
+   * 連線尚未建立 → 拋錯（raw 通道不排隊，語義見 Spec 023 Q1）。
+   */
+  openRawDataChannel(label: string, init?: RTCDataChannelInit): RTCDataChannel {
+    const pc = this.connectionManager.getPeerConnection();
+    if (!pc) throw new Error('PeerConnection not available for raw channel');
+    return pc.createDataChannel(RAW_CHANNEL_PREFIX + label, init);
   }
 
   /** 防止 initializeServices 被多次呼叫（initiator onopen + 非 initiator ondatachannel race） */

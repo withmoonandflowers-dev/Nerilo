@@ -116,6 +116,9 @@ export class GossipMessageHandler {
     return this.contentKeys.hasSendKey();
   }
 
+  /** 房間金鑰環（Spec 023 raw 通道密封用；唯讀透出，生命週期仍歸本 handler）。 */
+  getContentKeyRing(): RoomContentKeyRing { return this.contentKeys; }
+
   /** 金鑰環中已知最高（房間金鑰）epoch；供產生方交接時單調遞增。 */
   /** store 已有他人紀錄？——keyx 交接寬限閘門的「房間已運轉」證據（Spec 018） */
   hasRecordsFromOthers(): boolean {

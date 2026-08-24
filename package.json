@@ -24,10 +24,14 @@
     "./firestore": {
       "types": "./dist/types/sdk/firestore.d.ts",
       "import": "./dist/firestore.js"
+    },
+    "./transport": {
+      "types": "./dist/types/sdk/transport.d.ts",
+      "import": "./dist/transport.js"
     }
   },
   "scripts": {
-    "build:sdk": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && esbuild src/sdk/index.ts src/sdk/firestore.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json && node scripts/prune-sdk-types.mjs --max=30",
+    "build:sdk": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && esbuild src/sdk/index.ts src/sdk/firestore.ts src/sdk/transport.ts --bundle --splitting --format=esm --outdir=dist --packages=external && tsc -p tsconfig.sdk.json && node scripts/prune-sdk-types.mjs --max=30",
     "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
     "example:minimal": "npm run build:sdk && vite --config examples/minimal-chat/vite.config.ts",
     "example:minimal:build": "npm run build:sdk && vite build --config examples/minimal-chat/vite.config.ts",

@@ -133,6 +133,44 @@ const client = await createChatClient({
 });
 ```
 
+## 遊戲與低延遲傳輸（`nerilo/transport`，0.10.0 起）
+
+給「不要聊天、只要傳輸地基」的嵌入者：mesh 連線、身分、房間金鑰照舊成形，
+但不含訊息層（沒有恰好一次、去重、歷史、儲存）。在已連上的 peer 之間開
+raw DataChannel，參數直通 WebRTC 原生語義，適合每秒數十則的小封包（遊戲輸入、
+游標同步、感測資料）。
+
+```ts
+import { createTransportClient } from 'nerilo/transport';
+
+const client = await createTransportClient({ roomId, userId /*, signaling, directory 可注入 */ });
+await client.connect();
+
+client.onStatus(({ transport, encryption }) => { /* 等 ready 再開局 */ });
+client.onPeerChange((peers) => { /* 名單變化 */ });
+
+// 主動側（例如 host）
+const ch = await client.openRawChannel(peerId, 'inputs', { ordered: false, maxRetransmits: 0 });
+ch.send(JSON.stringify({ t: 'i', w: [[556, 7]] }));   // 字串或 Uint8Array
+
+// 被動側（例如 guest）
+client.onRawChannel((ch) => {
+  ch.onMessage((data, from) => { /* 進你的 lockstep */ });
+});
+```
+
+加密語義（先讀完再用）：通道資料一律以房間金鑰 AES-GCM 密封（raw-v1 二進位格式），
+金鑰交換沿用 mesh 的 keyx。**金鑰未就緒時 send 直接丟棄並累計 `ch.dropped()`**，
+不排隊——排隊會把過期輸入灌回你的遊戲。接收側解不開（無該代金鑰、驗證失敗）也丟棄，
+累計 `ch.droppedInbound()`。
+
+誠實邊界：
+
+- 無可靠性保證。不去重、不補送、不保序（除非開 ordered 通道）。遊戲的輸入冗餘視窗自理
+  （參考 block-brawl：每 frame 帶最近 8 tick）。
+- 通道生命週期綁 mesh 連線：mesh 重連時通道跟著斷（`onClose` 透出），重開由你決定。
+- `openRawChannel` 對未連上的 peer 直接拋錯，不等待。先用 `peers()`／`onPeerChange` 確認。
+
 ## 只要 signaling，不要整個聊天客戶端
 
 > **先確認你符合前提，否則現在還用不了。** 這個出口讀寫的是

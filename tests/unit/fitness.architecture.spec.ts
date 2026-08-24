@@ -29,6 +29,11 @@ const GOD_FILE_BASELINE: Record<string, number> = {
   'src/services/RoomService.ts': 988,
   // 862→795（2026-07-17 Spec 006：砍中繼卡＋P2P 目錄＋主題鈕，反向調低）
   'web-vue/app/pages/dashboard.vue': 795,
+  // 2026-08-24 Spec 023 架構裁決：兩檔本已貼 800 線，raw 通道各加 2-3 個唯讀 accessor
+  // 絆倒新檔上限。為三個一行 getter 拆 god-file 不成比例，入名單釘現值（只准變小）；
+  // 下次對這兩檔的實質功能工作應優先拆分（候選：keyx 協調、fallback 橋接各自成檔）。
+  'src/core/mesh/MeshGossipManager.ts': 819,
+  'src/core/mesh/GossipMessageHandler.ts': 802,
 };
 
 /** 名單外產品檔的行數上限。超過＝長出新 god-file，先拆再合。 */
@@ -155,6 +160,20 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'createFirestoreChatClient',
       'createFirestoreSignaling',
       'createWarmColdSignaling',
+    ]);
+  });
+
+  it('nerilo/transport（遊戲/低延遲傳輸入口）匯出名單', () => {
+    // Spec 023（2026-08-24 使用者拍板：獨立輕量入口 + 強制房間金鑰）：
+    // 誠實邊界（無恰好一次、掉了就掉有計數、通道生命週期綁 mesh）寫在
+    // transport.ts doc comment 與 SDK-QUICKSTART，不得只在這裡加名字就上架。
+    expect(exportedNames('src/sdk/transport.ts')).toEqual([
+      'NeriloStatus',
+      'NeriloTransportClient',
+      'RawChannel',
+      'RawChannelInit',
+      'RawPayload',
+      'createTransportClient',
     ]);
   });
 });

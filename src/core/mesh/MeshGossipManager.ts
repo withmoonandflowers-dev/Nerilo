@@ -5,6 +5,7 @@ import { GossipMessageHandler } from './GossipMessageHandler';
 import { RoomKeyCoordinator, rosterFromRoom, type KeyxStatus, type KeyxBlockReason } from './RoomKeyCoordinator';
 import { warnIfKeyxStuck as warnKeyx, KEYX_NOT_BLOCKED } from './keyxStuckWarning';
 import type { MeshConnection } from './MeshConnection';
+import type { RoomContentKeyRing } from './RoomContentKeys';
 import { HeartbeatService } from './HeartbeatService';
 import type { PingMessage, PongMessage } from './HeartbeatService';
 import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
@@ -692,6 +693,24 @@ export class MeshGossipManager {
         ? { targetNeighbors: this.topologyManager.getTargetNeighborCount() }
         : {}),
     };
+  }
+
+  // ── raw 通道支援（Spec 023；全部唯讀透出）───────────────
+  /** 已連上（可送）的鄰居 mesh userId 清單。 */
+  getConnectedNeighborIds(): string[] {
+    const ns = this.topologyManager?.getNeighbors() ?? [];
+    return ns.filter((n) => n.getState() === 'connected').map((n) => n.getId());
+  }
+
+  /** 指定 peer 的 MeshConnection（僅回已連上的；未連上＝undefined，raw 通道不排隊）。 */
+  getNeighborConnection(peerId: string): MeshConnection | undefined {
+    const ns = this.topologyManager?.getNeighbors() ?? [];
+    return ns.find((n) => n.getId() === peerId && n.getState() === 'connected');
+  }
+
+  /** 房間金鑰環（raw 通道密封用）；messageHandler 未起回 null。 */
+  getContentKeyRing(): RoomContentKeyRing | null {
+    return this.messageHandler?.getContentKeyRing() ?? null;
   }
 
   /**

@@ -6,6 +6,10 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 
 ### 新增
 
+- 遊戲/低延遲傳輸入口 `nerilo/transport`（Spec 023）：`createTransportClient` 建立
+  不含訊息層的 mesh 傳輸客戶端；`openRawChannel`／`onRawChannel` 在 peer 間開
+  raw DataChannel（參數直通 WebRTC），資料以房間金鑰 AES-GCM 密封（raw-v1 格式）。
+  金鑰未就緒＝丟棄＋計數（`dropped()`／`droppedInbound()`），無恰好一次保證。
 - 連線與加密狀態 API（Spec 024）：`NeriloClient.status`（同步快照）與
   `NeriloClient.onStatus(cb)`（變更訂閱，訂閱當下先收一次、同值不重發）。
   型別 `NeriloStatus`／`NeriloTransportState`／`NeriloEncryptionState` 自主入口匯出。

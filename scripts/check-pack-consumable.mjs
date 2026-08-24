@@ -35,14 +35,16 @@ try {
   const probe = `
     const main = await import('nerilo');
     const fs = await import('nerilo/firestore');
+    const tp = await import('nerilo/transport');
     if (typeof main.NeriloClient !== 'function') throw new Error('主入口缺 NeriloClient');
     if (typeof fs.createFirestoreSignaling !== 'function') throw new Error('subpath 缺 createFirestoreSignaling');
     if (typeof fs.createChatClient !== 'function') throw new Error('subpath 缺 createChatClient');
-    console.log('OK 主入口匯出 ' + Object.keys(main).length + ' 個；subpath 匯出 ' + Object.keys(fs).length + ' 個');
+    if (typeof tp.createTransportClient !== 'function') throw new Error('transport 缺 createTransportClient');
+    console.log('OK 主入口 ' + Object.keys(main).length + ' 個；firestore ' + Object.keys(fs).length + ' 個；transport ' + Object.keys(tp).length + ' 個');
   `;
   writeFileSync(join(dir, 'probe.mjs'), probe);
   const out = execSync('node probe.mjs', { cwd: dir, encoding: 'utf8' });
-  console.log(`✓ [gate] 純 Node 消費者可載入兩個進入點 — ${out.trim()}`);
+  console.log(`✓ [gate] 純 Node 消費者可載入三個進入點 — ${out.trim()}`);
 } catch (err) {
   failed = true;
   console.error('✗ [gate] 套件在純 Node 消費端載入失敗：');

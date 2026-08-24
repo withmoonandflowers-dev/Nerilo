@@ -508,6 +508,11 @@ export class MeshConnection {
     return this.meshUserId;
   }
 
+  /** 底層 P2PManager（Spec 023 raw 通道用；唯讀透出，不移轉生命週期）。 */
+  getP2PManager(): P2PManager {
+    return this.p2pManager;
+  }
+
   /**
    * 獲取連線狀態。
    * 'connected' 的語義是「現在可以送訊息」：ICE 可能已 connected 但 ChannelBus
