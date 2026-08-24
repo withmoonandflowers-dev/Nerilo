@@ -392,10 +392,19 @@ export class P2PConnectionManager {
           await this.flushPendingIceCandidates();
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
-          // A7：必須 await。此前未 await，送 answer 失敗的 rejection 會逃出本 try/catch，
-          // 而本端已 setLocalDescription → 對端永遠停在 have-local-offer 直到 ready timeout。
-          // 改 await 後失敗會落入下方 catch 記錄（且不再是 unhandled rejection）。
-          await this.sendSignal('answer', answer);
+          // A7：處理 rejection，但**不得 await**。handleSignal 跑在 signalMutex 內，
+          // 所有 offer/answer/ICE 都排同一條佇列；await 這裡等於把「寫 Firestore 的整個
+          // 往返」插在後續 ICE candidate 前面，addIceCandidate 全部延後 → 連線建立變慢
+          // →（星型路徑）DataChannel 晚開、E2EE 金鑰交換晚完成。
+          // A7 的目的只是「rejection 不要逃逸、失敗看得見」，void + catch 就達成了，
+          // 不需要把 signaling 佇列賠進去。
+          void this.sendSignal('answer', answer).catch((err) => {
+            logger.error('[P2PConnectionManager] answer 送出失敗，對端會停在 have-local-offer', {
+              roomId: this.roomId,
+              to: this.remoteUid,
+              err,
+            });
+          });
           break;
         }
 

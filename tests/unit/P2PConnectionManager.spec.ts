@@ -346,3 +346,62 @@ describe('P2PConnectionManager', () => {
     });
   });
 });
+
+/**
+ * 送 answer 不得堵住 signaling 佇列（2026-08-24 production smoke 診斷）。
+ *
+ * handleSignal 跑在 signalMutex 內，所有 offer/answer/ICE 共用同一條佇列。
+ * 若答方在鎖內 await「寫 Firestore 送 answer」，後續 ICE candidate 會全部排在
+ * 那個網路往返後面 → addIceCandidate 延後 → 連線建立變慢 →（星型路徑）
+ * DataChannel 晚開、E2EE 金鑰交換晚完成。實測症狀：S1 煙霧測試等 30 秒
+ * 等不到 E2EE 徽章離開 exchanging；B→A 訊息延遲 5956ms（基準 180-190ms）。
+ *
+ * 這條測試釘住「answer 送出是非阻塞的」：送 answer 的寫入卡住時，
+ * 後面的 ICE 仍必須被處理。
+ */
+describe('signaling 佇列不被 answer 送出堵住', () => {
+  const ROOM_ID = 'room-mutex';
+  const LOCAL_UID = 'user-local';
+  const REMOTE_UID = 'user-remote';
+
+  let manager: any;
+
+  beforeEach(async () => {
+    capturedSnapshotCb = null;
+    mockAddDoc.mockClear();
+    mockOnSnapshot.mockClear();
+    const { P2PConnectionManager } = await import('../../src/core/p2p/P2PConnectionManager');
+    manager = new P2PConnectionManager(ROOM_ID, LOCAL_UID);
+    await manager.initialize();
+  });
+
+  afterEach(async () => {
+    await manager.close();
+    vi.resetModules();
+    (MockRTCPeerConnection as any).mock = undefined;
+  });
+
+  it('送 answer 的寫入卡住時，後續 ICE candidate 仍被處理', async () => {
+    const pc = MockRTCPeerConnection.mock?.instances?.[0] ??
+      (manager['pc'] as unknown as MockRTCPeerConnection);
+
+    // 讓「送 answer」那次寫入永遠不完成（模擬 Firestore 慢／離線）
+    let releaseWrite: (() => void) | null = null;
+    mockAddDoc.mockImplementationOnce(
+      () => new Promise((resolve) => { releaseWrite = () => resolve({ id: 'x' } as never); })
+    );
+
+    // offer 進來 → 答方組 answer 並送出（寫入卡住），緊接著 ICE 進來
+    await emitSignals(
+      manager,
+      makeSignal('offer', REMOTE_UID, { type: 'offer', sdp: 'v=0' }),
+      makeSignal('ice', REMOTE_UID, { candidate: 'candidate:1 1 udp', sdpMid: '0', sdpMLineIndex: 0 })
+    );
+
+    // 關鍵斷言：answer 的寫入還卡著，ICE 卻已經被處理
+    expect(releaseWrite).not.toBeNull(); // 確實有嘗試送 answer
+    expect(pc.addIceCandidate).toHaveBeenCalledTimes(1);
+
+    releaseWrite!(); // 收尾，避免懸掛的 promise
+  });
+});
