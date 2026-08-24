@@ -14,10 +14,11 @@ export type { IChatEngine } from './IChatEngine';
 
 // 後端可替換的注入縫（介面，純契約；Firestore/Relay 實作不進公開型別）
 export type { SignalingTransport, RawSignalDoc, SignalingFactory } from '../core/p2p/SignalingTransport.types';
-export type { IChatStorage, IRoomService, IRoomDirectory, RoomSnapshot, DirectoryIdentity } from '../ports';
+export type { IChatStorage, IRoomService, IRoomDirectory, RoomSnapshot, DirectoryIdentity, IRoomCatalog, CatalogRoom } from '../ports';
 // 純記憶體參考實作(無 Firebase);自架後端可照此形狀
 export { InMemorySignalingHub, InMemorySignalingTransport } from '../core/p2p/InMemorySignalingTransport';
 export { InMemoryRoomDirectory, InMemoryRoomDirectoryHub } from '../core/mesh/InMemoryRoomDirectory';
+export { InMemoryRoomCatalog, InMemoryRoomCatalogHub } from '../core/mesh/InMemoryRoomCatalog';
 export { InMemoryChatStorage } from '../core/storage/InMemoryChatStorage';
 
 // 公開資料型別

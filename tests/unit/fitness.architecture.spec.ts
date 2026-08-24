@@ -103,14 +103,19 @@ function exportedNames(file: string): string[] {
 describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯性 review）', () => {
   it('nerilo（主入口）匯出名單', () => {
     expect(exportedNames('src/sdk/index.ts')).toEqual([
+      // Spec 014：房間目錄契約 + InMemory 參考實作（2026-08-24）
+      'CatalogRoom',
       'ChatMessage',
       'DirectoryIdentity',
       'HLCTimestamp',
       'IChatEngine',
       'IChatStorage',
+      'IRoomCatalog',
       'IRoomDirectory',
       'IRoomService',
       'InMemoryChatStorage',
+      'InMemoryRoomCatalog',
+      'InMemoryRoomCatalogHub',
       'InMemoryRoomDirectory',
       'InMemoryRoomDirectoryHub',
       'InMemorySignalingHub',
@@ -158,6 +163,8 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'WarmSignalingBackend',
       'createChatClient',
       'createFirestoreChatClient',
+      // Spec 014：Firestore 房間目錄（包既有 getPublicRooms/建房/關房，watch 為輪詢）
+      'createFirestoreRoomCatalog',
       'createFirestoreSignaling',
       'createWarmColdSignaling',
     ]);

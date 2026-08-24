@@ -1,7 +1,7 @@
 # Spec 014：補一個輕量的「可加入房間目錄」契約
 
 - 軌別：feature
-- 狀態：planned（優先序提高：2026-07-26 實測確認它是 Spec 015 對外可用的前置條件，不是加分項）
+- 狀態：implementing（2026-08-24 T1-T6 完成；餘 T7 block-brawl 大廳換裝＝V1）
 - 建立：2026-07-25／最後更新：2026-07-25
 - 關聯：ADR-0025（可嵌入 SDK）、ADR-0027（room directory gossip）、`src/ports/IRoomDirectory.ts`、
   `src/services/RoomService.ts:901`（`getPublicRooms`）、block-brawl `docs/nerilo-integration.md`（缺口 1）
@@ -71,6 +71,17 @@
 
 ## 4. 技術計畫（plan）
 
+〔實作期修訂 2026-08-24，三處〕
+① `publish` 簽名改 `publish(room: Omit<CatalogRoom,'id'> & {id?}): Promise<string>`——
+Firestore 的房間 id 由後端生成（createRoom 內部 UUID），caller 給定 id 做不到；
+契約以回傳值為權威 id，InMemory 版沿用給定值或自生。原 `Promise<void>` 版本無法誠實實作。
+② `getPublicRooms` 補映射 `roomName`／`maxParticipants`（欄位一直在 Firestore 文件裡，
+映射層漏抄，整合測試抓到）。
+③ `watch` 明定為輪詢實作（預設 15s 可調）：2026-07-13 配額事件後公開列表刻意不掛
+常駐 onSnapshot，SDK 不繞開該決策。
+④ `publish` 內部＝createRoom→activateRoom 兩步：waiting 房不進公開列表（status 過濾），
+公告語義要求直接啟用。
+
 ### 4.1 契約
 
 ```
@@ -108,25 +119,25 @@ Firestore 版不新增授權面：沿用 `getPublicRooms` 既有的
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1：定義 `CatalogRoom` 與 `IRoomCatalog`（`src/ports/`），doc comment 與
+- [x] T1：定義 `CatalogRoom` 與 `IRoomCatalog`（`src/ports/`），doc comment 與
       `IRoomDirectory` 互相指名以防再次混淆。
-- [ ] T2：`InMemoryRoomCatalog` + Hub 參考實作。
-- [ ] T3：`createFirestoreRoomCatalog()` 於 `nerilo/firestore`（⚠ 動運作中路徑：
+- [x] T2：`InMemoryRoomCatalog` + Hub 參考實作。
+- [x] T3：`createFirestoreRoomCatalog()` 於 `nerilo/firestore`（⚠ 動運作中路徑：
       包裝既有 `getPublicRooms`／建房／關房，先走 harden-tests）。
-- [ ] T4：契約測試，同一組斷言雙跑（InMemory 與 Firestore emulator 版）。
-- [ ] T5：`sdkSurface` 納入新匯出；`prune-sdk-types --max=30` 確認不爆。
-- [ ] T6：SDK-QUICKSTART 增「房間目錄」一節，明寫與 `IRoomDirectory` 的差別。
+- [x] T4：契約測試雙跑：InMemory 單元 4 例＋Firestore emulator 整合 2 例（真實 rules）。
+- [x] T5：fitness 表面快照納入 4+1 新匯出；prune-sdk-types、pack 冒煙（主入口 16 執行期匯出）全綠。
+- [x] T6：SDK-QUICKSTART 增「房間目錄」一節，明寫與 `IRoomDirectory` 的差別與四條誠實邊界。
 - [ ] T7：block-brawl 大廳改用本契約（V1）。
 
 ## 6. 驗收（黃金判準）
 
 - [ ] V1 外部嵌入者實證：block-brawl 的大廳目錄改為本契約實作，**遊戲邏輯零改動**
       （只換工廠），沿用 Spec 013 的驗收精神，用真的消費者證明縫是真的。
-- [ ] V2 契約可替換：同一組契約測試同時套用 InMemory 與 Firestore 版，行為一致
+- [x] V2 契約可替換：同一組契約測試同時套用 InMemory 與 Firestore 版，行為一致
       （比照 block-brawl `test/nerilo-signaling.test.js` 的雙跑法）。
-- [ ] V3 公開表面受控：`sdkSurface` 顯性納入新匯出；`prune-sdk-types --max=30` 不爆。
-- [ ] V4 授權不是口頭的：rules 整合測試證明「私人房與已關閉房不會出現在任何人的 `list`」。
-- [ ] V5 既有路徑零回歸：T3 包裝後，既有公開房列表行為（React／Vue 兩線）不變。
+- [x] V3 公開表面受控：`sdkSurface` 顯性納入新匯出；`prune-sdk-types --max=30` 不爆。
+- [x] V4 授權不是口頭的：rules 整合測試證明「私人房與已關閉房不會出現在任何人的 `list`」。
+- [x] V5 既有路徑零回歸：T3 包裝後，既有公開房列表行為（React／Vue 兩線）不變。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 

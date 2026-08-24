@@ -4,3 +4,4 @@
 export type { IRoomService } from './IRoomService';
 export type { IChatStorage } from './IChatStorage';
 export type { IRoomDirectory, RoomSnapshot, DirectoryIdentity } from './IRoomDirectory';
+export type { IRoomCatalog, CatalogRoom } from './IRoomCatalog';

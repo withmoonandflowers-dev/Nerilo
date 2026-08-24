@@ -6,6 +6,10 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 
 ### 新增
 
+- 房間目錄契約（Spec 014）：`IRoomCatalog`／`CatalogRoom`（list／watch／publish／
+  unpublish 四動作），主入口附 `InMemoryRoomCatalog(+Hub)` 參考實作；
+  `nerilo/firestore` 加 `createFirestoreRoomCatalog`（包既有公開房列表與建房/關房，
+  watch 為輪詢）。注意：Firestore 版建房要求非匿名帳號（rules 既有語義，未放寬）。
 - 遊戲/低延遲傳輸入口 `nerilo/transport`（Spec 023）：`createTransportClient` 建立
   不含訊息層的 mesh 傳輸客戶端；`openRawChannel`／`onRawChannel` 在 peer 間開
   raw DataChannel（參數直通 WebRTC），資料以房間金鑰 AES-GCM 密封（raw-v1 格式）。

@@ -13,7 +13,7 @@ import { createLazySignalingTransport } from '../core/p2p/lazySignalingTransport
 import { createWarmColdSignalingFactory } from '../core/p2p/warmColdSignalingFactory';
 import type { SignalRelayBus, PeerKeyResolver } from '../core/p2p/PeerRelaySignalingTransport';
 import type { SignFn, SignalEnvelope } from '../core/p2p/SignalEnvelope';
-import type { IRoomDirectory, IChatStorage } from '../ports';
+import type { IRoomDirectory, IChatStorage, IRoomCatalog, CatalogRoom } from '../ports';
 
 // warm 後端的實作者需要這些型別來寫自己的 relayBus / peerKeys（Spec 015 T3）。
 // 信封本身是不透明的：中繼只依 `to` 轉密文，不解讀內容。
@@ -131,6 +131,83 @@ export function createWarmColdSignaling(
     cold,
     patience: warm.patience,
   });
+}
+
+/**
+ * Firestore 房間目錄（Spec 014 T3）——包既有 production 路徑，不另開寫入面：
+ *  - `list`：既有 `getPublicRooms`（status=='open' && isPrivate==false && TTL 未過，
+ *    伺服器端過濾＋limit 20）。
+ *  - `publish`：既有建房＋啟用（createRoom → activateRoom）。**id 由後端生成**，
+ *    以回傳值為準（caller 給的 id 忽略，契約已明示）。
+ *  - `unpublish`：既有 closeRoom；冪等（房不存在不拋）。
+ *  - `watch`：**輪詢實作**（預設 15s，可調）。刻意不掛常駐 onSnapshot——2026-07-13
+ *    配額事件後公開列表改一次性讀取（RoomService.ts:894 注記），SDK 不繞開該決策。
+ *
+ * 使用前提（誠實邊界，2026-08-24 拍板維持）：建房要求**非匿名帳號**（firestore.rules），
+ * 匿名玩家可加入他人的房，但不能 publish。遊戲嵌入者要讓玩家開房，需先走登入。
+ */
+export function createFirestoreRoomCatalog(config: {
+  uid: string;
+  ownerName?: string;
+  watchIntervalMs?: number;
+}): IRoomCatalog {
+  const interval = config.watchIntervalMs ?? 15_000;
+  const svc = async () => (await import('../services/RoomService')).RoomService;
+
+  const toCatalog = (r: {
+    roomId: string; roomName?: string; participants: string[];
+    ownerUid: string; ownerName?: string; createdAt: number; maxParticipants?: number;
+  }): CatalogRoom => ({
+    id: r.roomId,
+    ...(r.roomName ? { name: r.roomName } : {}),
+    occupancy: r.participants.length,
+    ...(r.maxParticipants !== undefined ? { capacity: r.maxParticipants } : {}),
+    meta: { ownerUid: r.ownerUid, ownerName: r.ownerName, createdAt: r.createdAt },
+  });
+
+  return {
+    async list() {
+      const S = await svc();
+      return (await S.getPublicRooms()).map(toCatalog);
+    },
+    watch(onChange) {
+      let last = '';
+      let stopped = false;
+      const tick = async (first: boolean) => {
+        try {
+          const S = await svc();
+          const rooms = (await S.getPublicRooms()).map(toCatalog);
+          const key = JSON.stringify(rooms);
+          if (stopped) return;
+          if (first || key !== last) {
+            last = key;
+            onChange(rooms);
+          }
+        } catch { /* 讀取失敗這輪跳過，下輪再試（對齊 getPublicRooms 的降級語義） */ }
+      };
+      void tick(true); // 訂閱當下先收一次
+      const timer = setInterval(() => void tick(false), interval);
+      return () => { stopped = true; clearInterval(timer); };
+    },
+    async publish(room) {
+      const S = await svc();
+      const roomId = await S.createRoom(
+        config.uid, config.ownerName ?? null, /* isPrivate */ false, [config.uid],
+        undefined, true, room.name, room.capacity
+      );
+      await S.activateRoom(roomId, config.uid); // waiting 房不進公開列表，公告＝直接啟用
+      return roomId;
+    },
+    async unpublish(id) {
+      const S = await svc();
+      try {
+        await S.closeRoom(id, config.uid);
+      } catch (e) {
+        if (e instanceof Error && e.message.includes('不存在')) return; // 冪等
+        throw e;
+      }
+    },
+  };
 }
 
 /** Firestore 便利工廠（＝createChatClient 省略後端 → 延遲載入 Firestore/IndexedDB 預設）。 */

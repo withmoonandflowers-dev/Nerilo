@@ -929,11 +929,11 @@ export class RoomService {
           waitingTimeout: data.waitingTimeout || 5 * 60 * 1000,
           waitingStartedAt: data.waitingStartedAt?.toMillis(),
           lastActiveAt: typeof data.lastActiveAt === 'number' ? data.lastActiveAt : undefined,
+          // Spec 014：房名與容量此前漏映射（欄位一直都在文件裡），房間目錄需要
+          ...(typeof data.roomName === 'string' ? { roomName: data.roomName } : {}), ...(typeof data.maxParticipants === 'number' ? { maxParticipants: data.maxParticipants } : {}),
         });
       });
-      if (DEBUG_ROOMS) {
-        logger.info('[RoomService] getPublicRooms', { count: rooms.length });
-      }
+      if (DEBUG_ROOMS) logger.info('[RoomService] getPublicRooms', { count: rooms.length });
       return rooms;
     } catch (err) {
       // 最可能是複合索引尚在建置（failed-precondition）；公開列表非關鍵路徑，降級為空。

@@ -133,6 +133,26 @@ const client = await createChatClient({
 });
 ```
 
+## 房間目錄（大廳，0.10.0 起）
+
+「有哪些房間可以加入」的意圖層契約 `IRoomCatalog`：`list`／`watch`／`publish`／`unpublish`。
+**別跟 `IRoomDirectory` 搞混**：那是單一房間內的成員名冊；`IRoomCatalog` 是跨房間的大廳視角。
+
+```ts
+import { InMemoryRoomCatalog, InMemoryRoomCatalogHub } from 'nerilo'; // 零後端參考實作
+import { createFirestoreRoomCatalog } from 'nerilo/firestore';        // 包 production 既有路徑
+
+const catalog = createFirestoreRoomCatalog({ uid, ownerName: '小明' });
+const stop = catalog.watch((rooms) => renderLobby(rooms));  // 訂閱當下先收一次；輪詢 15s
+const roomId = await catalog.publish({ name: '練習場', capacity: 5, meta: { mode: 'pvp' } });
+await catalog.unpublish(roomId);
+```
+
+誠實邊界：①`publish` 的房間 id 由後端生成，以回傳值為準。②Firestore 版建房要求
+**非匿名帳號**（rules 強制）；匿名玩家可加入他人的房，不能開房。③`watch` 是輪詢
+（預設 15 秒，`watchIntervalMs` 可調），不掛常駐 onSnapshot（讀取配額決策）。
+④`list` 上限 20 間（伺服器端 limit）。
+
 ## 遊戲與低延遲傳輸（`nerilo/transport`，0.10.0 起）
 
 給「不要聊天、只要傳輸地基」的嵌入者：mesh 連線、身分、房間金鑰照舊成形，
