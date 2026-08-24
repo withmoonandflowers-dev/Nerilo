@@ -12,7 +12,8 @@ import {
 import { createTransportClient } from 'nerilo/transport';
 
 const ROOM = 'file-demo';
-const SIZE = 4 * 1024 * 1024;
+// ?mb=32 可拉大（壓力驗證）；預設 4MB
+const SIZE = (Number(new URLSearchParams(location.search).get('mb')) || 4) * 1024 * 1024;
 const sigHub = new InMemorySignalingHub();
 const dirHub = new InMemoryRoomDirectoryHub();
 const logEl = document.getElementById('log')!;
@@ -64,19 +65,29 @@ async function main(): Promise<void> {
 
   const payload = randomBytes(SIZE);
   const sentSha = await sha256Hex(payload);
-  log(`就緒。A 送 ${SIZE} bytes（sha256 ${sentSha.slice(0, 12)}…）`);
+  log(`就緒。A 送 ${SIZE} bytes（sha256 ${sentSha.slice(0, 12)}…）；傳輸期間同時 20Hz 猛寫共享狀態`);
+  // 並行壓力：傳檔同時 sharedState 高頻寫（驗 state/file 多通道並行不互咬）
+  const sA = A.sharedState();
+  const sB = B.sharedState();
+  let stateWrites = 0;
+  const stateTimer = setInterval(() => { sA.set('tick', ++stateWrites); sB.set('mirror', stateWrites); }, 50);
   const t0 = performance.now();
   const tx = A.sendFile(B.userId ? A.peers()[0]! : '', payload, { name: 'assets.bin', mime: 'application/octet-stream' });
   await tx.done;
   const { data } = await received;
   const ms = performance.now() - t0;
+  clearInterval(stateTimer);
+  await new Promise((r) => setTimeout(r, 300));
+  const stateOk = JSON.stringify([sA.get()['tick'], sA.get()['mirror']]) === JSON.stringify([sB.get()['tick'], sB.get()['mirror']]);
+  log(`共享狀態並行：寫入 ${stateWrites * 2} 筆，兩端一致=${stateOk}`);
   const gotSha = await sha256Hex(data);
   const pass = gotSha === sentSha;
   const mbps = (SIZE / 1024 / 1024) / (ms / 1000);
-  verdict.className = pass ? 'pass' : 'fail';
-  verdict.textContent = pass
-    ? `PASS：SHA-256 一致，${(ms / 1000).toFixed(2)}s，吞吐 ${mbps.toFixed(1)} MB/s（含加密）`
-    : `FAIL：sha 不一致 ${sentSha.slice(0, 12)} vs ${gotSha.slice(0, 12)}`;
+  const allPass = pass && stateOk;
+  verdict.className = allPass ? 'pass' : 'fail';
+  verdict.textContent = allPass
+    ? `PASS：SHA-256 一致，${(ms / 1000).toFixed(2)}s，吞吐 ${mbps.toFixed(1)} MB/s（含加密）；並行狀態 ${stateWrites * 2} 筆一致`
+    : `FAIL：sha一致=${pass} 狀態一致=${stateOk}`;
   log(verdict.textContent);
 }
 
