@@ -16,7 +16,7 @@ export interface Positioned {
  *
  * 第三方只依賴這個穩定 API:收發訊息、表情、已讀人數、輸入中、生命週期。內部的 mesh /
  * gossip / E2EE 細節、以及表情與已讀水位的聚合(純 reducer)都封裝在此,對外只吐結果。
- * 建構時注入 IChatEngine(預設由 createFirestoreChatClient 提供 Firestore 後端)。
+ * 建構時注入 IChatEngine(預設由 nerilo/firestore 的 createChatClient 提供 Firestore 後端)。
  */
 export class NeriloClient {
   private reactions: ReactionMap = {};

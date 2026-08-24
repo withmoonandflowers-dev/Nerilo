@@ -12,8 +12,6 @@ import {
   readCount,
   orderKeyOf,
   applyReaction,
-  encodeContent,
-  decodeContent,
   type IChatEngine,
   type ChatMessage,
 } from '../../src/sdk';
@@ -27,8 +25,6 @@ describe('SDK 公開表面（P3 publishable surface）', () => {
     expect(typeof readCount).toBe('function');
     expect(typeof orderKeyOf).toBe('function');
     expect(typeof applyReaction).toBe('function');
-    expect(typeof encodeContent).toBe('function');
-    expect(typeof decodeContent).toBe('function');
   });
 
   it('subpath 匯出 createFirestoreSignaling：同步回傳 transport，且建構當下不載 Firestore（Spec 015 T2）', () => {

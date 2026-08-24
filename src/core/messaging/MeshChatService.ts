@@ -300,6 +300,11 @@ export class MeshChatService {
     return this.meshGossipManager.getEncryptionState();
   }
 
+  /** 同代異鑰衝突查詢（Spec 022 C3）：發生過衝突的 epoch 與是否已達換代請求上限。 */
+  getKeyConflicts(): { epochs: number[]; requestLimitReached: boolean } {
+    return this.meshGossipManager.getContentKeyRing()?.getKeyConflicts() ?? { epochs: [], requestLimitReached: false };
+  }
+
   /**
    * 協議版本不合（Spec 009 §4.7）：房內存在 gossip v1 舊版節點（或版本宣告不等）。
    * UI 據此提示「請雙方更新後重新整理」；不靜默降級（v1↔v2 本質不互通）。

@@ -16,6 +16,15 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
   單 key 值上限 8KB、全狀態 64KB，超限拋錯不靜默截斷。通道 label `state` 成為保留字。
 - SDK-QUICKSTART 改版為「按資料類型選通道」指南（六類資料 × 對應 API × 選錯症狀）。
 
+### 破壞性變更（0.x 瘦身，2026-08-24 API 體檢定案）
+
+- 移除 `createFirestoreChatClient`（`nerilo/firestore`）：純別名，改用同參數的
+  `createChatClient`。
+- 主入口移除 `IRoomService` 型別匯出：SDK 沒有任何注入縫使用它（孤兒型別）；
+  房間列表需求請用 `IRoomCatalog`。
+- 主入口移除 `encodeContent`／`decodeContent`：門面的 `sendMessage`／`decode`
+  已涵蓋，裸函式零外部使用情境。
+
 ### 已知邊界
 
 - LWW 語義：高頻並發改同一 key 會互蓋；狀態不持久化（全員離開即消失）；

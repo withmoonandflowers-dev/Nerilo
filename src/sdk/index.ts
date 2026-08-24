@@ -14,7 +14,7 @@ export type { IChatEngine } from './IChatEngine';
 
 // 後端可替換的注入縫（介面，純契約；Firestore/Relay 實作不進公開型別）
 export type { SignalingTransport, RawSignalDoc, SignalingFactory } from '../core/p2p/SignalingTransport.types';
-export type { IChatStorage, IRoomService, IRoomDirectory, RoomSnapshot, DirectoryIdentity, IRoomCatalog, CatalogRoom } from '../ports';
+export type { IChatStorage, IRoomDirectory, RoomSnapshot, DirectoryIdentity, IRoomCatalog, CatalogRoom } from '../ports';
 // 純記憶體參考實作(無 Firebase);自架後端可照此形狀
 export { InMemorySignalingHub, InMemorySignalingTransport } from '../core/p2p/InMemorySignalingTransport';
 export { InMemoryRoomDirectory, InMemoryRoomDirectoryHub } from '../core/mesh/InMemoryRoomDirectory';
@@ -28,11 +28,12 @@ export type { ReactionEvent, ReactionOp, ReactionMap } from '../core/messaging/r
 export type { ReadEvent, ReadState } from '../core/messaging/readReceipts';
 
 // 純邏輯(第三方若要自建 UI 聚合可直接用,零依賴、可測)
+// 0.11.0 瘦身：encodeContent/decodeContent 移出表面（門面 sendMessage/decode 已包掉，零外部使用者）；
+// IRoomService 同批移出（SDK 無任何注入縫吃它，孤兒型別；block-brawl 亦點名過重）。
 export { applyReaction, hasReacted } from '../core/messaging/reactions';
 export { applyRead, readCount, readersOf, orderKeyOf } from '../core/messaging/readReceipts';
-export { encodeContent, decodeContent } from '../core/messaging/messageContent';
 
-// turnkey Firestore 工廠（createChatClient / createFirestoreChatClient）在 subpath：
+// turnkey Firestore 工廠（createChatClient）在 subpath：
 //   import { createChatClient } from 'nerilo/firestore'
 // 拆出的原因：那條路徑動態載入 MeshChatService，會把 mesh/crypto 型別圖帶進來；
 // 主入口保持純契約、型別表面乾淨。

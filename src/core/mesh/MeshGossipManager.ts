@@ -263,6 +263,7 @@ export class MeshGossipManager {
             applyLocalKey: (key, epoch) => this.messageHandler!.setContentKey(key, epoch),
             getMaxKnownEpoch: () => this.messageHandler!.getMaxKnownEpoch(),
           });
+          this.messageHandler.getContentKeyRing().setOnKeyConflict(() => this.keyCoordinator?.requestRedistribution()); // Spec 022：同代異鑰→請求換代（頻控在金鑰環）
         } catch (err) {
           logger.warn('[MeshGossipManager] keyx coordinator init failed — plaintext room', {
             roomId: this.roomId, err,

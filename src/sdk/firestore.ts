@@ -210,12 +210,3 @@ export function createFirestoreRoomCatalog(config: {
   };
 }
 
-/** Firestore 便利工廠（＝createChatClient 省略後端 → 延遲載入 Firestore/IndexedDB 預設）。 */
-export async function createFirestoreChatClient(config: {
-  roomId: string;
-  userId: string;
-  signaling?: SignalingFactory;
-  directory?: IRoomDirectory;
-}): Promise<NeriloClient> {
-  return createChatClient(config);
-}

@@ -229,7 +229,7 @@ test.describe('production smoke', () => {
     const alice = await setupSmokeUser(browser, 'a', 'observe');
     const bob = await setupSmokeUser(browser, 'b', 'observe');
     try {
-      const roomId = await createRoom(alice.page);
+      const roomId = await createRoom(alice.page, { privateRoom: true });
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page, 60_000);
       await expectChatReady(bob.page, 60_000);
@@ -271,7 +271,7 @@ test.describe('production smoke', () => {
     const alice = await setupSmokeUser(browser, 'a', 'force-relay');
     const bob = await setupSmokeUser(browser, 'b', 'force-relay');
     try {
-      const roomId = await createRoom(alice.page);
+      const roomId = await createRoom(alice.page, { privateRoom: true });
       await joinRoom(bob.page, roomId);
 
       // relay-only 下必須達到 P2P 已連線（經 TURN）。若退到備援模式，
@@ -306,7 +306,7 @@ test.describe('production smoke', () => {
     const alice = await setupSmokeUser(browser, 'a', 'disable');
     const bob = await setupSmokeUser(browser, 'b', 'disable');
     try {
-      const roomId = await createRoom(alice.page);
+      const roomId = await createRoom(alice.page, { privateRoom: true });
       await joinRoom(bob.page, roomId);
 
       await expect(alice.page).toHaveURL(/\/chat\/.+/, { timeout: 20_000 });

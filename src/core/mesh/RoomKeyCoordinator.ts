@@ -90,6 +90,16 @@ export interface KeyxStatus {
 export class RoomKeyCoordinator {
   /** 上次分發所用的名冊簽章（userId 排序 join）；相同則不重發 */
   private distributedRosterSig: string | null = null;
+
+  /**
+   * 請求重新分發（Spec 022 C2）：同代異鑰衝突時由金鑰環回呼觸發。清掉冪等簽名，
+   * 下一輪 tick 視同「名冊需要重發」，以 max(已知, 已觀察)+1 分發新 epoch 收斂全房。
+   * 誰真的重發仍由既有三道閘門決定（本方法不繞過任何閘門）；請求頻率由金鑰環的
+   * 每 epoch 去重＋每會話上限控制，此處不重複防護。
+   */
+  requestRedistribution(): void {
+    this.distributedRosterSig = null;
+  }
   /** 上輪觀察到的名冊簽章（穩定性判定） */
   private lastSeenSig: string | null = null;
   /** 名冊連續穩定計數（sig 與上輪相同則遞增，變動歸零） */

@@ -7,7 +7,7 @@ import type { NeriloStatus } from '../core/messaging/status';
  * 傳輸中立的聊天引擎契約(SDK 注入縫)。
  *
  * NeriloClient 只依賴這個介面,不綁任何具體後端——現階段預設由既有的 Firestore-backed
- * MeshChatService 結構上滿足(見 sdk/index.ts 的 createFirestoreChatClient);P2 去 Firebase
+ * MeshChatService 結構上滿足(經 nerilo/firestore 的 createChatClient);P2 去 Firebase
  * 化後,同一個門面可換上以注入式 SignalingTransport 建的引擎(自架 WebSocket 等)。
  *
  * 只收錄「傳輸中立」的核心能力;Firestore 備援橋接(encryptForFallback 等)刻意不列入,

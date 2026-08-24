@@ -102,8 +102,8 @@ export class GossipMessageHandler {
    * 送出時加密 content（簽章覆蓋密文，盲信使可存可驗不可解）、顯示前解密；
    * store/轉發/對帳一律保持密文原封。分發協議（keyx 紀錄）見 RoomContentKeyRing。
    */
-  setContentKey(key: CryptoKey | null, epoch = 0): void {
-    this.contentKeys.setContentKey(key, epoch);
+  setContentKey(key: CryptoKey | null, epoch = 0, producer?: string): void {
+    this.contentKeys.setContentKey(key, epoch, producer);
   }
 
   /** 注入本機 ECDH 私鑰，啟用 keyx 消費（開出封給自己的房間金鑰）。 */

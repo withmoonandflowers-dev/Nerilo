@@ -164,9 +164,9 @@ client.onStatus(({ transport, encryption }) => {
 省略三個後端參數，`initialize()` 會載入預設 Firestore/IndexedDB。需要你的環境已初始化 Firebase。
 
 ```ts
-import { createFirestoreChatClient } from 'nerilo/firestore';
+import { createChatClient } from 'nerilo/firestore';
 
-const client = await createFirestoreChatClient({ roomId: 'r1', userId: 'alice' });
+const client = await createChatClient({ roomId: 'r1', userId: 'alice' });
 await client.connect();
 ```
 

@@ -1,7 +1,7 @@
 # Spec 022：偵測同代異鑰並停止靜默覆寫
 
 - 軌別：feature
-- 狀態：planned
+- 狀態：done（2026-08-24 實作完成，V1-V7 驗收過）
 - 建立：2026-08-22／最後更新：2026-08-22
 - 關聯：ADR-0023（keyx 分發）、Spec 012（mesh 群組 E2EE）、Spec 018（產生方交接閘門）、B5 稽核項
 
@@ -111,24 +111,24 @@ Map<number, { key: CryptoKey; producer: string }>
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1 ⚠：`RoomContentKeys` 的 characterization 測試——先釘住現況（同代覆寫、`isNew` 為 false 時不觸發補顯示），再改。走 `harden-tests`。
-- [ ] T2 ⚠：金鑰環改存 `{ key, producer }`，實作 4.2 的三種安裝語義；`consumeKeyx` 傳入 `message.senderId`。
-- [ ] T3：`getKeyConflicts()` 查詢介面、衝突記錄（含請求上限狀態）與 4.5 的告警日誌（與換代請求共用 epoch 去重）。
-- [ ] T4：`RoomKeyCoordinator` 新增 `requestRedistribution()`；金鑰環偵測到衝突時呼叫，含 epoch 去重與會話上限。
-- [ ] T5：透出鏈（MeshGossipManager → MeshChatService），以獨立模組承載避免撐大 god-file。
-- [ ] T6：Vue 聊天頁橫幅（沿用既有樣式與 composable 模式）。
-- [ ] T7：更新 `docs/QA-REPORT-chat.md` 的已知限制段落，並在風險登記回填。
+- [x] T1 ⚠：characterization 先釘現況（後到覆寫＋先到密文解不開＋不觸發補顯示），綠後才動手；舊行為存 git 歷史。
+- [x] T2 ⚠：金鑰環改存 `{ key, producer }`，三種安裝語義落地；`consumeKeyx` 傳 senderId；applyLocalKey 路徑 producer 預設本機 userId。
+- [x] T3：`getKeyConflicts()`＋衝突記錄＋每 epoch 一次告警（與換代請求共用去重）。
+- [x] T4：`requestRedistribution()`（清 distributedRosterSig）；頻控（per-epoch 去重＋會話上限 3）放金鑰環。
+- [x] T5：查詢經既有 `getContentKeyRing()` 直達（MeshChatService.getKeyConflicts 一方法）；manager 僅 1 行接線，行數閘門守住（818/819）。
+- [x] T6：useKeyConflicts composable＋ChatWarnNotices 元件（順帶把三條既有橫幅抽出，聊天頁 1159→1150 反向縮；data-testid 原樣保留）。
+- [x] T7：QA-REPORT 已知限制回填（含 4.1 殘留）。
 
 ## 6. 驗收（黃金判準）
 
-- [ ] V1：同 epoch、同產生方重複安裝 → 冪等，不記為衝突，不重複觸發補顯示（釘住 hydrate 重放路徑）。
-- [ ] V2：同 epoch、不同產生方 → 先到的金鑰仍可解密先到方的訊息；後到的被拒絕；`getKeyConflicts()` 回報該 epoch。
-- [ ] V3：衝突發生後，協調器在下一輪 tick 以更高的 epoch 重新分發；且同一個 epoch 的衝突只請求一次。
-- [ ] V4：達會話上限後不再請求換代，但衝突狀態仍如實回報。
-- [ ] V5：既有訊息不倒退——衝突前已解出的訊息，在衝突發生後仍以明文呈現（C4）。
-- [ ] V6：`setContentKey(null)` 清環時一併清掉衝突記錄，回到乾淨狀態。
-- [ ] V6b：衝突被記錄到日誌且含兩位產生方的 senderId；同一 epoch 重放多次只記錄一次（證明第 1 節的「無跡可循」已被解決，而不只是內部狀態變了）。
-- [ ] V7：全單元 + 受影響 E2E 綠；`MeshGossipManager` 與聊天頁未超過各自的行數閘門。
+- [x] V1：同 epoch、同產生方重複安裝 → 冪等，不記為衝突，不重複觸發補顯示（釘住 hydrate 重放路徑）。
+- [x] V2：同 epoch、不同產生方 → 先到的金鑰仍可解密先到方的訊息；後到的被拒絕；`getKeyConflicts()` 回報該 epoch。
+- [x] V3：衝突發生後，協調器在下一輪 tick 以更高的 epoch 重新分發；且同一個 epoch 的衝突只請求一次。
+- [x] V4：達會話上限後不再請求換代，但衝突狀態仍如實回報。
+- [x] V5：既有訊息不倒退——衝突前已解出的訊息，在衝突發生後仍以明文呈現（C4）。
+- [x] V6：`setContentKey(null)` 清環時一併清掉衝突記錄，回到乾淨狀態。
+- [x] V6b：衝突被記錄到日誌且含兩位產生方的 senderId；同一 epoch 重放多次只記錄一次（證明第 1 節的「無跡可循」已被解決，而不只是內部狀態變了）。
+- [x] V7：全單元 1699 綠（連 5 輪）＋@vue-stable 11/11（emulator 4.9m）；行數閘門 manager 818/819、聊天頁 1150/1160。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 

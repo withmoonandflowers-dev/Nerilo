@@ -43,7 +43,7 @@ test('diag: bob join 之後兩端到底發生什麼', async ({ browser }) => {
   const alice = await setupDiagUser(browser, 'alice');
   const bob = await setupDiagUser(browser, 'bob');
 
-  const roomId = await createRoom(alice.page);
+  const roomId = await createRoom(alice.page, { privateRoom: true });
   console.log(`\n=== roomId: ${roomId} ===`);
   console.log(`alice url after create: ${alice.page.url()}`);
 

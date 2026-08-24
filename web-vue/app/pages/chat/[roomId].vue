@@ -56,6 +56,7 @@ const reactionChips = (messageId: string) => reactionChipsFor(reactions.value, m
 const encryptionState = ref<EncryptionState>('exchanging')
 // Spec 009：gossip 協議版本不合（房內有 v1 舊版節點）→ 常駐提示，不靜默降級
 const protocolMismatch = ref(false)
+const { hasKeyConflict, conflictLimitReached } = useKeyConflicts(() => meshChat) // Spec 022 C3
 const { plaintextPending, e2eeLabel, interceptSend, confirmPlaintextSend, cancelPlaintextSend } =
   usePlaintextConfirm({
     encryptionState,
@@ -728,20 +729,10 @@ async function leaveRoom() {
       <button type="button" class="chat__reply-cancel" data-testid="reply-cancel" aria-label="取消回覆" @click="replyingTo = null">✕</button>
     </div>
 
-    <!-- B1：同房只允許一個分頁參與 mesh（兩頁共用同一組 mesh 身分，同時參與會掉訊息）。 -->
-    <div v-if="otherTabActive" class="chat__e2ee-warn" data-testid="other-tab-notice">
-      ⚠️ 這個聊天室已在另一個分頁開啟。請回到那個分頁繼續，或關閉它後重新整理這頁。
-    </div>
-
-    <!-- Spec 009：gossip 協議版本不合的常駐提示（訊息無法互通，請雙方更新）。 -->
-    <div v-if="protocolMismatch" class="chat__e2ee-warn" data-testid="protocol-mismatch-notice">
-      ⚠️ 房內有版本不相容的成員，訊息無法互通。請雙方更新到最新版後重新整理。
-    </div>
-
-    <!-- ADR-0026 R2：明文降級的常駐提示（此房永久無法加密，讓使用者「知情」）。 -->
-    <div v-if="encryptionState === 'plaintext' && !plaintextPending" class="chat__e2ee-warn" data-testid="plaintext-notice">
-      ⚠️ 此聊天室無法端對端加密，訊息將以明文送出。
-    </div>
+    <!-- 常駐警示橫幅（B1/Spec 009/R2/Spec 022；抽至元件——文案與 data-testid 原樣保留） -->
+    <ChatWarnNotices :other-tab-active="otherTabActive" :protocol-mismatch="protocolMismatch"
+      :plaintext-notice="encryptionState === 'plaintext' && !plaintextPending"
+      :key-conflict="hasKeyConflict" :key-conflict-limit-reached="conflictLimitReached" />
 
     <!-- 阻斷式確認：明文房送訊前必須明確同意，預設不送（fail-visible）。 -->
     <div v-if="plaintextPending" class="chat__e2ee-confirm" data-testid="plaintext-confirm">

@@ -263,6 +263,32 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
   });
 });
 
+describe('Spec 022：同代異鑰的主動換代（requestRedistribution）', () => {
+  it('V3：衝突後請求換代 → 名冊未變也重發，epoch = max(已知)+1；未請求則維持冪等', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 2,
+    });
+
+    await tickStable(coord, 4);
+    expect(sendKeyx).toHaveBeenCalledTimes(1); // epoch 0 已分發
+
+    await tickStable(coord, 2);
+    expect(sendKeyx).toHaveBeenCalledTimes(1); // 未請求 → 冪等不重發
+
+    coord.requestRedistribution(); // 金鑰環偵測到同代異鑰後的回呼路徑
+    await tickStable(coord, 2);
+    expect(sendKeyx).toHaveBeenCalledTimes(2); // 名冊沒變也重發
+    const payload = lastKeyx(sendKeyx);
+    expect(payload.keys.every((k) => k.epoch === 1)).toBe(true); // max(0)+1，交接單調
+  });
+});
+
 describe('Spec 018：第四道閘門（產生方交接寬限）', () => {
   async function rosterAB(aliceEcdhPubB64: string) {
     const bob = await ecdhPair();

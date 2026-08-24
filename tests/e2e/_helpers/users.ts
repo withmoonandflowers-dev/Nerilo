@@ -114,8 +114,13 @@ export async function teardown(...users: User[]): Promise<void> {
 }
 
 /** Create a new room from the dashboard. Returns the roomId. */
-export async function createRoom(page: Page): Promise<string> {
+export async function createRoom(page: Page, opts?: { privateRoom?: boolean }): Promise<string> {
   await page.getByRole('button', { name: '+ 建立新房間' }).click();
+  // 私有房：smoke 對 production 跑時必用——公開房會留在真實使用者的公開列表
+  // （殭屍房事故 2026-08-24：一天累積 11 間 smoke 遺留房）。
+  if (opts?.privateRoom) {
+    await page.locator('.private-checkbox input[type="checkbox"]').check();
+  }
   // exact: the open form's confirm button is "建立房間", but the header toggle's
   // aria-label becomes "取消建立房間" (a superstring) — a non-exact match hits both.
   await page.getByRole('button', { name: '建立房間', exact: true }).click();
