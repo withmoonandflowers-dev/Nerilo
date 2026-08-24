@@ -60,7 +60,13 @@ const html = await fetchText(BASE_URL);
 const buildHash = html.match(/assets\/index-([a-zA-Z0-9_-]+)\.js/)?.[1] ?? 'unknown';
 
 const statusIcon = (s) => (s === 'passed' ? 'PASS' : s === 'skipped' ? 'SKIP' : 'FAIL');
-const allPassed = tests.length > 0 && tests.every((t) => t.status === 'passed');
+
+// skipped 不算失敗：診斷用 spec 平時是 skip，把它算進去會讓每次跑完都印出
+// 誤導的「有失敗項」，而真正的失敗反而被雜訊淹掉。
+// 但「全部被 skip」也不能報成通過——那和「一個都沒跑」一樣是異常，要分開講。
+const executed = tests.filter((t) => t.status !== 'skipped');
+const allPassed = executed.length > 0 && executed.every((t) => t.status === 'passed');
+const nothingExecuted = executed.length === 0;
 
 const byScenario = Object.fromEntries(stats.map((s) => [s.scenario, s]));
 const s1 = byScenario['S1-direct'];
@@ -77,7 +83,13 @@ lines.push('');
 lines.push(`- 時間：${new Date().toISOString()}`);
 lines.push(`- 目標：${BASE_URL}（build: \`${buildHash}\`）`);
 lines.push(
-  `- 總結：**${tests.length === 0 ? '異常：沒有任何測試被執行' : allPassed ? '全數通過' : '有失敗項，見下表'}**`
+  `- 總結：**${
+    nothingExecuted
+      ? '異常：沒有任何測試被執行（收集期失敗或全被 skip；此時下方「連線品質」無從判斷，不代表 TURN 有問題）'
+      : allPassed
+        ? '全數通過'
+        : '有失敗項，見下表'
+  }**`
 );
 lines.push('');
 lines.push(`| 場景 | 結果 | 耗時 | 備註 |`);
@@ -98,7 +110,14 @@ if (s2) {
   lines.push(`- 強制 TURN 訊息延遲：${s2.latencyMs}ms`);
   lines.push(`- TURN candidate：${fmtPc(s2.pcStats)}`);
 } else {
-  lines.push(`- 強制 TURN：無統計資料（測試未完成即失敗時，代表 TURN 未設定或憑證失效）`);
+  // 不要在這裡替失敗歸因。S2 沒有統計資料的原因至少三種：TURN 真的失效、
+  // S2 在連上 TURN 之前就掛了（例如註冊/建房階段）、或整個 spec 檔連收集都失敗
+  // （2026-07-13 到 08-24 就是這種：一個測試都沒跑，卻印出「TURN 憑證失效」，
+  // 指著一個沒壞的東西查了六週）。先看上面的總結與場景表判斷是哪一種。
+  lines.push(
+    `- 強制 TURN：無統計資料。**先看總結與場景表**：若 S2 顯示 FAIL，看它的失敗點是否在連線之前；` +
+      `若總結是「沒有任何測試被執行」，本行與 TURN 無關。確認 TURN 本身要看 S2 的 relay→relay candidate。`
+  );
 }
 lines.push('');
 lines.push(`## 涵蓋範圍聲明`);

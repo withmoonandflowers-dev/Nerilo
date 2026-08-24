@@ -170,7 +170,10 @@ interface SmokeUser {
  */
 const quotaEvents: string[] = [];
 
-test.afterEach((_fixtures, testInfo) => {
+// 第一個參數必須用物件解構（Playwright 靠靜態分析判斷 hook 用到哪些 fixture）；
+// 寫成具名參數會讓整個 spec 檔在收集期就失敗、一個測試都跑不起來。
+// eslint-disable-next-line no-empty-pattern
+test.afterEach(({}, testInfo) => {
   if (testInfo.status !== 'passed' && quotaEvents.length > 0) {
     const msg =
       `Firestore 配額耗盡（resource-exhausted/429，共 ${quotaEvents.length} 筆）——` +
