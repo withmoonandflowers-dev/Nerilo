@@ -159,7 +159,7 @@ P2 把紀錄內容密文化。加解密原語已落地並測試（`RecordCrypto`
 |---|---|---|---|
 | **P2-①** | `RecordCrypto` 加解密原語 + 單元 | 零（純函數、無接線） | ✅ 完成 |
 | **P2-②** | keyx 分發紀錄接進 gossip 管線 + GossipMessageHandler 收送時加解密（mesh 房，內容金鑰就緒才啟用；未就緒退明文相容） | 中（動 mesh 收送路徑，有 mesh-diagnostic/rejoin E2E 護欄） | 🎯 next |
-| **P2-③** | 2 人房切 gossip 管線、star 退役；typing/遊戲/備援跟隨 | 高（改唯一穩定的 2 人路徑）→ 專注階段 | ✅ 完成（見修訂五） |
+| **P2-③** | 2 人房切 gossip 管線、star 退役；typing/遊戲/備援跟隨 | 高（改唯一穩定的 2 人路徑）→ 專注階段 | ✅ 完成（**僅 Vue 版**；React 生產版仍走 star，見修訂五） |
 
 star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後，盲信使（P4）
 只需 mesh 房密文化（P2-②）即可先行驗證於 3-5 人房。
@@ -220,7 +220,7 @@ keyx 不進聊天顯示（如同 game 通道分流），但照樣入 store／轉
 | P2-②a `GossipMessageHandler` 收送加解密接線（金鑰為閘、無鑰退明文） | ✅ 完成 |
 | P2-②b `RoomKeyDistribution` 成對封裝協議（純函數） | ✅ 完成 |
 | **P2-②c keyx 接進 live mesh（本修訂）** | ✅ 完成（3 人 mesh E2E：UI 明文、複本密文；mesh-diagnostic 未迴歸） |
-| P2-③ 2 人房切 gossip、star 退役 | ✅ 完成（見修訂五） |
+| P2-③ 2 人房切 gossip、star 退役 | ✅ 完成（**僅 Vue 版**；React 生產版仍走 star，見修訂五） |
 
 ---
 
