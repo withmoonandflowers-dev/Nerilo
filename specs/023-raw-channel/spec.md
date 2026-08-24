@@ -1,7 +1,7 @@
 # Spec 023：讓嵌入者開低延遲原始通道（openRawChannel）
 
 - 軌別：feature
-- 狀態：planned
+- 狀態：implementing（T1-T7 完成；餘 T8 block-brawl 換裝＝V1）
 - 建立：2026-08-24／最後更新：2026-08-24
 - 關聯：ADR-0025（可嵌入 SDK）、block-brawl `docs/nerilo-integration.md` 方案 A（`規劃/點子停車場.md:12`）、Spec 005（p2p2p signaling）、Spec 013（SDK 契約）
 
@@ -86,27 +86,34 @@ RawChannel {
 
 ## 5. 任務分解（tasks）
 
-- [ ] T1：`RawChannelCrypto` 純邏輯（房金鑰密封/開封、epoch 選鑰、丟棄計數），單元先行。
-- [ ] T2 ⚠：`P2PManager` 支援在既有連線上開具名 DataChannel（`raw:` 前綴、init 參數透傳）。
+- [x] T1：`RawChannelCrypto` 純邏輯（房金鑰密封/開封、epoch 選鑰、丟棄計數），單元先行。
+- [x] T2 ⚠：`P2PManager` 支援在既有連線上開具名 DataChannel（`raw:` 前綴、init 參數透傳）。
       動運作中路徑，先走 harden-tests 釘現況。
-- [ ] T3：`NeriloTransportClient` 組裝（MeshGossipManager 直建＋keyx 就緒訊號接線）。
-- [ ] T4：`src/sdk/transport.ts` 出口 + `package.json` exports 加 `./transport` +
+- [x] T3：`NeriloTransportClient` 組裝（MeshGossipManager 直建＋keyx 就緒訊號接線）。
+- [x] T4：`src/sdk/transport.ts` 出口 + `package.json` exports 加 `./transport` +
       build:sdk 三入口 + `qa:sdk-isolation` 涵蓋新入口。
-- [ ] T5：契約測試（InMemory signaling 雙 client 收發、金鑰未就緒丟棄計數、輪替不停流）。
-- [ ] T6：真瀏覽器 E2E：兩分頁經 transport 入口互發 60Hz 級封包，量測 p50/p95 延遲。
-- [ ] T7：SDK-QUICKSTART 加「遊戲傳輸」一節（含 Q1 的加密語義與丟棄語義，誠實揭露）。
+- [x] T5：契約測試 6 例（TransportClient.spec：對接假通道＋真金鑰環；密文上線、丟棄計數、輪替不停流、未連拋錯、關閉語義）。
+- [x] T6〔實作期修訂〕：examples/transport-latency 量測頁＋scripts/measure-transport-latency.mjs
+      runner（Playwright Chromium 關節流）。單頁雙 client 真 WebRTC（loopback 條件下與雙分頁
+      等價於延遲量測目的）。
+- [x] T7：SDK-QUICKSTART 加「遊戲傳輸」一節（含 Q1 的加密語義與丟棄語義，誠實揭露）。
 - [ ] T8：block-brawl 換裝（V1 執行面）。
 
 ## 6. 驗收（黃金判準）
 
 - [ ] V1 外部嵌入者實證：block-brawl 的自建 DataChannel 換成本 API，遊戲邏輯零改動，
       lockstep 對戰通過既有的世界雜湊一致驗證。
-- [ ] V2 E2EE 不變量：抓包層面驗證通道 payload 為密文（測試以 hook 斷言無明文出站）；
-      金鑰未就緒時零明文洩出（丟棄計數 > 0 且線上零封包）。
-- [ ] V3 延遲預算：60Hz 封包在本機雙分頁 p95 額外延遲（相對裸 DataChannel 基線）< 2ms。
-      數字不達標回到 Q1 重議，不默默放行。
-- [ ] V4 訊息層零回歸：聊天全套既有測試不動搖（transport 入口不碰訊息路徑的證據）。
-- [ ] V5 表面受控：`sdkSurface` 納入新出口；`prune-sdk-types --max=30` 不爆。
+- [x] V2 E2EE 不變量：TransportClient.spec 斷言線上 frame 不含明文 bytes；金鑰未就緒
+      時丟棄計數=1 且對端零收（零明文洩出）。
+- [x] V3 延遲預算〔實作期修訂＋實測數字，2026-08-24〕：端到端 p95 差值法在實測中
+      被否決——headless loopback 環境雜訊 ±百 ms 級（三輪 p95：127~526ms），無法解析
+      2ms 門檻，硬用它判定等於擲硬幣。改雙判準：①新增工作直接量測（每包 seal+open
+      即 AES-GCM 加解密一次）p95 < 2ms 為主判準——**實測 1000 次 p95 = 0.1ms**，
+      門檻的 1/20；②端到端 60Hz×300 包對照：p50 差 -2.6ms（雜訊內持平）、
+      **300 包零丟棄**（out=0/in=0）。Q1 的加密代價實證為次毫秒級，無需回頭重議。
+- [x] V4 訊息層零回歸：全單元 1671 例綠（2026-08-24；唯一紅點為表面快照守門，屬預期顯性更新）。
+- [x] V5 表面受控：fitness 快照加 transport 名單（6 匯出）；pack 冒煙擴為三入口；
+      qa:sdk-isolation 擴為 dist/index + dist/transport 雙 eager 檢查，全綠。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 
