@@ -169,3 +169,19 @@ b 第三方公共會合點、c 手動 copy-paste）。當時拍板 (a)。本 spe
   自測實測 PASS：617 bytes 酬載畫成 QR（356px）→讀回像素→jsQR 解碼→逐字一致。
 - 真跨裝置＋真斷 WAN 的場測仍留給使用者實地執行（見 V1 誠實記錄）；兩情境的
   操作步驟已交付。
+
+## 9. 模擬場測（2026-08-26，抓到一個場測阻斷級 bug）
+
+單機最大程度模擬使用者場測（真跨裝置＋真斷 WAN 仍留實地）：
+
+- **抓到並修復：非安全來源沒有 WebCrypto**。localhost 是安全來源、`http://<區網IP>` 不是
+  ——原步驟「裝置瀏覽 http://IP:9473」在真機必死於身分產生（generateKey undefined）。
+  修：①會合點自動產自簽憑證（openssl，快取 ~/.nerilo-rendezvous/）開 https 於 port+1，
+  啟動訊息改印 https URL；②聊天頁偵測 `!crypto.subtle` 給白話導引（附正確 https 連結）
+  而非密碼學錯誤；③沒 openssl 時退回 http-only 並明講只有 localhost 可用。
+- 順修：/favicon.ico 回 204、/community-turn.json 回空清單（SDK best-effort 探測），
+  console 全乾淨。
+- 模擬證據（Playwright 兩隔離 context 經 `https://192.168.0.164:9474`）：isSecureContext
+  雙 true、兩端「已連線（P2P 直連＋端到端加密）」、雙向送達、零 console error。
+- 模擬做不到、留給實地的兩件事：真斷 WAN 下兩台實體裝置的網路棧（NAT/mDNS 行為）、
+  真相機掃 QR（iOS 模擬器本機無 Xcode 且模擬器無相機）。

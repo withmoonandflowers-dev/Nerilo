@@ -6,8 +6,11 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 
 ### 新增
 
-- 斷網會合（Spec 027）：①`nerilo-rendezvous` 本地會合點（`bin`，零依賴 HTTP，區網內
-  任一裝置可跑）＋`createHttpSignaling(baseUrl)` 工廠——對外斷線但區網還在時可成房；
+- 斷網會合（Spec 027）：①`nerilo-rendezvous` 本地會合點（`bin`，零依賴，區網內任一裝置
+  可跑）＋`createHttpSignaling(baseUrl)` 工廠＋`createHttpRoomDirectory` 名冊——對外斷線但
+  區網還在時可成房。會合點在 `/` 直接供應內建聊天頁（裝置瀏覽即用），並自動以 openssl
+  產自簽憑證開 https（port+1）：WebCrypto 只在安全來源提供，http://<區網IP> 會死在
+  身分產生，https 是其他裝置能用的硬需求（模擬實測抓到）；
   ②離線邀請碼 `createOfflineInvite`/`acceptOfflineInvite`（雙向雙 QR，酬載實測 ~630 bytes，
   deflate+base64url，`nqr1.` 前綴）——零基礎設施建立 `OfflineLink` 直連。
 - `createChatClient` 補 `introducerUid` 透傳（Spec 005 warm 介紹人能力的工廠入口，

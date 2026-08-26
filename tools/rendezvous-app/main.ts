@@ -18,6 +18,15 @@ let name = localStorage.getItem('nrz-name') ?? '';
 const room = new URLSearchParams(location.search).get('room') ?? 'lobby';
 
 async function main(): Promise<void> {
+  // WebCrypto 只在安全來源提供：localhost 算，http://<區網IP> 不算。
+  // 不擋在這裡的話，會死在身分產生的 generateKey，錯誤訊息無人看得懂（實測踩到）。
+  if (!globalThis.crypto?.subtle) {
+    const httpsUrl = `https://${location.hostname}:${Number(location.port || 80) + 1}${location.pathname}${location.search}`;
+    $('status').innerHTML =
+      `這頁需要安全來源（加密功能才可用）。請改用 <a href="${httpsUrl}">${httpsUrl}</a>` +
+      `（自簽憑證，瀏覽器會警告一次，選「仍要前往」即可）`;
+    return;
+  }
   if (!name) name = `訪客${uid.slice(1, 5)}`;
   $('room').textContent = `房間：${room}（換房：網址加 ?room=名稱）`;
   const nameInput = $('name') as HTMLInputElement;

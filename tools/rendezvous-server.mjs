@@ -13,10 +13,12 @@
  * 全村可用」是同一個信任模型：災難情境下的區網即信任邊界。不要把它暴露到公網。
  */
 import { createServer } from 'node:http';
-import { networkInterfaces } from 'node:os';
-import { readFileSync, existsSync } from 'node:fs';
+import { createServer as createHttpsServer } from 'node:https';
+import { networkInterfaces, homedir } from 'node:os';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 // 內建聊天頁（單檔，build:rendezvous-app 產出）：斷網時裝置瀏覽會合點即可用
 const APP_PATH = join(dirname(fileURLToPath(import.meta.url)), 'rendezvous-app.html');
@@ -34,7 +36,28 @@ const room = (id) => {
   return r;
 };
 
-const server = createServer((req, res) => {
+// https 是「其他裝置能用」的硬需求：WebCrypto（身分/E2EE）只在安全來源提供，
+// localhost 算安全但 http://<區網IP> 不算——沒有 https 的話，手機一連上就死在 generateKey。
+// 自簽憑證以 openssl 產生並快取在 ~/.nerilo-rendezvous/（沒 openssl 就只開 http 並警告）。
+function loadOrCreateCert() {
+  const dir = join(homedir(), '.nerilo-rendezvous');
+  const keyPath = join(dir, 'key.pem');
+  const certPath = join(dir, 'cert.pem');
+  try {
+    if (!existsSync(keyPath) || !existsSync(certPath)) {
+      mkdirSync(dir, { recursive: true });
+      execFileSync('openssl', [
+        'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
+        '-days', '825', '-nodes', '-subj', '/CN=nerilo-rendezvous',
+      ], { stdio: 'ignore' });
+    }
+    return { key: readFileSync(keyPath), cert: readFileSync(certPath) };
+  } catch {
+    return null;
+  }
+}
+
+const handler = (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -83,6 +106,11 @@ const server = createServer((req, res) => {
       else { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('nerilo-rendezvous ok（未內建聊天頁：先跑 npm run build:rendezvous-app）\n'); }
       return;
     }
+    if (url.pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+    // SDK 會 best-effort 探測社群 TURN 清單；區網情境沒有 TURN，回空清單保持 console 乾淨
+    if (url.pathname === '/community-turn.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"servers":[]}'); return;
+    }
     res.writeHead(404); res.end(); return;
   }
   const r = room(m[1]);
@@ -119,14 +147,26 @@ const server = createServer((req, res) => {
     return;
   }
   res.writeHead(405); res.end();
-});
+};
+
+const server = createServer(handler);
+const tls = loadOrCreateCert();
+const HTTPS_PORT = PORT + 1;
 
 server.listen(PORT, '0.0.0.0', () => {
   const ips = Object.values(networkInterfaces()).flat()
     .filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
-  console.log(`nerilo-rendezvous 已啟動（port ${PORT}，無認證——僅限信任的區網使用）`);
-  console.log(APP_HTML ? '同區網的裝置用瀏覽器打開：' : '（無內建聊天頁）瀏覽器端這樣接：');
-  for (const ip of ips.length ? ips : ['<這台的區網IP>']) {
-    console.log(APP_HTML ? `  http://${ip}:${PORT}` : `  createHttpSignaling('http://${ip}:${PORT}')`);
+  console.log(`nerilo-rendezvous 已啟動（無認證——僅限信任的區網使用）`);
+  if (tls) {
+    createHttpsServer(tls, handler).listen(HTTPS_PORT, '0.0.0.0', () => {
+      console.log(APP_HTML ? '同區網的裝置用瀏覽器打開（自簽憑證：警告頁選「仍要前往」）：' : '瀏覽器端這樣接：');
+      for (const ip of ips.length ? ips : ['<這台的區網IP>']) {
+        console.log(APP_HTML ? `  https://${ip}:${HTTPS_PORT}` : `  createHttpSignaling('https://${ip}:${HTTPS_PORT}')`);
+      }
+      console.log(`（本機測試可用 http://localhost:${PORT}——localhost 是安全來源，不需 https）`);
+    });
+  } else {
+    console.log(`找不到 openssl，只開 http（port ${PORT}）。注意：其他裝置經 http://<IP> 連入會因`);
+    console.log(`非安全來源而沒有 WebCrypto，聊天頁無法運作；只有本機 http://localhost:${PORT} 可用。`);
   }
 });
