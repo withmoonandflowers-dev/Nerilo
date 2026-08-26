@@ -6,7 +6,7 @@
 
 - Nerilo 是可嵌入的 P2P 韌性資料傳遞層；聊天是參考應用，不是最終產品邊界。
 - repo 已於 2026-07-16 轉為公開（Apache-2.0）；GitHub Actions 額度限制解除。
-- SDK `0.11.0` 已於 2026-08-26 發佈 npm；三入口乾淨環境安裝驗證過（14/4/2 執行期匯出，型別檔齊）。六類資料 API 齊全：訊息（恰好一次＋E2EE）、共享狀態（Spec 025）、檔案傳輸（Spec 026）、raw 通道（023）、房間目錄（014）、狀態感知（024）。0.11.0 同批瘦身移除三個冗餘出口，破壞性變更見 CHANGELOG。API 在 0.x 階段尚未鎖定。
+- SDK `0.11.1` 已於 2026-08-26 發佈 npm（0.11.1 修：createChatClient 補 identityNamespace，同源多實例聊天嵌入者必傳）；三入口乾淨環境安裝驗證過（14/4/2 執行期匯出，型別檔齊）。六類資料 API 齊全：訊息（恰好一次＋E2EE）、共享狀態（Spec 025）、檔案傳輸（Spec 026）、raw 通道（023）、房間目錄（014）、狀態感知（024）。0.11.0 同批瘦身移除三個冗餘出口，破壞性變更見 CHANGELOG。API 在 0.x 階段尚未鎖定。
 - React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版已有隔離的 `nerilo-staging` 手動 preview pipeline，但尚未取得切 production 資格，也尚未由本機完成首次 preview deploy。
 - Firebase Functions 未部署。Hosting 與 Firestore rules/indexes 由 master push workflow 部署；需 Blaze／Cloud Build 的 Functions 能力仍刻意排除。
 - Lemon Squeezy／Netlify webhook 付款鏈已驗證，但 store 仍在 test mode。Pro 首個伺服器端強制權益＝房間容量 10 人（Spec 011）；發放路徑補完（2026-07-18）：手動發放 scripts/grant-plan.mjs、web-vue 建房 sheet 升級入口（PlanCapacityLine）、兩線付款後 focus 強制刷新 token、rules 整合測試 token.plan 五例。
