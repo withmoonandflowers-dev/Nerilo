@@ -1,12 +1,12 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-08-24（0.11.0 就緒未發佈：共享狀態＋檔案傳輸＋資料類型指南；壓力驗證過——transport stress 8 例、瀏覽器 32/64MB 傳輸與並行狀態寫入全過）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-08-26（0.11.0 已發佈 npm：共享狀態＋檔案傳輸＋同代異鑰修復＋資料類型指南；四個消費者驗證過，含花朝月夕OS 內建 app 的真聊天實測）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
 - Nerilo 是可嵌入的 P2P 韌性資料傳遞層；聊天是參考應用，不是最終產品邊界。
 - repo 已於 2026-07-16 轉為公開（Apache-2.0）；GitHub Actions 額度限制解除。
-- SDK `0.10.0` 已於 2026-08-24 發佈 npm；三個進入點（nerilo／nerilo/firestore／nerilo/transport）乾淨環境安裝驗證過（16/5/2 執行期匯出）。含狀態 API（Spec 024）、房間目錄（Spec 014）、遊戲原始通道（Spec 023）；IChatEngine 破壞性變更見 CHANGELOG。API 在 0.x 階段尚未鎖定。
+- SDK `0.11.0` 已於 2026-08-26 發佈 npm；三入口乾淨環境安裝驗證過（14/4/2 執行期匯出，型別檔齊）。六類資料 API 齊全：訊息（恰好一次＋E2EE）、共享狀態（Spec 025）、檔案傳輸（Spec 026）、raw 通道（023）、房間目錄（014）、狀態感知（024）。0.11.0 同批瘦身移除三個冗餘出口，破壞性變更見 CHANGELOG。API 在 0.x 階段尚未鎖定。
 - React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版已有隔離的 `nerilo-staging` 手動 preview pipeline，但尚未取得切 production 資格，也尚未由本機完成首次 preview deploy。
 - Firebase Functions 未部署。Hosting 與 Firestore rules/indexes 由 master push workflow 部署；需 Blaze／Cloud Build 的 Functions 能力仍刻意排除。
 - Lemon Squeezy／Netlify webhook 付款鏈已驗證，但 store 仍在 test mode。Pro 首個伺服器端強制權益＝房間容量 10 人（Spec 011）；發放路徑補完（2026-07-18）：手動發放 scripts/grant-plan.mjs、web-vue 建房 sheet 升級入口（PlanCapacityLine）、兩線付款後 focus 強制刷新 token、rules 整合測試 token.plan 五例。
