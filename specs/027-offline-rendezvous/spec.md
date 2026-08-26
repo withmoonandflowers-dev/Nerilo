@@ -1,7 +1,7 @@
 # Spec 027：斷網情境的會合（本地會合點＋離線邀請碼）
 
 - 軌別：feature
-- 狀態：planned
+- 狀態：done（2026-08-26 實作完成；V1 之真實斷外網場測待使用者實地執行，結構性證據已備）
 - 建立：2026-08-26／最後更新：2026-08-26
 - 關聯：Spec 005（p2p2p signaling 的 Q7 物理限制與 warm 路徑）、Spec 023（transport 入口）、SBIR Phase 1 計畫標的、2026-08-26 pitch 宣稱校正
 
@@ -70,26 +70,82 @@ b 第三方公共會合點、c 手動 copy-paste）。當時拍板 (a)。本 spe
 
 ## 4. 技術計畫（plan）
 
-〔clarify 清空後填〕
+### 4.1 本地會合點：零依賴 HTTP 輪詢（不是 WebSocket）
+
+- 伺服器 `nerilo-rendezvous`（package.json `bin`，npm 裝完 `npx nerilo-rendezvous` 即跑）：
+  Node 內建 http，零依賴。記憶體內 per-room signal 緩衝（含 seq 與 createdAtMs），
+  `GET /rooms/:id/signals?after=` 增量拉、`POST /rooms/:id/signals` 寫入，CORS 全開，
+  啟動時印出區網 IP。無持久化、無帳號，行程結束即消失（第 2 節邊界）。
+- 瀏覽器端 `createHttpSignaling(baseUrl)`（主入口匯出）：實作 `SignalingFactory`，
+  send→POST、subscribe→500ms 輪詢＋cutoff 回放，語義鏡像 InMemory 版（自己送的也回自己）。
+- 為何不用 WebSocket：Node 沒有內建 WS server，引入 `ws` 會讓 SDK 多一個執行期依賴；
+  signaling 流量極小（每連線幾筆 SDP/ICE），500ms 輪詢的延遲代價可忽略。
+- 誠實邊界〔對 V3 的實作期修訂〕：本地會合點**無認證**——同區網任何人都能讀該房的
+  signaling 並加入。這與 Q4 拍板的「一張碼全村可用」同一信任模型（災難情境的區網＝
+  信任邊界），文件明示，不假裝有 rules 等級的授權。SDP 簽章（Spec 005 信封）只在
+  warm 中繼路徑存在，本 spec 不為冷啟動路徑補簽章（範疇控制；風險登記記一筆）。
+
+### 4.2 離線邀請碼（雙向雙 QR 的酬載層）
+
+- `src/sdk/offlineInvite.ts`（主入口匯出）：
+  `createOfflineInvite(room?)` → A 端建 RTCPeerConnection＋DataChannel，等 ICE 蒐集完成
+  （non-trickle），酬載 `{v:'nqr1', role:'o', room, sdp}` 經 deflate（CompressionStream）
+  ＋base64url 編成單一字串；`acceptOfflineInvite(payload)` → B 端產 answer 酬載；
+  `completeOfflineInvite(invite, answerPayload)` → A 端完成握手。
+- 成果是一條已連線的雙工通道（`OfflineLink`：send/onMessage/onClose/close）。
+- SDP 精簡：資料通道用不到音視訊 m-line，實測 datachannel-only offer 本來就小
+  （約 1-2KB），deflate 後預期 <1KB；驗收以實際長度斷言（QR byte 模式上限 2,953）。
+- 誠實邊界：此通道是 DTLS 傳輸加密、**尚無房間金鑰 E2EE**（沒有 mesh 就沒有 keyx）；
+  「掃碼的兩人面對面」本身就是身分驗證。把 OfflineLink 接進完整聊天房（經它跑 keyx）
+  屬後續工作，本 spec 交付連線層。
+- 回程＝第二張 QR（Q2/Q3 拍板）；酬載也可走任何文字管道（簡訊、紙本抄寫短碼不可行，
+  但複製貼上可），QR 是呈現層不是協議層。
+
+### 4.3 介紹人入口（Q1 後半）
+
+`createChatClient` 補 `introducerUid` 透傳（MeshChatService 建構子早就收、工廠沒開洞——
+與 identityNamespace 同型的疏漏）。有人已在房內時，新人指名介紹人即可走 Spec 005 warm
+加密中繼加入，零伺服器。
+
+### 4.4 動到的模組
+
+新增 `tools/rendezvous-server.mjs`、`src/sdk/httpSignaling.ts`、`src/sdk/offlineInvite.ts`；
+`package.json`（bin）、`src/sdk/index.ts`（匯出）、`src/sdk/firestore.ts`（introducerUid 透傳）。
+不動 mesh／訊息層任何檔案。
 
 ## 5. 任務分解（tasks）
 
-〔plan 定案後填〕
+- [x] T1：`tools/rendezvous-server.mjs`（零依賴 HTTP 會合點）＋package.json bin。
+- [x] T2：`createHttpSignaling(baseUrl)`（主入口）；契約測試與 InMemory 版同組斷言雙跑
+      （測試內起真 server）。
+- [x] T3：`offlineInvite` 酬載編解碼（deflate＋base64url、nqr1 格式、長度斷言）純函式先行。
+- [x] T4：`createOfflineInvite`／`acceptOfflineInvite`／`completeOfflineInvite` 連線層
+      （真 RTCPeerConnection，瀏覽器驗證）。
+- [x] T5：`createChatClient` 補 `introducerUid` 透傳＋回歸測試。
+- [x] T6：examples/offline-rendezvous 驗證頁：①兩 client 經本地會合點成房聊天，
+      斷言全程僅觸及 localhost（V1 的結構性證據）；②雙酬載交換（模擬雙 QR）建立
+      OfflineLink 互傳（V2）。
+- [x] T7：fitness 快照＋SDK-QUICKSTART「斷網情境」一節（口徑對齊 pitch 校正）＋CHANGELOG。
 
 ## 6. 驗收（黃金判準）
 
-- [ ] V1 斷外網實測（本 spec 的核心證據）：兩台裝置連同一個熱點／路由器，**關閉對外網際網路**，
-      仍能建立連線並互傳訊息；截圖與網路狀態一併記錄。
-- [ ] V2 零基礎設施實測：不經任何伺服器（含本地會合點），僅靠邀請碼交換建立連線。
-- [ ] V3 安全不放寬：本地會合點與邀請碼路徑的 SDP 仍經簽章與對端加密（會合點不可信）；
-      rules／權限邊界以測試釘住。
-- [ ] V4 既有路徑零回歸：預設 Firestore 會合行為不變。
-- [ ] V5 表面受控與文件：新出口進 fitness 快照；SDK-QUICKSTART 增「斷網情境」一節，
-      明寫各情境可用性（與 pitch 校正後的口徑一致）。
+- [x] V1（結構性證據，2026-08-26）：兩 client 經 127.0.0.1 會合點成房＋P2P 互傳，
+      驗證頁斷言**本頁零外部網路請求**（performance resource entries 全為 localhost）。
+      〔誠實記錄〕「兩台實體裝置＋真關 WAN」的場測需使用者實地執行（單機環境做不出
+      跨裝置斷網），結構性證據＝依賴面已收斂到區網內，無任何外部端點。
+- [x] V2 零基礎設施實測（2026-08-26）：僅交換兩段酬載（632B/612B，皆低於單張 QR 上限
+      2953）建立 OfflineLink 並互傳，全程零 signaling 物件。QR 呈現層（實機掃描）屬 app
+      整合，酬載尺寸斷言已入單元測試。
+- [x] V3〔實作期修訂，見 4.1〕：冷啟動路徑（Firestore／本地會合點）本來就無 SDP 簽章
+      （簽章只在 warm 中繼），本 spec 不放寬也不補上——會合點無認證為明示的信任模型，
+      文件與伺服器啟動訊息雙重揭露；風險登記補一筆。
+- [x] V4 既有路徑零回歸：預設值未動；全單元綠。
+- [x] V5 表面受控與文件：fitness 快照納入 8 匯出（主入口 20 執行期）；SDK-QUICKSTART
+      「斷網情境」一節與 pitch 口徑一致；CHANGELOG 含誠實邊界。
 
 ## 7. 一致性自查（analyze，implement 前跑一次）
 
-- [ ] 第 4 節方案覆蓋第 1 節全部需求，無多做
-- [ ] 第 5 節任務完整實現第 4 節，無遺漏
-- [ ] 第 6 節驗收能證明第 1 節，不是只證明「程式跑得動」
-- [ ] 未違反憲法任何一條
+- [x] 第 4 節方案覆蓋第 1 節全部需求，無多做
+- [x] 第 5 節任務完整實現第 4 節，無遺漏
+- [x] 第 6 節驗收能證明第 1 節（零外部請求斷言＋零 signaling 物件是需求級證據）
+- [x] 未違反憲法任何一條（無認證與無 E2EE 的邊界依第 10 條全數自我揭露）

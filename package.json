@@ -1,6 +1,6 @@
 {
   "name": "nerilo",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Embeddable P2P E2EE messaging layer for the browser (WebRTC mesh + gossip, pluggable signaling/directory/storage).",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,7 +10,8 @@
   "types": "./dist/types/sdk/index.d.ts",
   "files": [
     "dist",
-    "NOTICE"
+    "NOTICE",
+    "tools"
   ],
   "exports": {
     ".": {
@@ -82,7 +83,8 @@
     "example:latency": "npm run build:sdk && vite --config examples/transport-latency/vite.config.ts",
     "example:state": "npm run build:sdk && vite --config examples/shared-state/vite.config.ts",
     "example:file": "npm run build:sdk && vite --config examples/file-transfer/vite.config.ts",
-    "test:stress": "vitest run --config vitest.stress.config.ts"
+    "test:stress": "vitest run --config vitest.stress.config.ts",
+    "example:offline": "npm run build:sdk && vite --config examples/offline-rendezvous/vite.config.ts"
   },
   "dependencies": {
     "@netlify/functions": "^5.3.0",
@@ -156,5 +158,8 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "bin": {
+    "nerilo-rendezvous": "./tools/rendezvous-server.mjs"
   }
 }

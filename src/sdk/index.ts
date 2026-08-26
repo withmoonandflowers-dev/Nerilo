@@ -33,6 +33,14 @@ export type { ReadEvent, ReadState } from '../core/messaging/readReceipts';
 export { applyReaction, hasReacted } from '../core/messaging/reactions';
 export { applyRead, readCount, readersOf, orderKeyOf } from '../core/messaging/readReceipts';
 
+// 斷網會合（Spec 027）：本地會合點工廠與離線邀請碼（雙向雙 QR）
+export { createHttpSignaling } from './httpSignaling';
+export {
+  createOfflineInvite, acceptOfflineInvite,
+  encodeInvitePayload, decodeInvitePayload, payloadBytes,
+} from './offlineInvite';
+export type { OfflineInvite, OfflineLink, InvitePayload } from './offlineInvite';
+
 // turnkey Firestore 工廠（createChatClient）在 subpath：
 //   import { createChatClient } from 'nerilo/firestore'
 // 拆出的原因：那條路徑動態載入 MeshChatService，會把 mesh/crypto 型別圖帶進來；

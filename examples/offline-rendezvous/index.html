@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Nerilo 斷網會合驗證（Spec 027）</title>
+    <style>
+      body { font-family: ui-monospace, monospace; margin: 2rem; background: #14141c; color: #ddd; }
+      section { background: #101018; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+      h2 { margin: 0 0 .5rem; font-size: 1rem; }
+      pre { white-space: pre-wrap; word-break: break-all; font-size: .8rem; color: #9aa; max-height: 8rem; overflow: auto; }
+      .log { color: #bcc; font-size: .9rem; white-space: pre-wrap; }
+      .pass { color: #7c6; } .fail { color: #e66; }
+    </style>
+  </head>
+  <body>
+    <h1>斷網會合驗證</h1>
+    <section>
+      <h2>第一幕：本地會合點（社區路由器情境）— 兩 client 經 localhost 會合點成房聊天</h2>
+      <div id="log1" class="log">等待會合點…（請先跑 node tools/rendezvous-server.mjs 9473）</div>
+      <div id="verdict1">－</div>
+    </section>
+    <section>
+      <h2>第二幕：離線邀請碼（雙向雙 QR 情境）— 零伺服器，僅交換兩段酬載</h2>
+      <div id="log2" class="log"></div>
+      <pre id="payloads"></pre>
+      <div id="verdict2">－</div>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -103,7 +103,8 @@ function exportedNames(file: string): string[] {
 describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯性 review）', () => {
   it('nerilo（主入口）匯出名單', () => {
     expect(exportedNames('src/sdk/index.ts')).toEqual([
-      // Spec 014：房間目錄契約 + InMemory 參考實作（2026-08-24）
+      // 快照按字母序（exportedNames 回傳 sorted）。近期擴充：Spec 014 房間目錄、
+      // Spec 024 狀態型別、Spec 027 斷網會合（本地會合點工廠＋離線邀請碼）。
       'CatalogRoom',
       'ChatMessage',
       'DirectoryIdentity',
@@ -119,11 +120,13 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'InMemoryRoomDirectoryHub',
       'InMemorySignalingHub',
       'InMemorySignalingTransport',
+      'InvitePayload',
       'NeriloClient',
-      // Spec 024：狀態 API 型別（0.10.0）
       'NeriloEncryptionState',
       'NeriloStatus',
       'NeriloTransportState',
+      'OfflineInvite',
+      'OfflineLink',
       'Positioned',
       'RawSignalDoc',
       'ReactionEvent',
@@ -134,10 +137,16 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'RoomSnapshot',
       'SignalingFactory',
       'SignalingTransport',
+      'acceptOfflineInvite',
       'applyReaction',
       'applyRead',
+      'createHttpSignaling',
+      'createOfflineInvite',
+      'decodeInvitePayload',
+      'encodeInvitePayload',
       'hasReacted',
       'orderKeyOf',
+      'payloadBytes',
       'readCount',
       'readersOf',
     ]);

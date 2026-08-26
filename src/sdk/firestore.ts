@@ -37,6 +37,12 @@ export async function createChatClient(config: {
    * transport 入口早有此參數（Spec 023），本工廠 0.11.0 漏開——花朝月夕OS 實測抓到。
    */
   identityNamespace?: string;
+  /**
+   * 介紹人 uid（Spec 027；能力來自 Spec 005 warm 中繼）：指名一位已在房內的成員，
+   * 新人的 signaling 經他加密轉送加入，零伺服器。MeshChatService 建構子早就收這個參數，
+   * 工廠一直沒開洞（與 identityNamespace 同型的疏漏，本次一併補上）。
+   */
+  introducerUid?: string;
 }): Promise<NeriloClient> {
   // Spec 013 的已知殘留已於 2026-07-26 收斂：MeshChatService 已搬進 core/messaging，
   // SDK 不再有任何路徑（含動態 import）穿過 src/features。由
@@ -44,7 +50,7 @@ export async function createChatClient(config: {
   const { MeshChatService } = await import('../core/messaging/MeshChatService');
   const engine: IChatEngine = new MeshChatService(
     config.roomId, config.userId, config.storage, config.signaling, config.directory,
-    undefined, config.identityNamespace
+    config.introducerUid, config.identityNamespace
   );
   return new NeriloClient(engine);
 }

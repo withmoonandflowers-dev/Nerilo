@@ -2,6 +2,22 @@
 
 Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每一項破壞都在此明示。
 
+## 0.12.0（未發佈）
+
+### 新增
+
+- 斷網會合（Spec 027）：①`nerilo-rendezvous` 本地會合點（`bin`，零依賴 HTTP，區網內
+  任一裝置可跑）＋`createHttpSignaling(baseUrl)` 工廠——對外斷線但區網還在時可成房；
+  ②離線邀請碼 `createOfflineInvite`/`acceptOfflineInvite`（雙向雙 QR，酬載實測 ~630 bytes，
+  deflate+base64url，`nqr1.` 前綴）——零基礎設施建立 `OfflineLink` 直連。
+- `createChatClient` 補 `introducerUid` 透傳（Spec 005 warm 介紹人能力的工廠入口，
+  與 identityNamespace 同型的既有疏漏）。
+
+### 誠實邊界
+
+- 本地會合點無認證（信任模型＝災難情境的區網）；OfflineLink 為 DTLS 傳輸加密、
+  尚無房間金鑰 E2EE。相隔兩地且雙邊全斷仍不可用（需 LoRa 級異質傳輸，研究中）。
+
 ## 0.11.1（2026-08-26）
 
 ### 修正
