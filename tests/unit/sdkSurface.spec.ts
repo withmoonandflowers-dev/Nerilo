@@ -92,6 +92,22 @@ describe('SDK 公開表面（P3 publishable surface）', () => {
     await client.dispose();
   });
 
+  it('createChatClient 支援 identityNamespace（同源多實例必傳；0.11.0 漏開，OS 實測抓到）', async () => {
+    const sigHub = new InMemorySignalingHub();
+    const dirHub = new InMemoryRoomDirectoryHub();
+    const mk = (uid: string) => createChatClient({
+      roomId: 'room-ns',
+      userId: uid,
+      identityNamespace: uid, // 沒有這個參數 → 兩個 client 共用持久身分 → mesh 永不連線
+      signaling: (r, ch) => new InMemorySignalingTransport(sigHub, r, ch),
+      directory: new InMemoryRoomDirectory(dirHub, 'room-ns', uid),
+      storage: new InMemoryChatStorage(),
+    });
+    const [a, b] = await Promise.all([mk('a'), mk('b')]);
+    expect(a).toBeInstanceOf(NeriloClient);
+    expect(b).toBeInstanceOf(NeriloClient);
+  });
+
   it('createChatClient 注入全記憶體後端 → 建出完整引擎（不需 Firebase）', async () => {
     const sigHub = new InMemorySignalingHub();
     const dirHub = new InMemoryRoomDirectoryHub();

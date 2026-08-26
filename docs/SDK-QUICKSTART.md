@@ -247,8 +247,9 @@ client.onRawChannel((ch) => {
 - 通道生命週期綁 mesh 連線：mesh 重連時通道跟著斷（`onClose` 透出），重開由你決定。
 - `openRawChannel` 對未連上的 peer 直接拋錯，不等待。先用 `peers()`／`onPeerChange` 確認。
 - label `state` 為保留字（給 `client.sharedState()` 的共享狀態層，0.11.0 起），你的通道請避開。
-- 同源多實例（同機雙分頁）必傳 `identityNamespace`（各實例獨有值），否則持久身分被共用、
-  mesh 把對方當自己、永不連線——而且沒有錯誤訊息。
+- 同源多實例（同機雙分頁、同頁多 client）必傳 `identityNamespace`（各實例獨有值），否則持久
+  身分被共用、mesh 把對方當自己、永不連線——而且沒有錯誤訊息。**`createChatClient` 同樣有這個
+  參數**（0.11.1 起），聊天嵌入者同源多開時一樣要傳。
 
 ## 只要 signaling，不要整個聊天客戶端
 

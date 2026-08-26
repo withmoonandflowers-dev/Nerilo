@@ -30,13 +30,21 @@ export async function createChatClient(config: {
   signaling?: SignalingFactory; // 省略＝Firestore（延遲）
   directory?: IRoomDirectory;   // 省略＝Firestore（延遲）
   storage?: IChatStorage;       // 省略＝IndexedDB（瀏覽器）
+  /**
+   * 身分命名空間（0.11.1）：同源多實例（同頁多 client、同機多視窗）時**必傳**各實例
+   * 獨有值，否則持久 mesh 身分被共用 → mesh 把對方當自己、永不連線，且沒有錯誤訊息
+   * （症狀：狀態停在 connecting、訊息送得出去沒人收得到）。省略＝既有單身分行為。
+   * transport 入口早有此參數（Spec 023），本工廠 0.11.0 漏開——花朝月夕OS 實測抓到。
+   */
+  identityNamespace?: string;
 }): Promise<NeriloClient> {
   // Spec 013 的已知殘留已於 2026-07-26 收斂：MeshChatService 已搬進 core/messaging，
   // SDK 不再有任何路徑（含動態 import）穿過 src/features。由
   // tests/unit/fitness.architecture.spec.ts 的動態 import 檢查釘住。
   const { MeshChatService } = await import('../core/messaging/MeshChatService');
   const engine: IChatEngine = new MeshChatService(
-    config.roomId, config.userId, config.storage, config.signaling, config.directory
+    config.roomId, config.userId, config.storage, config.signaling, config.directory,
+    undefined, config.identityNamespace
   );
   return new NeriloClient(engine);
 }
