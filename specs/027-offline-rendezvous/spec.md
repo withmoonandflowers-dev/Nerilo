@@ -149,3 +149,23 @@ b 第三方公共會合點、c 手動 copy-paste）。當時拍板 (a)。本 spe
 - [x] 第 5 節任務完整實現第 4 節，無遺漏
 - [x] 第 6 節驗收能證明第 1 節（零外部請求斷言＋零 signaling 物件是需求級證據）
 - [x] 未違反憲法任何一條（無認證與無 E2EE 的邊界依第 10 條全數自我揭露）
+
+## 8. done 後追加（2026-08-26，場測前置）
+
+使用者確認要做實機場測，補齊呈現層與跨裝置成房缺口（皆為 spec 範圍的自然延伸，非新需求）：
+
+- 會合點升級為「自足式」：`nerilo-rendezvous` 直接在 `/` 供應內建單檔聊天頁
+  （`tools/rendezvous-app.html`，esbuild 打包 715KB，`npm run build:rendezvous-app` 重生），
+  並加 `/rooms/:id/identities` 名冊端點（IRoomDirectory over HTTP）——斷網裝置瀏覽會合點
+  即可用，不需預先安裝任何東西。
+- SDK 加 `createHttpRoomDirectory`（主入口匯出，fitness 快照已更新）：跨裝置成房必需，
+  signaling 只交換連線資訊，「房裡有誰、公鑰」靠名冊。
+- 實測：兩個隔離瀏覽器分頁經 `http://127.0.0.1:9473/?room=fieldtest2` 達
+  「已連線（P2P 直連＋端到端加密）」並雙向互傳。踩雷：內嵌頁 uid 必須用
+  sessionStorage（localStorage 會讓同機分頁共用身分→mesh 把對方當自己）；
+  嵌入環境沒有 prompt()，名字改行內輸入框。
+- QR 呈現層：examples/qr-invite（port 5185，`npm run example:qr`；跨裝置相機要安全來源，
+  `QR_HTTPS=1` 開自簽 https）。發起／加入雙向掃碼＋複製貼上備援＋無相機自動自測。
+  自測實測 PASS：617 bytes 酬載畫成 QR（356px）→讀回像素→jsQR 解碼→逐字一致。
+- 真跨裝置＋真斷 WAN 的場測仍留給使用者實地執行（見 V1 誠實記錄）；兩情境的
+  操作步驟已交付。

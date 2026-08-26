@@ -13,6 +13,7 @@
  * 與離線邀請碼「持碼即可入」一致）。不要把會合點暴露到公網。
  */
 import type { SignalingFactory, SignalingTransport, RawSignalDoc } from '../core/p2p/SignalingTransport.types';
+import type { IRoomDirectory, RoomSnapshot } from '../ports/IRoomDirectory';
 import { logger } from '../utils/logger';
 
 interface WireSignal { doc: RawSignalDoc; createdAtMs: number; seq: number }
@@ -61,5 +62,61 @@ export function createHttpSignaling(baseUrl: string, opts?: { pollMs?: number })
         logger.debug?.('[httpSignaling] cleanupOwn is a no-op on rendezvous');
       },
     };
+  };
+}
+
+/**
+ * 本地會合點的名冊（IRoomDirectory over HTTP，Spec 027）。
+ * 跨裝置成房必需：signaling 只交換連線資訊，「房裡有誰、各自的公鑰」靠名冊。
+ * watchIdentities 以輪詢實作（預設 1s），version 判變才通知；訂閱當下先收一次（契約語義）。
+ * 信任模型與 createHttpSignaling 相同：無認證，僅限災難情境的信任區網。
+ */
+export function createHttpRoomDirectory(
+  baseUrl: string,
+  roomId: string,
+  localUid: string,
+  opts?: { pollMs?: number }
+): IRoomDirectory {
+  const base = baseUrl.replace(/\/$/, '');
+  const dirUrl = `${base}/rooms/${encodeURIComponent(roomId)}/identities`;
+  const pollMs = opts?.pollMs ?? 1000;
+
+  const fetchSnapshot = async (): Promise<{ snap: RoomSnapshot; version: number }> => {
+    const res = await fetch(dirUrl);
+    if (!res.ok) throw new Error(`rendezvous directory fetch failed: ${res.status}`);
+    const j = (await res.json()) as { meshIdentities: RoomSnapshot['meshIdentities']; participants: string[]; version: number };
+    return { snap: { meshIdentities: j.meshIdentities ?? {}, participants: j.participants ?? [] }, version: j.version ?? 0 };
+  };
+
+  return {
+    async registerIdentity(entry) {
+      const identity = { ...entry, joinedAt: Date.now() }; // bump → rejoin 可偵測（鏡像 InMemory 版）
+      const res = await fetch(dirUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: localUid, identity }),
+      });
+      if (!res.ok) throw new Error(`rendezvous register failed: ${res.status}`);
+    },
+    watchIdentities(onChange) {
+      let lastVersion = -1;
+      let stopped = false;
+      const tick = async () => {
+        try {
+          const { snap, version } = await fetchSnapshot();
+          if (stopped || version === lastVersion) return;
+          lastVersion = version;
+          onChange(snap);
+        } catch {
+          /* 會合點暫時不可達：下輪再試 */
+        }
+      };
+      void tick(); // 訂閱當下先收一次
+      const timer = setInterval(() => void tick(), pollMs);
+      return () => { stopped = true; clearInterval(timer); };
+    },
+    async getSnapshot() {
+      return (await fetchSnapshot()).snap;
+    },
   };
 }

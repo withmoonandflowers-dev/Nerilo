@@ -140,6 +140,7 @@ describe('適應度：SDK 公開表面快照（動它＝改公開契約，需顯
       'acceptOfflineInvite',
       'applyReaction',
       'applyRead',
+      'createHttpRoomDirectory',
       'createHttpSignaling',
       'createOfflineInvite',
       'decodeInvitePayload',

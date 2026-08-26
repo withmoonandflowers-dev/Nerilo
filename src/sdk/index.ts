@@ -34,7 +34,7 @@ export { applyReaction, hasReacted } from '../core/messaging/reactions';
 export { applyRead, readCount, readersOf, orderKeyOf } from '../core/messaging/readReceipts';
 
 // 斷網會合（Spec 027）：本地會合點工廠與離線邀請碼（雙向雙 QR）
-export { createHttpSignaling } from './httpSignaling';
+export { createHttpSignaling, createHttpRoomDirectory } from './httpSignaling';
 export {
   createOfflineInvite, acceptOfflineInvite,
   encodeInvitePayload, decodeInvitePayload, payloadBytes,

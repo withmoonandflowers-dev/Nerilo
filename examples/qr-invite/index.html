@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Nerilo 離線邀請（雙 QR 場測）</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #14141c; color: #ddd; }
+      h1 { font-size: 18px; }
+      button { font-size: 16px; padding: 12px 18px; border-radius: 8px; border: 0; background: #2f6fce; color: #fff; margin: 4px 6px 4px 0; }
+      button.alt { background: #444; }
+      #qr { background: #fff; padding: 12px; border-radius: 8px; display: none; margin: 12px 0; width: fit-content; }
+      video { width: 100%; max-width: 420px; border-radius: 8px; display: none; }
+      #log { white-space: pre-wrap; font-size: 14px; color: #bcc; margin-top: 12px; }
+      #chat { display: none; margin-top: 12px; }
+      #messages { background: #101018; border-radius: 8px; padding: 10px; min-height: 6rem; font-size: 15px; }
+      #row { display: flex; gap: 8px; margin-top: 8px; }
+      #input { flex: 1; font-size: 16px; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #1a1a24; color: #eee; }
+      .ok { color: #7c6; } .bad { color: #e66; }
+      textarea { width: 100%; height: 4rem; background: #1a1a24; color: #9aa; border: 1px solid #333; border-radius: 8px; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <h1>離線邀請（雙 QR）：什麼網路都不用</h1>
+    <div id="roles">
+      <button id="btn-host">我要發起（產生 QR）</button>
+      <button id="btn-join">我要加入（掃對方 QR）</button>
+      <button id="btn-selftest" class="alt">自動自測（單機驗證 QR 往返）</button>
+    </div>
+    <canvas id="qr"></canvas>
+    <video id="video" playsinline muted></video>
+    <details><summary style="color:#667">備援：複製貼上酬載（掃不動時）</summary>
+      <textarea id="paste" placeholder="把對方的酬載貼進來"></textarea>
+      <button id="btn-paste" class="alt">用貼上的酬載繼續</button>
+      <textarea id="mine" readonly placeholder="我的酬載（可複製給對方）"></textarea>
+    </details>
+    <div id="log"></div>
+    <div id="chat">
+      <div id="messages"></div>
+      <div id="row"><input id="input" placeholder="說點什麼…" /><button id="send">送出</button></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
