@@ -102,13 +102,13 @@
     "uuid": "^9.0.1"
   },
   "optionalDependencies": {
-    "@esbuild/darwin-arm64": "0.21.5",
-    "@esbuild/darwin-x64": "0.21.5",
-    "@esbuild/linux-x64": "0.27.2",
-    "@rollup/rollup-darwin-arm64": "4.55.1",
-    "@rollup/rollup-darwin-x64": "4.55.1",
-    "@rollup/rollup-linux-x64-gnu": "4.55.1",
-    "@rollup/rollup-linux-x64-musl": "4.55.1"
+    "@esbuild/darwin-arm64": "0.28.2",
+    "@esbuild/darwin-x64": "0.28.2",
+    "@esbuild/linux-x64": "0.28.2",
+    "@rollup/rollup-darwin-arm64": "4.63.0",
+    "@rollup/rollup-darwin-x64": "4.63.0",
+    "@rollup/rollup-linux-x64-gnu": "4.63.0",
+    "@rollup/rollup-linux-x64-musl": "4.63.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -128,7 +128,7 @@
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
-    "eslint-plugin-react-refresh": "^0.4.5",
+    "eslint-plugin-react-refresh": "^0.5.4",
     "fast-check": "^3.23.2",
     "firebase-tools": "^15.18.0",
     "jsdom": "^27.4.0",
