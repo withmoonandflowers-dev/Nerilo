@@ -161,6 +161,19 @@ npm run deploy:web-vue:preview
 The local command performs the same project-ID guard, type-check and static
 generation before deploying a seven-day preview.
 
+Run the three release smoke paths against the URL printed by Firebase. The
+smoke config rejects the production Firebase hosts and any non-staging channel:
+
+```bash
+VUE_SMOKE_BASE_URL=https://nerilo-staging--vue-candidate-<hash>.web.app \
+  npm run smoke:vue-preview
+```
+
+All three paths are hard requirements: direct encrypted messaging, a selected
+TURN `relay` candidate, and an honest non-encrypted state when WebRTC is
+disabled. A TURN failure is a deployment/configuration blocker; do not weaken
+the assertion or promote the candidate.
+
 Delete the candidate channel without touching React production:
 
 ```bash
