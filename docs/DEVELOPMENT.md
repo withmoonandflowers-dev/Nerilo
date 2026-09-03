@@ -9,7 +9,8 @@ npm run type-check   # tsc --noEmit
 npm run lint         # ESLint (max 10 warnings; tests exempt from no-explicit-any)
 npm run test:run     # Vitest unit tests (single run)
 npm run test:e2e     # Playwright E2E tests (local, needs emulators)
-npm run test:e2e:ci  # Full E2E under Firebase emulators (what CI runs)
+npm run test:e2e:release  # Maintained release E2E under Firebase emulators (what CI runs)
+npm run test:e2e:ci       # All files, including quarantined legacy diagnostics
 npm run ci           # type-check + lint + unit tests
 ```
 
@@ -136,7 +137,7 @@ Use `import { logger } from '@/utils/logger'` instead of `console.log`:
 
 ## CI/CD
 
-- **Every PR / master push**: `ci.yml` quality gate (type-check + lint + unit tests, Node 24) + emulator-backed E2E (soft gate, `continue-on-error`)
+- **Every PR / master push**: `ci.yml` quality gate (type-check + lint + unit tests, Node 24), stable E2E hard gate, and `e2e-tests.yml` maintained release E2E hard gate.
 - **Every master push auto-deploys** hosting + Firestore rules/indexes to https://nerilo.web.app via `firebase-deploy.yml` (first successful run 2026-06-11)
 - **Cloud Functions are NOT deployed**: never were in production; first deploy requires Blaze plan + Cloud Build API (steps in PR #15). CI still compile-validates `functions/`
 - E2E in CI runs against Firebase emulators (Java 21 + cached emulator/Playwright binaries), no live Firebase, no secrets needed

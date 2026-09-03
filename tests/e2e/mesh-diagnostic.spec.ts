@@ -36,7 +36,7 @@ import {
 const DELIVERY_TIMEOUT_MS = 20_000; // 10 個對帳週期；固定，不得放寬
 const DUP_SETTLE_MS = 5_000; // 沉澱期：讓潛在重複有時間浮現
 
-test.describe('3 人 mesh 診斷（矩陣全 =1）', () => {
+test.describe('3 人 mesh 診斷（矩陣全 =1）@release', () => {
   test('每則訊息在每個畫面最終各恰好一次', async ({ browser }) => {
     test.setTimeout(240_000); // 只為 3 組註冊 + WebRTC 連線成形；見檔頭誠實條款
 

@@ -21,7 +21,7 @@ import {
 const EVIDENCE_DIR =
   '/tmp/nerilo-e2e-evidence';
 
-test.describe('聊天去重 + 完整往返 @stable', () => {
+test.describe('聊天去重 + 完整往返 @stable @release', () => {
   test('多則訊息在雙方畫面各恰好一次（無重複）+ E2EE + 雙向', async ({ browser }) => {
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

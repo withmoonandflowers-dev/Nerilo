@@ -210,6 +210,17 @@ const ChatPage: React.FC = () => {
           return;
         }
 
+        // 本機歷史不應依賴 P2P 是否已重新連上。舊流程把 loadHistory 放在
+        // useStarTopology 的 ChannelBus ready callback 裡，重整後若對端尚未完成重連，
+        // IndexedDB 明明有資料，畫面卻會一直是空的。
+        try {
+          const history = await chatStorage.getChatMessages(roomId);
+          if (!isMounted()) return;
+          setMessagesList(history);
+        } catch (error) {
+          logger.warn('[ChatPage] Failed to load local message history', { roomId, error });
+        }
+
         // 3. 加入房間
         logger.info('[ChatPage] Calling joinRoom', { roomId, uid });
         try {
@@ -392,7 +403,7 @@ const ChatPage: React.FC = () => {
       currentTopologyRef.current = null;
       migrationInProgressRef.current = false;
     };
-  }, [user, roomId, navigate, roomService, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList, reconnectNonce]);
+  }, [user, roomId, initKey, navigate, roomService, chatStorage, architecture, starTopology, meshTopology, roomSubscription, addMessage, setMessagesList, reconnectNonce]);
 
   // Firestore 備援：訂閱房間訊息，P2P 未連線時對方經 Firestore 送的訊息也能顯示
   // 必須等 joinRoom 完成後才啟動，否則第三人（尚未在 participants 中）會觸發 permission-denied

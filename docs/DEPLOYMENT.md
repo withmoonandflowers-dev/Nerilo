@@ -219,7 +219,7 @@ firebase hosting:channel:delete staging --project staging
 
 ```bash
 # Full Playwright suite with emulators auto-booted (one shot)
-npm run test:e2e:ci
+npm run test:e2e:release
 
 # Stable subset only (matches what CI runs as a merge gate)
 npm run test:e2e:stable
@@ -229,7 +229,7 @@ npx firebase emulators:start --only auth,firestore --project nerilo
 npm run test:e2e          # in another terminal
 ```
 
-Both `test:e2e:ci` and `test:e2e:stable` use `firebase emulators:exec`, which boots Auth (9099) + Firestore (8080), runs Playwright, and tears down the emulators on exit.
+`test:e2e:release`, `test:e2e:stable`, and the legacy diagnostic command `test:e2e:ci` use `firebase emulators:exec`, which boots Auth (9099) + Firestore (8080), runs Playwright, and tears down the emulators on exit.
 
 Requirements:
 - **Java 21** (`firebase-tools` 15+ emulator baseline). On macOS: `brew install temurin@21`. On Linux: install a JDK 21 package. On Windows: install Temurin 21 from adoptium.net.

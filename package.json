@@ -58,6 +58,7 @@
     "test:e2e:report": "playwright show-report",
     "test:e2e:ci": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test\"",
     "test:e2e:stable": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test --grep @stable\"",
+    "test:e2e:release": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test --grep @release --workers=2\"",
     "test:e2e:vue-stable": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test --config playwright.vue.config.ts --grep '@vue-warmup|@vue-stable' --workers=1\"",
     "test:e2e:rendezvous": "playwright test --config playwright.rendezvous.config.ts",
     "test:e2e:p0": "firebase emulators:exec --only auth,firestore --project nerilo \"playwright test tests/e2e/golden-path.spec.ts\"",

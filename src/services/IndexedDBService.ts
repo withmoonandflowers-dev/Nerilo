@@ -217,7 +217,9 @@ export class IndexedDBService {
       .limit(limit)
       .toArray();
 
-    return records.map((r) => ({
+    // 查詢先倒序才能取「最新 limit 筆」，交給 UI 前再轉回時間正序。
+    // 與 InMemoryChatStorage 的契約一致，避免重整後聊天紀錄上下顛倒。
+    return records.reverse().map((r) => ({
       messageId: r.messageId,
       from: r.from,
       to: r.to,

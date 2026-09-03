@@ -35,7 +35,7 @@ async function submitEmailForm(page: Page, email: string, password: string): Pro
   await page.locator('.login-form button[type="submit"]').click();
 }
 
-test.describe('auth flow @stable', () => {
+test.describe('auth flow @stable @release', () => {
   test('register a new account lands on dashboard as role "user"', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();

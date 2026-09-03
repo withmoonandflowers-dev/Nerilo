@@ -24,7 +24,7 @@ import {
   uniqueMessage,
 } from './_helpers/users';
 
-test.describe('P0 golden path @stable', () => {
+test.describe('P0 golden path @stable @release', () => {
   test('P0.1 registered user lands on dashboard with role badge', async ({ browser }) => {
     const alice = await setupUser(browser);
     try {

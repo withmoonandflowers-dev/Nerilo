@@ -15,12 +15,13 @@
 
 | 層級 | 最新基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；**164 files / 1710 tests** 全綠（既有 7 warnings；實測 2026-09-03） |
+| Core quality | TypeScript、ESLint gate 通過；**164 files / 1710 tests** 全綠（既有 6 warnings；實測 2026-09-03） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入三個進入點（21/4/2 匯出） |
 | Firestore rules | Emulator-backed **54/54**；含 room takeover、非成員 signal injection、收件人資格、payload 形狀／大小回歸 |
 | React P0 E2E | Emulator-backed **6/6**（2026-08-03；建房、加入、E2EE 握手、雙向訊息、離房） |
+| React release E2E | 維護中的 P0/P1/P2 **27/27**（2 workers，2026-09-03）；重整歷史、加密 fallback、3 人 mesh、遊戲與 rules 皆納入硬閘 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
-| Nuxt stable E2E | stable gate **13/13**（12 條旅程＋同 process warmup）；migration 5/5、p2p2p introduction 3/3 重複壓測全綠；硬閘變更已完成、待提交生效 |
+| Nuxt stable E2E | stable gate **13/13**（12 條旅程＋同 process warmup）；migration 5/5、p2p2p introduction 3/3 重複壓測全綠；硬閘已提交且遠端首跑成功 |
 | Offline rendezvous E2E | 真 HTTP 會合點＋兩個隔離 Chromium：單人等待、兩人 P2P/E2EE、訊息互通 **1/1** |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
 
@@ -36,7 +37,14 @@
   2026-09-03 本機：核心 1710/1710、stress 22/22、Vue stable 13/13、Nuxt typecheck/generate、
   rendezvous bundle、真瀏覽器雙人會合 1/1 與 npm pack smoke 全綠。
 - GitHub Actions API 查核 2026-08-18 至 09-02 的 16 次排程：Vue E2E job 與測試 step 全部
-  success，已滿足 ADR-0017 兩週連續綠；本工作樹已移除 `continue-on-error`，待提交後正式生效。
+  success，已滿足 ADR-0017 兩週連續綠；2026-09-03 已移除 `continue-on-error`，遠端首跑 13/13 成功。
+- 原 `E2E Tests (Full)` 雖顯示 success，實際測試 step 因 `continue-on-error` 吞掉 exit 1；本機
+  重現為 28 passed / 47 failed / 17 skipped。失敗主因是 14 份舊 spec 仍假設 guest 可建房、
+  使用舊 selector 或硬編 `localhost:3000`，與現行安全規則衝突。已將 27 個現行 P0/P1/P2
+  標成 `@release`，新 workflow 移除 soft gate；舊檔保留為 quarantine，不再冒充發布訊號。
+- 維護套件唯一真回歸是 P1.10：歷史載入綁在 Star ChannelBus ready，頁面重整後 P2P 尚未
+  重連時 IndexedDB 有資料但 UI 空白。現在 ChatPage 在加入／連線前先讀本機歷史，並統一
+  IndexedDB 回傳為時間正序；單項 1/1、release 27/27 均已本機通過。
 
 ## 2026-08-03 授權與 AI gateway 收斂
 
@@ -135,15 +143,15 @@
 
 - CI `vue-quality` 已是硬閘：`nuxt typecheck`＋`nuxt generate`。
 - CI `vue-e2e` 的兩週觀察已完成：2026-08-18 至 09-02 共 16 次排程的 job 與實際測試 step
-  全綠；2026-09-03 工作樹已移除 `continue-on-error`，提交後成為硬閘。
+  全綠；2026-09-03 已移除 `continue-on-error`，遠端首跑全綠，現為硬閘。
 - `@vue-stable` 已擴至 12 條旅程；另將 `_warmup` 納入同一 Playwright process，完整 gate
   為 13/13。parity matrix 見 `docs/VUE-PARITY.md`。
 - Production 切換完整門檻見 ADR-0017：Vue E2E 硬閘、P0/P1 清零、Vue production smoke 三路全綠、視覺驗收與可回退 artifact，缺一不可。
 
 ## 目前優先序
 
-1. 提交 Vue stable 硬閘變更，確認新指令（含同 process warmup）在 CI 首跑全綠；接著完成
-   P0/P1 parity、Vue production smoke 三路、視覺驗收與可回退 artifact，再決定 production 切換。
+1. 提交 React release E2E 硬閘與重整歷史修復、確認遠端首跑；接著部署隔離的 Vue staging
+   preview，完成 direct／TURN／honest fallback 三路 smoke、視覺驗收與可回退 artifact，再決定 production 切換。
 2. 規劃跨裝置加密備份、私鑰復原與多副本合併；本機重載耐久已完成，但不能把複製 JSON 當備份。
 3. 由專案擁有者套用原生 TTL policy；成本儀表板、可信總量配額與 cleanup Functions 部署仍需 Blaze／Cloud Billing 決策。
 4. 取得真實使用資料後再擴功能；避免 React、Vue、SDK 三面同時發散。

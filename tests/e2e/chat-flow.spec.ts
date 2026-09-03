@@ -23,7 +23,7 @@ import {
   uniqueMessage,
 } from './_helpers/users';
 
-test.describe('P1 chat flow', () => {
+test.describe('P1 chat flow @release', () => {
   test('P1.1 sender sees a delivery-status badge progress past "sending"', async ({ browser }) => {
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

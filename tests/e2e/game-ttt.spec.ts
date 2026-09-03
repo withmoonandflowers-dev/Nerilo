@@ -26,7 +26,7 @@ function cell(page: Page, i: number) {
   return page.getByTestId(`ttt-cell-${i}`);
 }
 
-test.describe('井字棋 on Nerilo（2 人星型）', () => {
+test.describe('井字棋 on Nerilo（2 人星型）@release', () => {
   test('出招雙向可見、回合輪替正確', async ({ browser }) => {
     test.setTimeout(180_000); // 涵蓋 2 組註冊 + WebRTC 連線成形；出招斷言各 10s
 

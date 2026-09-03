@@ -1,14 +1,10 @@
-# E2E Tests with Firebase emulators
+# Release E2E tests with Firebase emulators
 #
-# Boots Auth + Firestore emulators via firebase-tools (now a devDependency)
-# and runs the full Playwright suite against them. No manual emulator setup
-# required.
-#
-# The main CI gate (.github/workflows/ci.yml) only runs the "stable subset"
-# of tests; this workflow runs everything, and is allowed to fail without
-# blocking the merge queue (continue-on-error on the test step).
+# Boots Auth + Firestore emulators and runs the maintained P0/P1/P2 release
+# suite. Historical specs that predate registered-user room ownership remain
+# in the repository for migration evidence, but are not release assertions.
 
-name: E2E Tests (Full)
+name: E2E Tests (Release)
 
 on:
   push:
@@ -33,13 +29,13 @@ jobs:
 
       # Firebase emulators require a JRE — firebase-tools 15+ needs JDK 21+.
       - name: Setup Java 21 (for Firebase emulators)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: 'npm'
@@ -54,15 +50,13 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
-      - name: Run E2E tests against emulators
-        run: npm run test:e2e:ci
+      - name: Run release E2E tests against emulators
+        run: npm run test:e2e:release
         env:
           CI: 'true'
           # The app's src/config/firebase.ts auto-detects Vite mode=test and
           # connects to 127.0.0.1:9099 (Auth) / 127.0.0.1:8080 (Firestore).
           # No secrets needed — emulators accept a fake API key.
-        continue-on-error: true
-
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4

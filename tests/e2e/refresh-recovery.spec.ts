@@ -19,7 +19,7 @@ import {
   uniqueMessage,
 } from './_helpers/users';
 
-test.describe('P1 refresh recovery', () => {
+test.describe('P1 refresh recovery @release', () => {
   test('P1.10 messages remain visible after a browser refresh', async ({ browser }) => {
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);

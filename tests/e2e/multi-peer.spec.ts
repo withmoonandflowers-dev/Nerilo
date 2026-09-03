@@ -19,7 +19,7 @@ import {
   uniqueMessage,
 } from './_helpers/users';
 
-test.describe('P1 multi-peer', () => {
+test.describe('P1 multi-peer @release', () => {
   test('P1.9 3-peer mesh — each peer sees every other peer\'s messages', async ({ browser }) => {
     test.setTimeout(180_000); // mesh setup with emulator can take a while
 

@@ -70,7 +70,8 @@ VITE_FIREBASE_APP_ID=1:123456789:web:abcdef
 npm run dev                # http://localhost:3000 (dev mode, talks to real Firebase)
 npm run build              # production bundle in dist/
 npm run test:run           # unit tests (Vitest; current count in docs/CURRENT-STATUS.md)
-npm run test:e2e:ci        # E2E tests with Firebase emulators auto-booted
+npm run test:e2e:release   # Maintained release E2E with Firebase emulators auto-booted
+npm run test:e2e:ci        # All files, including quarantined legacy diagnostics
 ```
 
 ### Connect an AI client through MCP

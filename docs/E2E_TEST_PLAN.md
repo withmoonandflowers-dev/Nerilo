@@ -1,45 +1,55 @@
 # Nerilo E2E Test Plan
 
-Living document. Last updated **2026-05-27**.
+Living document. Last updated **2026-09-03**.
 
-The Playwright suite runs against Firebase emulators (`auth:9099`, `firestore:8080`) via `npm run test:e2e:ci`. Tests use the `baseURL=http://localhost:4173` from [playwright.config.ts](../playwright.config.ts) and are organised by user journey, not by source-file boundary.
+The Playwright release suite runs against Firebase emulators (`auth:9099`, `firestore:8080`) via `npm run test:e2e:release`. Tests use the `baseURL=http://localhost:4173` from [playwright.config.ts](../playwright.config.ts) and are organised by user journey, not by source-file boundary. `npm run test:e2e:ci` remains an all-files diagnostic command and includes quarantined historical specs; it is not a release signal.
 
 This plan distinguishes:
 
-- **Stable subset**: runs as a merge gate in `.github/workflows/ci.yml` (currently `continue-on-error: true`, flip to required once green for 2 weeks).
-- **Full suite**: runs in `.github/workflows/e2e-tests.yml`.
+- **Stable subset**: 11 `@stable` tests run as a hard merge gate in `.github/workflows/ci.yml`.
+- **Release suite**: 27 maintained `@release` P0/P1/P2 tests run as a hard gate in `.github/workflows/e2e-tests.yml`.
+- **Legacy diagnostic suite**: historical files remain available for migration evidence, but conflict with current registered-user ownership rules or obsolete UI assumptions and are not release assertions.
 
-## Current coverage (as of 2026-05-27)
+## Maintained release coverage (as of 2026-09-03)
+
+| Spec | Tests | What it covers | Tier |
+|---|---:|---|---|
+| `auth-flow.spec.ts` | 4 | Register, logout/login, invalid login, duplicate registration | P0 |
+| `chat-dedup.spec.ts` | 1 | Bidirectional E2EE and exactly-once display | P0 |
+| `golden-path.spec.ts` | 6 | Dashboard, create/join, chat, E2EE indicator, leave | P0 |
+| `chat-flow.spec.ts` | 4 | Delivery status, Unicode, 5 KB body, rapid ordered burst | P1 |
+| `connection-states.spec.ts` | 2 | Direct connection and encrypted Firestore fallback | P1 |
+| `multi-peer.spec.ts` | 1 | Three-peer mesh delivery | P1 |
+| `refresh-recovery.spec.ts` | 1 | IndexedDB history survives reload without waiting for P2P reconnect | P1 |
+| `game-ttt.spec.ts` | 2 | Two-player moves and late-panel state sync | P1 |
+| `mesh-diagnostic.spec.ts` | 1 | Three-peer exactly-once delivery matrix | P1 |
+| `security.spec.ts` | 5 | Room rules, identity ownership, encrypted fallback, guest restriction | P2 |
+
+## Legacy inventory (quarantined from release CI)
 
 | Spec | LoC | What it covers | Tier | Health |
 |---|---:|---|---|---|
-| `waiting-room.spec.ts` | 157 | Anon login → create room → waiting page UI (timer, share, cancel, leave) | **stable** | green when emulators run |
-| `room-management.spec.ts` | 134 | Create new room closes old room; 2-person auto-redirect; 2-person 4-message exchange | **stable** | needs P2P (60 s timeouts) |
-| `room-closed.spec.ts` | 96 | Closed room redirects to dashboard | **stable** | green |
-| `room-timeout.spec.ts` | 50 | Waiting timer visible; full timeout flow noted but not exercised | **stable** | green |
-| `guest-chat.spec.ts` | 68 | Anon-only golden path: 2 guests message exchange | full | needs P2P |
-| `user-chat.spec.ts` | 69 | Same as guest-chat but assumes login | full | duplicates guest-chat |
-| `single-user-room.spec.ts` | 71 | Single-user can enter chat + 2nd user joins later | full | needs P2P |
-| `architecture-selection.spec.ts` | 193 | 2 peers ⇒ star, 3 peers ⇒ mesh (inspects console logs) | full | brittle (regex-greps logs) |
-| `mesh-gossip.spec.ts` | 158 | 3-person mesh gossip relay | full | flaky on slow ICE |
-| `core-lifecycle.spec.ts` | 258 | Single-user, 2-person full lifecycle, leave → rejoin | full | mostly green |
-| `comprehensive-chat.spec.ts` | 502 | Big bag: auth/permission, room lifecycle, messages, reconnect | full | duplicates many others |
-| `multi-user-stability.spec.ts` | 276 | 2-/3-peer message ordering | full | ⚠️ hardcodes `localhost:3000` |
-| `stress-test.spec.ts` | 300 | LCP / FCP / heap / PC leak | full | ⚠️ hardcodes `localhost:3000` |
-| `nerilo-smoke.spec.ts` | 112 | Old "happy path with screenshots" smoke run | full | ⚠️ hardcodes `localhost:3000` |
+| `waiting-room.spec.ts` | 157 | Anonymous create-room assumptions | legacy | guest creation is now denied by rules |
+| `room-management.spec.ts` | 134 | Duplicate room lifecycle/message paths | legacy | old selectors and anonymous setup |
+| `room-closed.spec.ts` | 96 | Closed-room paths | legacy | old selectors and anonymous setup |
+| `room-timeout.spec.ts` | 50 | Waiting timer paths | legacy | old selectors and anonymous setup |
+| `guest-chat.spec.ts` | 68 | Anonymous create-room path | legacy | contradicts P2.3 security policy |
+| `user-chat.spec.ts` | 69 | Duplicated two-user path | legacy | does not actually register the user |
+| `single-user-room.spec.ts` | 71 | Single-user room path | legacy | old anonymous setup |
+| `architecture-selection.spec.ts` | 193 | Topology inferred from logs | legacy | brittle and uses old setup |
+| `mesh-gossip.spec.ts` | 158 | Older mesh path | legacy | superseded by maintained mesh tests |
+| `core-lifecycle.spec.ts` | 258 | Older lifecycle bag | legacy | duplicated by golden path/P1 tests |
+| `comprehensive-chat.spec.ts` | 502 | Large duplicated scenario bag | legacy | stale selectors and setup |
+| `multi-user-stability.spec.ts` | 276 | Older ordering scenarios | legacy | hardcodes `localhost:3000` |
+| `stress-test.spec.ts` | 300 | Performance/heap/PC benchmarks | legacy/perf | hardcodes `localhost:3000`; not correctness E2E |
+| `nerilo-smoke.spec.ts` | 112 | Old screenshot smoke | legacy | hardcodes `localhost:3000`; superseded by P0 |
 
 ### Known coverage gaps
 
 | Gap | Why it matters |
 |---|---|
-| **E2EE indicator** (commit [5d6acfb](../.git)) | New UI element, zero test. If the lock icon disappears, no test fails. |
-| **Message delivery status** (sending → sent → delivered → failed → resend) | Visible to every sender, untested. |
 | **Typing indicator** (star topology only) | Untested. |
-| **Firestore fallback** when P2P is blocked | Mentioned but never isolated. We have no test that asserts "P2P fails ⇒ banner says 備援模式 ⇒ messages still flow." |
-| **Unicode / emoji / 4 KB message** | Untested. Easy regression vector. |
-| **Browser refresh mid-chat** | The dexie-backed history is documented behaviour. No test verifies it. |
 | **Multi-tab same user** | Not exercised. |
-| **Room access denied for non-participants** | The firestore rules enforce this (post-stress-test fix); a regression would be invisible without a test. |
 | **Public-room visibility on dashboard** | Listed in DashboardPage UI, not tested. |
 | **Share modal QR-code + copy** | Only the copy button presence is tested. |
 | **404 / invalid roomId** | Should redirect to dashboard; untested. |
@@ -49,17 +59,17 @@ This plan distinguishes:
 
 ### P0: Must pass before any deploy (golden path)
 
-These five run as the **stable subset**. If any P0 test fails, the deploy job is blocked.
+The golden path plus auth and dedup checks run as the 11-test **stable subset**. If any stable test fails, the deploy job is blocked.
 
 | # | Test | Journey | Notes |
 |---|---|---|---|
-| P0.1 | `golden-path.spec.ts > anonymous user can land on the dashboard` | Open `/dashboard` → wait for `.role-badge` to read `guest` → "+ 建立新房間" button visible | Replaces the implicit role check in 6 other specs. |
+| P0.1 | `golden-path.spec.ts > registered user lands on dashboard` | Register → land on `/dashboard` → `.role-badge` reads `user` | Verifies the room owner is authenticated before creation. |
 | P0.2 | `golden-path.spec.ts > host can create a room` | Create room → land on `/waiting/:roomId` → 等待連線 banner visible | Smallest test, fastest failure signal. |
 | P0.3 | `golden-path.spec.ts > second user joins via link and both see chat` | 2 contexts, B opens the `/chat/{roomId}` URL, both end up on `/chat`, both see "已連線" | The "did the product still work today?" check. |
 | P0.4 | `golden-path.spec.ts > A sends, B receives` | Send "hello {timestamp}" from A → B sees it within 10 s | Real proof of working transport. |
 | P0.5 | `golden-path.spec.ts > E2EE indicator is visible when connected` | After both peers are connected, `.e2ee-indicator-p2p` is visible on both sides; text contains "端到端加密" | Locks in [5d6acfb](../.git). |
 
-### P1: Core features (run on every PR, allowed to fail for now)
+### P1: Core features (hard release gate)
 
 | # | Test | Journey |
 |---|---|---|
@@ -67,7 +77,7 @@ These five run as the **stable subset**. If any P0 test fails, the deploy job is
 | P1.2 | `chat-flow.spec.ts > failed message can be resent` | Force a failure (close peer), see status=failed + resend button, click resend, status=sent |
 | P1.3 | `chat-flow.spec.ts > unicode and emoji round-trip` | "👋 你好 🌏 émoji éclair" from A → identical bytes on B |
 | P1.4 | `chat-flow.spec.ts > long message (5 KB body) round-trips` | Fill input with 5000 chars, send, receive, covers the 256 KB DataChannel cap is not over-restrictive |
-| P1.5 | `chat-flow.spec.ts > rapid send burst, 10 messages in 1s preserved in order` | Send 10 messages back-to-back, all 10 visible in order on receiver |
+| P1.5 | `chat-flow.spec.ts > rapid send burst, 5 messages in 1s preserved in order` | Send 5 messages back-to-back, all 5 visible in order on receiver |
 | P1.6 | `connection-states.spec.ts > banner shows connecting → connected on first peer` | Inspect ConnectionBanner classes through the lifecycle |
 | P1.7 | `connection-states.spec.ts > banner shows 備援模式 when P2P signaling is blocked` | Use Playwright route interception to break `/signals` writes; verify Firestore fallback path engages and messages still flow |
 | P1.8 | `connection-states.spec.ts > E2EE indicator switches to fallback variant` | Same as P1.7，`.e2ee-indicator-fallback` shows "備援模式" |
@@ -119,7 +129,7 @@ These five run as the **stable subset**. If any P0 test fails, the deploy job is
 
 ## Migration plan for legacy specs
 
-Two-week clean-up after the P0/P1 specs ship:
+The maintained suite now carries the release signal. Remaining clean-up:
 
 1. Delete `user-chat.spec.ts` (full duplicate of `guest-chat.spec.ts`).
 2. Migrate `nerilo-smoke.spec.ts` to use `baseURL` + delete it (its 9 steps are covered by new P0).
@@ -127,16 +137,16 @@ Two-week clean-up after the P0/P1 specs ship:
 4. Migrate `stress-test.spec.ts` to use `baseURL` + move to a separate `tests/perf/` directory (it's a perf bench, not a correctness E2E).
 5. Shrink `comprehensive-chat.spec.ts` to only the cases not covered elsewhere.
 
-This brings the suite from 14 specs (2 444 LoC) down to roughly 10 specs (~1 800 LoC) with materially better coverage.
+The release signal is already concentrated in 10 maintained specs; this cleanup removes misleading duplicate diagnostics without reducing release coverage.
 
 ## CI integration
 
 | Workflow | Scope | When |
 |---|---|---|
 | `ci.yml` → `e2e` job | `npm run test:e2e:stable` (P0 only) | every PR; merge gate eventually |
-| `e2e-tests.yml` | `npm run test:e2e:ci` (everything) | every PR; `continue-on-error: true` while flakiness shakes out |
+| `e2e-tests.yml` | `npm run test:e2e:release` (27 maintained P0/P1/P2 cases) | every PR and push; hard gate |
 
-Both jobs set up Java 17 (Temurin) and cache `~/.cache/firebase/emulators`.
+Both jobs set up Java 21 (Temurin) and cache `~/.cache/firebase/emulators`.
 
 ## How to extend
 
@@ -144,5 +154,5 @@ When a new feature lands:
 
 1. Add tests to the appropriate tier in this document **first** (P0/P1/P2/P3/P4).
 2. Implement them with the shared helpers.
-3. Update the "Current coverage" table.
+3. Update the "Maintained release coverage" table.
 4. If the new feature affects the golden path, add a corresponding P0 entry.

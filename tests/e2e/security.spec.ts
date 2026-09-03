@@ -30,7 +30,7 @@ import {
   uniqueMessage,
 } from './_helpers/users';
 
-test.describe('P2 security', () => {
+test.describe('P2 security @release', () => {
   test('P2.1 non-participant cannot read a private room — direct rule check', async ({ browser }) => {
     const alice = await setupUser(browser);
     const eve = await setupUser(browser);

@@ -24,7 +24,7 @@ import {
   uniqueMessage,
 } from './_helpers/users';
 
-test.describe('P1 connection states', () => {
+test.describe('P1 connection states @release', () => {
   test('P1.6 banner shows 連線中 → 已連線 during normal join', async ({ browser }) => {
     const alice = await setupUser(browser);
     const bob = await setupUser(browser);
