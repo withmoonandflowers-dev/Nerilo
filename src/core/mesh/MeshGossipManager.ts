@@ -249,7 +249,7 @@ export class MeshGossipManager {
             getEcdhPrivateKey: () => this.identityManager.getEcdhPrivateKey(),
             getEcdhPublicKeyBase64: () => this.identityManager.exportEcdhPublicKey(),
             // Spec 018 閘門 4：環空且未見 keyx 但房間已運轉 → 交接寬限；
-            // 分發基底含「觀察到的 keyx epoch」（開不了也讀得到 metadata）
+            // Spec 027 的 roster 順序讓最資深仍在線者續任，不讓新人因 userId 奪權。
             hasForeignRecords: () => this.messageHandler?.hasRecordsFromOthers() ?? false,
             getMaxObservedEpoch: () => this.messageHandler?.getMaxObservedKeyxEpoch() ?? -1,
             // 快取讀（forceServer=false）：keyx 週期輪詢不需每次強制 server 讀。

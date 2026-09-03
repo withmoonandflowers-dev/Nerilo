@@ -213,22 +213,19 @@ jobs:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
 
-      # 觀察期依實際起算日順延（2026-07-26 修正）：原註解寫 07-16 起算、07-30 到期，
-      # 但這個 job 到 07-18（CI #168）才存在。截至 07-26 只有 6 次執行（#168-170、#172-174），
-      # 全綠、時長 175-222s，但只分佈在 2 個活躍日，離「連續兩週」還差很遠。
-      # 新到期日 2026-08-01（07-18 起算兩週）。已加每日 schedule 觸發，屆時樣本才會是
-      # 每天各自獨立的一次，而不是同一天連推三筆湊出來的三次。
-      # 移除 continue-on-error 是 ADR-0017 切 production 的門檻之一，不可提前。
+      # 2026-09-03 翻為硬閘：GitHub Actions API 查核 08-18 至 09-02 共 16 次排程，
+      # Vue E2E job 與實際測試 step 全為 success，已滿足 ADR-0017 的兩週連續綠門檻。
+      # @vue-warmup 必須與 stable 同一個 Playwright process 執行；只在指令列
+      # 先寫檔名仍會被 --grep 排除，所以用兩個 tag 的 regex 一起選入。
       # 不要傳 --reporter：reporter 由 playwright.vue.config.ts 宣告（含 html），
       # 先前的 --reporter=list 蓋掉 config，底下的上傳報告步驟一路空跑。
       - name: Run Vue stable E2E against emulators
         run: >
           npx firebase-tools emulators:exec --only auth,firestore --project nerilo
-          "npx playwright test --config playwright.vue.config.ts --grep @vue-stable --workers=1"
+          "npx playwright test --config playwright.vue.config.ts --grep '@vue-warmup|@vue-stable' --workers=1"
         env:
           CI: 'true'
           PLAYWRIGHT_HTML_OPEN: 'never'
-        continue-on-error: true
 
       - name: Upload Vue Playwright report
         if: always()

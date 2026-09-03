@@ -14,7 +14,7 @@ import { test, expect } from '@playwright/test';
 const ROUTES = ['/login', '/dashboard', '/waiting/warmup-nonexistent', '/chat/warmup-nonexistent'];
 
 test.describe('路由預熱', () => {
-  test('編譯各路由（無產品斷言）', async ({ page }) => {
+  test('編譯各路由（無產品斷言） @vue-warmup', async ({ page }) => {
     test.setTimeout(180_000);
     for (const route of ROUTES) {
       // 首次編譯慢是預期；只等 DOM 掛上，不看內容、不斷言導轉結果

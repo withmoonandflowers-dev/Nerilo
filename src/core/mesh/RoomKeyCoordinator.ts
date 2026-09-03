@@ -5,9 +5,10 @@
  * 「產生方」的決策與編排：誰產生、何時產生、封給誰、以 keyx 紀錄廣播。消費（開出封給
  * 自己的金鑰）在 GossipMessageHandler.consumeKeyx。純編排、無 live 連線細節，可獨立單測。
  *
- * 產生方選舉：在場（且已發布 ecdhPubKey）成員中 userId 字典序最小者。deterministic →
- * 同一名冊快照下全員算出同一產生方，避免多人同時各發一把金鑰。名冊來自共享的 Firestore
- * meshIdentities（最終一致）；形成期名冊可能瞬時不一致，收斂後穩定（見檔尾誠實邊界）。
+ * 產生方選舉：在場（且已發布 ecdhPubKey）成員中，以 participants 的入房順序選最資深者。
+ * 新加入者不會因隨機 userId 較小而奪走 producer；原 producer 持有現行 key，能直接遞增
+ * epoch 為新人換代。名冊來自共享的 Firestore room document；形成期可能瞬時不一致，
+ * 收斂後全員看見相同順序（見檔尾誠實邊界）。
  *
  * epoch：加人/移除（名冊變動）→ 產生方遞增 epoch + 新 keyx。epoch 取「本機已知最高
  * epoch + 1」→ 產生方交接時新 epoch 嚴格大於任何已流通者，配合「送出用最高 epoch」收斂。
@@ -26,7 +27,8 @@ export interface RoomKeyCoordinatorDeps {
   /** 本機 ECDH 公鑰 Base64 SPKI（內嵌 keyx 供收端 openSealedRoomKey） */
   getEcdhPublicKeyBase64: () => Promise<string>;
   /**
-   * 載入名冊：members = 已註冊 mesh 身分者（含各自 ecdhPubKey），順序不拘；
+   * 載入名冊：members = 已註冊 mesh 身分者（含各自 ecdhPubKey），順序必須與
+   * participants 的入房順序一致（最資深在前）；
    * participantCount = 房間 participants 人數（含尚未註冊身分者）。
    * 兩者用於「全員 ecdh 就緒」閘門，避免以殘缺名冊搶先分發（見 tick 註解）。
    */
@@ -41,9 +43,8 @@ export interface RoomKeyCoordinatorDeps {
   /** 本機金鑰環中已知最高 epoch（-1 = 尚無）；用於產生方交接時的 epoch 單調 */
   getMaxKnownEpoch: () => number;
   /**
-   * store 是否已有他人紀錄（選填，Spec 018 交接寬限用；未提供＝false，
-   * 行為與閘門加入前一致）。true 且未觀察到任何 keyx → 房間已運轉、既有 keyx
-   * 可能在 anti-entropy 路上，延遲分發避免同代異鑰碰撞。
+   * store 是否已有他人紀錄（選填，Spec 018 交接寬限用；未提供＝false）。true 且未觀察
+   * 到任何 keyx → 既有 keyx 可能仍在 anti-entropy 路上，延遲分發避免同代碰撞。
    */
   hasForeignRecords?: () => boolean;
   /**
@@ -62,9 +63,9 @@ const STABILITY_TICKS = 1;
 
 /**
  * 交接寬限（Spec 018 第四道閘門）：金鑰環空但 store 已有他人紀錄時，延遲分發的
- * 最大 tick 數。4s tick × 3 ≈ 12s，涵蓋 anti-entropy 2s 週期數輪讓既有 keyx 到達；
- * 窗盡照發保 liveness。防的是「晚加入的新任 min-uid 未消費前任 keyx 即以 epoch 0
- * 再發」的跨時間交接碰撞（CI 7p 第五輪實證，Spec 016 殘留 E）。
+ * 最大 tick 數。4s tick × 3 ≈ 12s，涵蓋 anti-entropy 數輪；窗盡照發保 liveness。
+ * Spec 027 另以「最資深入房者」選舉消除晚加入者奪權的根因，這道閘門保留為異常
+ * hydrate／自架 directory 下的第二層防線。
  */
 const HANDOVER_GRACE_TICKS = 3;
 
@@ -88,8 +89,14 @@ export interface KeyxStatus {
 }
 
 export class RoomKeyCoordinator {
-  /** 上次分發所用的名冊簽章（userId 排序 join）；相同則不重發 */
+  /** 上次分發所用的名冊簽章（按 participants 入房順序 join）；相同則不重發 */
   private distributedRosterSig: string | null = null;
+  /**
+   * 同一 coordinator 的週期評估只允許一輪在途。startKeyxCoordination 的 interval 不會
+   * 等待前一輪 tick；若密碼運算或 sendKeyx 超過 interval，重疊輪次可能讀到相同 epoch、
+   * 各自產生不同金鑰並同代廣播。共用在途 Promise，讓重疊呼叫合併成同一輪。
+   */
+  private tickInFlight: Promise<void> | null = null;
 
   /**
    * 請求重新分發（Spec 022 C2）：同代異鑰衝突時由金鑰環回呼觸發。清掉冪等簽名，
@@ -142,12 +149,23 @@ export class RoomKeyCoordinator {
    * 週期評估並在需要時分發金鑰。冪等：同一穩定名冊多次呼叫只分發一次。
    * 非產生方為 no-op（純等 keyx 進來由 handler 消費）。任何一步失敗 → 記錄並留待下輪重試。
    *
-   * 分發前三道閘門，共同確保「只有最終完整名冊的最小者」分發、避免雙產生方 epoch 碰撞：
+   * 分發前三道閘門，共同確保「只有最終完整名冊最資深者」分發、避免雙產生方 epoch 碰撞：
    *  1. 全員 ecdh 就緒：eligible 人數 == participants 人數（有人尚未註冊身分 → 等）。
    *  2. 名冊穩定：連續數輪 sig 不變（濾掉形成期瞬時不一致的殘缺視圖）。
-   *  3. 我是（穩定完整名冊的）最小 userId。
+   *  3. 我是（穩定完整名冊的）最資深 participant。
    */
-  async tick(): Promise<void> {
+  tick(): Promise<void> {
+    if (this.tickInFlight) return this.tickInFlight;
+
+    const run = this.tickOnce();
+    const tracked = run.finally(() => {
+      if (this.tickInFlight === tracked) this.tickInFlight = null;
+    });
+    this.tickInFlight = tracked;
+    return tracked;
+  }
+
+  private async tickOnce(): Promise<void> {
     let members: Array<{ userId: string; ecdhPubKey?: string }>;
     let participantCount: number;
     try {
@@ -165,8 +183,9 @@ export class RoomKeyCoordinator {
         typeof m.userId === 'string' && typeof m.ecdhPubKey === 'string' && m.ecdhPubKey.length > 0
     );
     const ids = eligible.map((m) => m.userId);
-    const sortedIds = [...ids].sort();
-    const sig = sortedIds.join(',');
+    // rosterFromRoom 已按 participants 的權威入房順序產生。簽章包含順序，讓 leave/rejoin
+    // 即使 userId 集合相同也會觸發重新選舉與換代。
+    const sig = ids.join(',');
 
     // 名冊穩定性追蹤（在任何提前 return 前更新，確保穩定窗連續累計）
     if (sig === this.lastSeenSig) this.stableCount++;
@@ -195,8 +214,8 @@ export class RoomKeyCoordinator {
       this.setBlock('roster-unstable');
       return;
     }
-    // 閘門 3：非（完整穩定名冊的）最小者 → 非產生方
-    if (this.deps.localUserId !== sortedIds[0]) {
+    // 閘門 3：非（完整穩定名冊的）最資深者 → 非產生方
+    if (this.deps.localUserId !== ids[0]) {
       this.setBlock('none'); // 非產生方是正常分工，不是被擋
       return;
     }
@@ -206,9 +225,9 @@ export class RoomKeyCoordinator {
       return;
     }
 
-    // 閘門 4（Spec 018）：交接寬限——環空、也未觀察到任何 keyx，但房間已運轉
-    // → 等既有 keyx 抵達（開不開得了無所謂，epoch metadata 是明文）。
-    // 一旦觀察到 keyx（或窗盡），以 max(已安裝, 已觀察)+1 分發，交接必單調。
+    // 閘門 4（Spec 018）：交接寬限——環空、未觀察到 keyx，但 store 已有他人紀錄。
+    // 正常晚加入者不會再成為 producer（Spec 027 最資深者選舉）；此閘門保留處理異常
+    // hydrate／自架 directory。觀察到 keyx（或窗盡）後以 max(已安裝, 已觀察)+1 分發。
     const observedEpoch = this.deps.getMaxObservedEpoch?.() ?? -1;
     if (
       this.deps.getMaxKnownEpoch() === -1 &&
@@ -277,11 +296,15 @@ export function rosterFromRoom(
   meshIdentities: Record<string, { userId: string; ecdhPubKey?: string }> | undefined,
   participants: string[] | undefined
 ): { members: Array<{ userId: string; ecdhPubKey?: string }>; participantCount: number } {
-  const parts = new Set(participants ?? []);
-  const members = Object.entries(meshIdentities ?? {})
-    .filter(([firebaseUid]) => parts.has(firebaseUid))
-    .map(([, v]) => ({ userId: v.userId, ecdhPubKey: v.ecdhPubKey }));
-  return { members, participantCount: parts.size };
+  const participantList = participants ?? [];
+  const identities = meshIdentities ?? {};
+  // 不能從 meshIdentities 的 object 迭代順序推導 tenure；participants 才是房間文件中的
+  // 權威入房序列。leave 後移除、rejoin 以 arrayUnion 加到尾端，正好符合最資深者語義。
+  const members = participantList.flatMap((firebaseUid) => {
+    const v = identities[firebaseUid];
+    return v ? [{ userId: v.userId, ecdhPubKey: v.ecdhPubKey }] : [];
+  });
+  return { members, participantCount: new Set(participantList).size };
 }
 
 /** 匯入成員 ECDH 公鑰（Base64 SPKI）；公鑰無 key usages。 */
@@ -297,11 +320,12 @@ async function importEcdhPublic(b64: string): Promise<CryptoKey> {
 
 /*
  * 誠實邊界（P2-②c）：
- * - 雙產生方 epoch 碰撞（已修的主因）：形成期若以殘缺名冊搶先分發，兩個「各自視圖的最小者」
+ * - 雙產生方 epoch 碰撞（已修的主因）：形成期若以殘缺名冊搶先分發，兩個「各自視圖的最資深者」
  *   可能各發一把 epoch-0 金鑰（不同鑰、同 epoch）→ 金鑰環相互覆蓋 → 解密失敗。三道閘門
- *   （全員 ecdh 就緒 + 名冊連續穩定 + 完整名冊最小者）令「只有最終完整名冊的最小者」分發，
+ *   （全員 ecdh 就緒 + 名冊連續穩定 + 完整名冊最資深者）令「只有最終完整名冊的最資深者」分發，
  *   實務上消除此碰撞。理論殘留：Firestore 傳播延遲 > 穩定窗（數秒）造成的持久分裂視圖——
  *   極不可能且會在名冊收斂後自癒（新一輪以 getMaxKnownEpoch()+1 遞增 epoch，不再同號）。
+ *   Spec 027 改依 participants 入房順序選 producer，晚加入者不再因 userId 較小觸發交接。
  * - 移除成員的前向保密：以「名冊縮小 → 新 epoch 新金鑰」提供；被移除者持舊 epoch 鑰仍能解
  *   其在籍期間密文（符合 ADR「在籍期間可解」語義），無法解新 epoch。
  * - 混版房：有 participant 未發布 ecdhPubKey（舊 client）→ 閘門 1 永不滿足 → 該房維持明文相容。

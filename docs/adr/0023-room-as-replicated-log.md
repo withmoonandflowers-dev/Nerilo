@@ -185,7 +185,7 @@ star 退役（P2-③）與密文化（P2-①②）解耦：即使 P2-③ 延後�
 對比「一筆 gossip announce 廣播 ECDH 公鑰」：雖與 key-as-record 更一致，但需新通道 + 收端信任處理，
 風險高於擴充靜態身分欄位；且 keyx 紀錄本身已走 gossip（下述），靜態公鑰無需再走一次。
 
-### 決策 2：keyx 紀錄走 gossip；產生方＝完整穩定名冊的最小 userId（三道閘門）
+### 決策 2：keyx 紀錄走 gossip；產生方＝完整穩定名冊的最小 userId（三道閘門，已由修訂十取代）
 
 內容金鑰產生方用 `RoomKeyDistribution.sealRoomKeyForAll` 封給所有在場成員，以
 `channel:'keyx'` 寫進 gossip 管線（與一般訊息同一條對帳，遲入/重進靠 anti-entropy 補齊）。
@@ -369,3 +369,18 @@ rejoin 重建的截止是盲目牆鐘（REJOIN_READY_TIMEOUT_MS 15s），而該�
 READY_GRACE_MS(10s) 續等，無進展維持立即失敗走乾淨重試。修的是判準不是加長牆
 （誠實條款）；只放行差最後一哩者。證據：三路徑單元（stash 對照修前 2/3 紅）、
 rejoin 8/8（基線 8 輪 1 紅）、3 人矩陣與 @vue-stable 不動搖。
+
+## 修訂十（2026-09-03）：producer 改由入房順序選舉（Spec 027）
+
+完整 Vue stable gate 再現 Spec 018 未覆蓋的競態：晚加入者成為新 min-uid 時，首輪
+anti-entropy 尚未抵達，本地 store 與金鑰環同時為空。舊閘門要求「已有他人紀錄」才
+等待，因此把這個短暫空窗誤判成 bootstrap，先發另一把 epoch 0；舊 keyx 又未封給新人，
+新人無法從金鑰環的跨 producer 衝突回呼得知分裂，造成新人訊息在舊成員端永久解不開。
+
+固定靜默 12 秒的壓測仍能在 backfill 更晚時重現碰撞，因此延長等待不是協議解法。決策：
+`rosterFromRoom` 保留 Firestore `participants` 的權威入房順序，producer 由「userId 最小」
+改為「最資深仍在線 participant」。晚加入者不會再奪權；原 producer 已持有現行 key，看到
+名冊加入後直接以 `max(已安裝, 已觀察)+1` 為新人換代。producer 離場時由次資深者接手，
+它在籍期間已持有現行 key，同樣能單調換代。既有 `HANDOVER_GRACE` 保留為異常 hydrate／
+自架 directory 的第二層防線，bootstrap 延遲不變。另將 coordinator 的重疊 `tick()` 合併
+為同一個在途 Promise，避免單節點慢輪次自行重複產鑰。

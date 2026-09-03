@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-08-26（0.11.0 已發佈 npm：共享狀態＋檔案傳輸＋同代異鑰修復＋資料類型指南；四個消費者驗證過，含花朝月夕OS 內建 app 的真聊天實測）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-09-03（npm 最新版仍為 0.11.1；0.12.0 候選已完成斷網會合功能、本輪 keyx producer 競態修復與本機完整驗證，尚未發佈）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -15,13 +15,28 @@
 
 | 層級 | 最新基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；**1570 tests** 全綠（既有 7 warnings；實測 2026-08-03） |
-| SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入兩個進入點 |
+| Core quality | TypeScript、ESLint gate 通過；**164 files / 1710 tests** 全綠（既有 7 warnings；實測 2026-09-03） |
+| SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入三個進入點（21/4/2 匯出） |
 | Firestore rules | Emulator-backed **54/54**；含 room takeover、非成員 signal injection、收件人資格、payload 形狀／大小回歸 |
 | React P0 E2E | Emulator-backed **6/6**（2026-08-03；建房、加入、E2EE 握手、雙向訊息、離房） |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
-| Nuxt stable E2E | `@vue-stable` 9/9 本機基線，固定 1 worker 隔離 spec；兩週 CI 觀察尚未完成 |
+| Nuxt stable E2E | stable gate **13/13**（12 條旅程＋同 process warmup）；migration 5/5、p2p2p introduction 3/3 重複壓測全綠；硬閘變更已完成、待提交生效 |
+| Offline rendezvous E2E | 真 HTTP 會合點＋兩個隔離 Chromium：單人等待、兩人 P2P/E2EE、訊息互通 **1/1** |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
+
+## 2026-09-03 E2EE producer 與 Vue gate 收斂（Spec 027）
+
+- 找到 migration 偶發永久解密失敗根因：producer 以隨機 mesh userId 字典序選舉，晚加入者若
+  恰好更小，會在 anti-entropy 補到舊 keyx 前誤發另一把 epoch 0。固定多等 12 秒仍可重現，
+  因此不再以延長 timeout 掩蓋競態。
+- `rosterFromRoom` 改保留 Firestore `participants` 的權威入房順序，最早入房且仍在線者續任
+  producer；其離房後由已持有現行 key 的次資深者單調換代。`tick()` 同時改為 single-flight，
+  防止密碼運算或廣播超過 interval 時同一節點重複產生同代異鑰。
+- 新增晚加入者不奪權、舊 producer 離房交接、重疊 tick、雙房獨立 bootstrap 與跨房隔離回歸鎖。
+  2026-09-03 本機：核心 1710/1710、stress 22/22、Vue stable 13/13、Nuxt typecheck/generate、
+  rendezvous bundle、真瀏覽器雙人會合 1/1 與 npm pack smoke 全綠。
+- GitHub Actions API 查核 2026-08-18 至 09-02 的 16 次排程：Vue E2E job 與測試 step 全部
+  success，已滿足 ADR-0017 兩週連續綠；本工作樹已移除 `continue-on-error`，待提交後正式生效。
 
 ## 2026-08-03 授權與 AI gateway 收斂
 
@@ -75,8 +90,8 @@
 
 - 引擎已搬離 `src/features`，刪 React 產線不會打斷 SDK 公開契約（這是原本最大的風險）。
 - 動態 import 圍籬已補，刪除後若有殘留引用會被測試抓到。
-- 尚待：Vue `@vue-stable` 觀察期至 2026-08-01、P0/P1 parity 清零、Vue production smoke
-  三路全綠、視覺驗收與可回退 artifact（ADR-0017 門檻，缺一不可）。
+- 尚待：確認 P0/P1 parity 清零、Vue production smoke 三路全綠、產品負責人視覺驗收與
+  可回退 artifact（ADR-0017 門檻，缺一不可）。Vue E2E 觀察期已完成，硬閘變更待提交。
 - 屆時可刪：`src/features`（React UI 部分）、`src/pages`、`src/components`、`src/contexts`、
   `src/hooks` 共約 7,000 行，以及 `tests/e2e/` 的 React 專屬 spec。
 
@@ -119,16 +134,16 @@
 ### Nuxt 接班
 
 - CI `vue-quality` 已是硬閘：`nuxt typecheck`＋`nuxt generate`。
-- CI `vue-e2e` 的觀察期起算日修正為 2026-07-18（該 job 到 CI #168 才存在，原記的 07-16 尚未建），
-  最早 2026-08-01 才可移除 `continue-on-error`。截至 07-26 共 6 次執行全綠（#168-170、#172-174），
-  但只分佈在 2 個活躍日。
-- `@vue-stable` 已從 2 條擴至 10 條（2026-07-18 新增 Spec 010 遷移窗回歸鎖 `migration-window.spec.ts`，本機連跑 3 次綠）；parity matrix 見 `docs/VUE-PARITY.md`。這不縮短既定觀察期。
+- CI `vue-e2e` 的兩週觀察已完成：2026-08-18 至 09-02 共 16 次排程的 job 與實際測試 step
+  全綠；2026-09-03 工作樹已移除 `continue-on-error`，提交後成為硬閘。
+- `@vue-stable` 已擴至 12 條旅程；另將 `_warmup` 納入同一 Playwright process，完整 gate
+  為 13/13。parity matrix 見 `docs/VUE-PARITY.md`。
 - Production 切換完整門檻見 ADR-0017：Vue E2E 硬閘、P0/P1 清零、Vue production smoke 三路全綠、視覺驗收與可回退 artifact，缺一不可。
 
 ## 目前優先序
 
-1. React stable CI 已於 2026-07-26 翻硬閘（12 次執行零紅，依據見 `ci.yml` 該 step 註解）。
-   Vue stable CI 觀察到 2026-08-01；期間補齊 P0/P1 parity，不提前切 production。
+1. 提交 Vue stable 硬閘變更，確認新指令（含同 process warmup）在 CI 首跑全綠；接著完成
+   P0/P1 parity、Vue production smoke 三路、視覺驗收與可回退 artifact，再決定 production 切換。
 2. 規劃跨裝置加密備份、私鑰復原與多副本合併；本機重載耐久已完成，但不能把複製 JSON 當備份。
 3. 由專案擁有者套用原生 TTL policy；成本儀表板、可信總量配額與 cleanup Functions 部署仍需 Blaze／Cloud Billing 決策。
 4. 取得真實使用資料後再擴功能；避免 React、Vue、SDK 三面同時發散。
@@ -149,9 +164,9 @@
   - `mesh-diagnostic-7p`：單機 7 瀏覽器負載下連線成形失敗（8 次 ICE restart），
     維持 Spec 011 既記錄的殘留（待低負載機器/CI 重跑）。
 
-- CI 中 React stable E2E 已是硬閘（2026-07-26 翻）；Vue stable E2E 仍是 soft gate，截止日 2026-08-01。
-  觀察期先前按日曆走、證據卻只按推送走（07-18 至 07-25 七天零樣本），已加每日 schedule 觸發解耦。
-- Nuxt 最大 bundle chunk 約 568 kB；不擋 correctness，但切 production 前應評估載入成本。
+- CI 中 React stable E2E 已是硬閘；Vue stable E2E 的觀察證據已達標，本工作樹亦已移除 soft
+  gate，但在變更提交並由 CI 綠燈前仍不能把它當成遠端已生效。
+- Nuxt 本次最大 bundle chunk 約 683 kB；不擋 correctness，但切 production 前應評估載入成本。
 - SDP offer/answer 尚未升級為平台級簽章身分；Firebase auth/rules 是現階段信令完整性邊界。
 - 信使欠條是每信使本地權威債權簿，同瀏覽器已耐久；跨裝置備份、私鑰復原與多副本合併尚未設計。
 - TTL 欄位、rules、設定腳本與 cleanup Functions 程式已就位，但未持 GCP 權限實際套用 TTL，也未升級 Blaze／部署 Functions。

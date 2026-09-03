@@ -146,7 +146,7 @@ async function settle(
 describe('P2-②c keyx 整合模擬（真協調器 + 真 handler + 真 crypto）', () => {
   it('3 人分發→收斂；加人→epoch 遞增全員解得開；新人開不了加入前歷史（前向保密）', async () => {
     const net = new SimNetwork();
-    // 名冊為可變共享狀態；userId 前綴保證產生方（字典序最小）確定
+    // 名冊為可變共享狀態；陣列第一位是最早入房且仍在線的產生方
     let roster = {
       members: [] as Array<{ userId: string; ecdhPubKey?: string }>,
       participantCount: 0,
@@ -329,8 +329,8 @@ describe('Spec 017：產生方 rejoin 金鑰自我復原', () => {
   });
 });
 
-describe('Spec 018：產生方交接不撞代（第四道閘門整合）', () => {
-  it('更小 uid 晚加入：先收 backfill 再收 keyx，不再出現第二把 epoch 0，全場單調收斂', async () => {
+describe('Spec 027：producer 依入房順序續任', () => {
+  it('更小 uid 晚加入且本地 store 尚空：既有 producer 直接換代，新人不發 epoch 0', async () => {
     const net = new SimNetwork();
     let roster = {
       members: [] as Array<{ userId: string; ecdhPubKey?: string }>,
@@ -338,7 +338,7 @@ describe('Spec 018：產生方交接不撞代（第四道閘門整合）', () =>
     };
     const rosterFn = () => roster;
 
-    // 既有房：bob(n2) 為 min-uid 產生方，與 carol(n3) 收斂 epoch 0
+    // 既有房：bob 最早加入，為 producer，與 carol 收斂 epoch 0。
     const bob = await SimNode.create('n2-bob', net, rosterFn);
     const carol = await SimNode.create('n3-carol', net, rosterFn);
     roster = {
@@ -350,47 +350,31 @@ describe('Spec 018：產生方交接不撞代（第四道閘門整合）', () =>
     );
     await bob.handler.sendMessage('pre-history', 'm0');
     await net.flush();
-    const bobKeyxWire = net.sentWires.find((w) => w.channel === 'keyx' && w.senderId === 'n2-bob')!;
-    const bobChatWire = net.sentWires.find(
-      (w) => (w.channel ?? 'chat') === 'chat' && w.senderId === 'n2-bob'
-    )!;
-
-    // n1-alice 晚加入成為新任 min-uid：backfill（他人聊天紀錄）先到、keyx 未到
+    // n1-alice 晚加入且 userId 字典序更小；真實競態下本地 store 在首輪 anti-entropy 前仍為空。
     const alice = await SimNode.create('n1-alice', net, rosterFn);
     roster = {
-      members: [alice, bob, carol].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      // participants 權威順序：bob、carol 已在房內，alice 最晚加入。
+      members: [bob, carol, alice].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
       participantCount: 3,
     };
-    await alice.handler.handleReceivedMessage(structuredClone(bobChatWire), 'n2-bob');
-    expect(alice.handler.getMaxKnownEpoch()).toBe(-1); // 環空、房間已運轉 → 碰撞高危窗
+    expect(alice.handler.getMaxKnownEpoch()).toBe(-1);
+    expect(alice.handler.hasRecordsFromOthers()).toBe(false);
 
-    // 寬限窗內（穩定 1 tick + 寬限 2 tick）：alice 不得分發（修前此處產生第二把 epoch 0）
-    for (let i = 0; i < 3; i++) {
-      for (const n of [alice, bob, carol]) await n.coord.tick();
-      await net.flush();
-    }
-    expect(
-      net.sentWires.some((w) => w.channel === 'keyx' && w.senderId === 'n1-alice')
-    ).toBe(false);
-
-    // 既有 keyx 經 anti-entropy 到達：alice 開不了（未封給她，前向保密），
-    // 但 epoch metadata 可讀 → 交接基底成立
-    await alice.handler.handleReceivedMessage(structuredClone(bobKeyxWire), 'n2-bob');
-    expect(alice.handler.getMaxKnownEpoch()).toBe(-1); // 開不了＝環仍空（前向保密不破）
-    expect(alice.handler.getMaxObservedKeyxEpoch()).toBe(0); // 但知道現行代
-    await settle(net, [alice, bob, carol], () =>
+    await settle(net, [bob, carol, alice], () =>
       [alice, bob, carol].every((n) => n.handler.getMaxKnownEpoch() === 1)
     );
 
-    // 碰撞不存在：alice 發過的 keyx 全部 epoch ≥ 1
+    // 晚加入的 alice 從未成為 producer；bob 直接由 epoch 0 換到 1。
     const aliceKeyx = net.sentWires.filter(
       (w) => w.channel === 'keyx' && w.senderId === 'n1-alice'
     );
-    expect(aliceKeyx.length).toBeGreaterThan(0);
-    for (const w of aliceKeyx) {
-      const payload = JSON.parse(w.content) as { keys: Array<{ epoch: number }> };
-      expect(payload.keys.every((k) => k.epoch >= 1)).toBe(true);
-    }
+    expect(aliceKeyx).toHaveLength(0);
+    const bobEpochs = net.sentWires
+      .filter((w) => w.channel === 'keyx' && w.senderId === 'n2-bob')
+      .flatMap((w) =>
+        (JSON.parse(w.content) as { keys: Array<{ epoch: number }> }).keys.map((k) => k.epoch)
+      );
+    expect(bobEpochs).toContain(1);
 
     // 新代訊息全員可解（雙向）
     await alice.handler.sendMessage('post-handover', 'm1');
@@ -402,5 +386,24 @@ describe('Spec 018：產生方交接不撞代（第四道閘門整合）', () =>
     await net.flush();
     expect(bob.displayed).toContain('carol-after');
     expect(alice.displayed).toContain('carol-after');
+
+    // 最早入房的 bob 離開後，次資深的 carol 已持有 epoch 1，可接手產生 epoch 2。
+    roster = {
+      members: [carol, alice].map((n) => ({ userId: n.userId, ecdhPubKey: n.ecdhPubB64 })),
+      participantCount: 2,
+    };
+    await settle(net, [carol, alice], () =>
+      [carol, alice].every((n) => n.handler.getMaxKnownEpoch() === 2)
+    );
+    expect(carol.handler.getMaxKnownEpoch()).toBe(2);
+    expect(alice.handler.getMaxKnownEpoch()).toBe(2);
+    expect(bob.handler.getMaxKnownEpoch()).toBe(1);
+
+    bob.displayed.length = 0;
+    await alice.handler.sendMessage('after-oldest-left', 'm3');
+    await net.flush();
+    expect(carol.displayed).toContain('after-oldest-left');
+    expect(bob.displayed).not.toContain('after-oldest-left');
+    expect(bob.displayed.some((s) => s.includes('🔒'))).toBe(true);
   });
 });

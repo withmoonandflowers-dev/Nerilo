@@ -37,19 +37,32 @@ async function main(): Promise<void> {
     localStorage.setItem('nrz-name', name);
   });
 
+  const directory = createHttpRoomDirectory(location.origin, room, uid);
   const client = await createChatClient({
     roomId: room,
     userId: uid,
     identityNamespace: uid,
     signaling: createHttpSignaling(location.origin, { pollMs: 400 }),
-    directory: createHttpRoomDirectory(location.origin, room, uid),
+    directory,
   });
 
-  client.onStatus(({ transport, encryption }) => {
-    const ready = transport === 'p2p' && encryption === 'ready';
-    $('status').textContent = ready ? '已連線（P2P 直連＋端到端加密）' : `連線中…（${transport} / ${encryption}）`;
+  // 「一個人在房裡」不是連線問題，但看起來像——實地場測踩到：只開一台裝置就一直
+  // 顯示連線中。用名冊人數把兩種狀態分開講。
+  let roster = 1;
+  let last = { transport: '', encryption: '' };
+  const render = () => {
+    const ready = last.transport === 'p2p' && last.encryption === 'ready';
+    if (ready) {
+      $('status').textContent = `已連線（P2P 直連＋端到端加密，房內 ${roster} 人）`;
+    } else if (roster <= 1) {
+      $('status').textContent = '房裡目前只有你。請第二台裝置開同一個網址加入，才會開始連線。';
+    } else {
+      $('status').textContent = `連線中…（房內 ${roster} 人；${last.transport} / ${last.encryption}）`;
+    }
     $('status').className = ready ? 'ok' : '';
-  });
+  };
+  directory.watchIdentities((snap) => { roster = snap.participants.length; render(); });
+  client.onStatus(({ transport, encryption }) => { last = { transport, encryption }; render(); });
 
   const list = $('messages');
   const add = (from: string, text: string, mine: boolean) => {

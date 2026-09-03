@@ -1,7 +1,7 @@
 /**
  * ADR-0023 P2-②c：RoomKeyCoordinator — 產生方側編排
- * - 產生方（完整穩定名冊中 userId 字典序最小者）分發 keyx；封給所有其他成員、安裝本機金鑰
- * - 三道閘門：全員 ecdh 就緒（eligible==participants）＋名冊連續穩定＋完整名冊最小者
+ * - 產生方（完整穩定名冊中最早入房且仍在線者）分發 keyx；封給全體成員、安裝本機金鑰
+ * - 三道閘門：全員 ecdh 就緒（eligible==participants）＋名冊連續穩定＋完整名冊最資深者
  * - 冪等：穩定名冊只分發一次；名冊變動才重發（epoch = 已知最高+1）
  * - 非產生方 / 名冊<2 / 自己未在名冊 / participant 未全就緒 → no-op（無鑰退明文相容）
  * - 密碼學鏈：分發的 keyx 內，成員以自己的 ECDH 私鑰開得出「與本機安裝的同一把」金鑰
@@ -174,7 +174,51 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     expect(payload.keys.every((k) => k.epoch === 1)).toBe(true);
   });
 
-  it('非產生方（非最小 userId）：不分發', async () => {
+  it('重疊 tick 共用同一輪分發，不會產生同 producer/epoch 異鑰', async () => {
+    const { coord, sendKeyx, applyLocalKey, loadRoster, aliceEcdhPubB64 } = await setup();
+    const bob = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+      ],
+      participantCount: 2,
+    });
+
+    // 先完成初次分發，再用名冊變更觸發下一代；該輪在 sendKeyx 暫停，模擬超過 interval。
+    await tickStable(coord);
+    sendKeyx.mockClear();
+    applyLocalKey.mockClear();
+    const carol = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'a-user', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'b-user', ecdhPubKey: await spkiB64(bob.publicKey) },
+        { userId: 'c-user', ecdhPubKey: await spkiB64(carol.publicKey) },
+      ],
+      participantCount: 3,
+    });
+    await coord.tick(); // 名冊變動，穩定計數歸零
+    let releaseSend!: () => void;
+    const sendPaused = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    sendKeyx.mockImplementationOnce(() => sendPaused);
+
+    const first = coord.tick();
+    await vi.waitFor(() => expect(sendKeyx).toHaveBeenCalledTimes(1));
+    const overlapping = coord.tick();
+
+    expect(overlapping).toBe(first);
+    expect(sendKeyx).toHaveBeenCalledTimes(1);
+    releaseSend();
+    await Promise.all([first, overlapping]);
+
+    expect(sendKeyx).toHaveBeenCalledTimes(1);
+    expect(applyLocalKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('非產生方（非最資深 participant）：不分發', async () => {
     const { coord, sendKeyx, loadRoster } = await setup({ localUserId: 'z-user' });
     loadRoster.mockResolvedValue({
       members: [
@@ -185,6 +229,23 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     });
     await tickStable(coord);
     expect(sendKeyx).not.toHaveBeenCalled();
+  });
+
+  it('較晚加入者即使 userId 較小也不奪權，由名冊第一位續任 producer', async () => {
+    const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup({
+      localUserId: 'z-incumbent',
+    });
+    const newcomer = await ecdhPair();
+    loadRoster.mockResolvedValue({
+      members: [
+        { userId: 'z-incumbent', ecdhPubKey: aliceEcdhPubB64 },
+        { userId: 'a-newcomer', ecdhPubKey: await spkiB64(newcomer.publicKey) },
+      ],
+      participantCount: 2,
+    });
+
+    await tickStable(coord);
+    expect(sendKeyx).toHaveBeenCalledTimes(1);
   });
 
   it('名冊只有自己（<2 有效成員）：不分發（維持明文相容）', async () => {
@@ -216,9 +277,18 @@ describe('RoomKeyCoordinator（P2-②c 產生方編排）', () => {
     // C 已 leaveRoom → 不在 participants
     const r = rosterFromRoom(meshIdentities, ['uidA', 'uidB']);
     expect(r.participantCount).toBe(2);
-    expect(r.members.map((m) => m.userId).sort()).toEqual(['a-user', 'b-user']);
+    expect(r.members.map((m) => m.userId)).toEqual(['a-user', 'b-user']);
     // 關鍵：離開者 c-user 不在名冊 → 產生方不會續封鑰給它
     expect(r.members.some((m) => m.userId === 'c-user')).toBe(false);
+  });
+
+  it('rosterFromRoom：輸出順序跟隨 participants，而非 meshIdentities object 順序', () => {
+    const meshIdentities = {
+      uidNew: { userId: 'a-new', ecdhPubKey: 'A'.repeat(60) },
+      uidOld: { userId: 'z-old', ecdhPubKey: 'Z'.repeat(60) },
+    };
+    const r = rosterFromRoom(meshIdentities, ['uidOld', 'uidNew']);
+    expect(r.members.map((m) => m.userId)).toEqual(['z-old', 'a-new']);
   });
 
   it('rosterFromRoom：空/未定義輸入安全', () => {
@@ -318,7 +388,7 @@ describe('Spec 018：第四道閘門（產生方交接寬限）', () => {
     expect(lastKeyx(sendKeyx).keys.every((k) => k.epoch === 1)).toBe(true); // 單調，無同代異鑰
   });
 
-  it('bootstrap（無他人紀錄）：立即分發 epoch 0，行為與閘門加入前一致', async () => {
+  it('bootstrap（無他人紀錄）：立即分發 epoch 0', async () => {
     const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup({
       hasForeignRecords: () => false,
     });
@@ -331,7 +401,7 @@ describe('Spec 018：第四道閘門（產生方交接寬限）', () => {
 
   it('liveness：寬限窗盡仍無 keyx → 照發 epoch 0（有界等待）', async () => {
     const { coord, sendKeyx, loadRoster, aliceEcdhPubB64 } = await setup({
-      hasForeignRecords: () => true, // 永遠有他人紀錄但 keyx 永不到（理論明文房）
+      hasForeignRecords: () => true,
     });
     loadRoster.mockResolvedValue(await rosterAB(aliceEcdhPubB64));
 
