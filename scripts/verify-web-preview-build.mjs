@@ -28,6 +28,7 @@ if (!fs.existsSync(path.join(outputDir, 'index.html'))) {
 
 const searchableExtensions = new Set(['.html', '.js', '.json']);
 let generatedText = '';
+const executableInlineScripts = [];
 const pending = [outputDir];
 while (pending.length > 0) {
   const current = pending.pop();
@@ -35,7 +36,17 @@ while (pending.length > 0) {
     const child = path.join(current, entry.name);
     if (entry.isDirectory()) pending.push(child);
     else if (searchableExtensions.has(path.extname(entry.name))) {
-      generatedText += fs.readFileSync(child, 'utf8');
+      const contents = fs.readFileSync(child, 'utf8');
+      generatedText += contents;
+      if (path.extname(entry.name) === '.html') {
+        const inlineScriptPattern = /<script\b(?![^>]*\bsrc\s*=)([^>]*)>([\s\S]*?)<\/script>/gi;
+        for (const match of contents.matchAll(inlineScriptPattern)) {
+          const attributes = match[1] ?? '';
+          const source = match[2]?.trim() ?? '';
+          if (!source || /\btype=["']application\/(?:json|ld\+json)["']/i.test(attributes)) continue;
+          executableInlineScripts.push(path.relative(outputDir, child));
+        }
+      }
     }
   }
 }
@@ -48,6 +59,13 @@ if (!generatedText.includes(expectedAuthDomain)) {
 }
 if (generatedText.includes(forbiddenAuthDomain)) {
   fail(`Generated output contains forbidden production auth domain "${forbiddenAuthDomain}".`);
+}
+if (executableInlineScripts.length > 0) {
+  fail(
+    `Generated output contains CSP-blocked executable inline scripts: ${[
+      ...new Set(executableInlineScripts),
+    ].join(', ')}.`
+  );
 }
 
 console.log(`[preview-build] Output is pinned to Firebase project "${expectedProject}".`);

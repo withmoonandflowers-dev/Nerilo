@@ -7,7 +7,7 @@
 - Nerilo 是可嵌入的 P2P 韌性資料傳遞層；聊天是參考應用，不是最終產品邊界。
 - repo 已於 2026-07-16 轉為公開（Apache-2.0）；GitHub Actions 額度限制解除。
 - SDK `0.11.1` 已於 2026-08-26 發佈 npm（0.11.1 修：createChatClient 補 identityNamespace，同源多實例聊天嵌入者必傳）；三入口乾淨環境安裝驗證過（14/4/2 執行期匯出，型別檔齊）。六類資料 API 齊全：訊息（恰好一次＋E2EE）、共享狀態（Spec 025）、檔案傳輸（Spec 026）、raw 通道（023）、房間目錄（014）、狀態感知（024）。0.11.0 同批瘦身移除三個冗餘出口，破壞性變更見 CHANGELOG。API 在 0.x 階段尚未鎖定。
-- React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版已有隔離的 `nerilo-staging` 手動 preview pipeline，但尚未取得切 production 資格，也尚未由本機完成首次 preview deploy。
+- React 版仍是 Firebase Hosting production；Nuxt/Vue 接班版已部署隔離的 `nerilo-staging` preview，尚未取得切 production 資格。
 - Firebase Functions 未部署。Hosting 與 Firestore rules/indexes 由 master push workflow 部署；需 Blaze／Cloud Build 的 Functions 能力仍刻意排除。
 - Lemon Squeezy／Netlify webhook 付款鏈已驗證，但 store 仍在 test mode。Pro 首個伺服器端強制權益＝房間容量 10 人（Spec 011）；發放路徑補完（2026-07-18）：手動發放 scripts/grant-plan.mjs、web-vue 建房 sheet 升級入口（PlanCapacityLine）、兩線付款後 focus 強制刷新 token、rules 整合測試 token.plan 五例。
 
@@ -98,8 +98,9 @@
 
 - 引擎已搬離 `src/features`，刪 React 產線不會打斷 SDK 公開契約（這是原本最大的風險）。
 - 動態 import 圍籬已補，刪除後若有殘留引用會被測試抓到。
-- 尚待：確認 P0/P1 parity 清零、Vue production smoke 三路全綠、產品負責人視覺驗收與
-  可回退 artifact（ADR-0017 門檻，缺一不可）。Vue E2E 觀察期已完成，硬閘變更待提交。
+- 尚待：Vue staging smoke 的 TURN 路徑轉綠、產品負責人視覺驗收與實體雙裝置驗收
+  （ADR-0017 門檻，缺一不可）。Vue E2E 觀察期與硬閘已完成；2026-09-03 staging
+  direct 與 honest fallback smoke 通過，relay-only 因尚未配置可信 TURN 而正確失敗。
 - 屆時可刪：`src/features`（React UI 部分）、`src/pages`、`src/components`、`src/contexts`、
   `src/hooks` 共約 7,000 行，以及 `tests/e2e/` 的 React 專屬 spec。
 
@@ -150,8 +151,8 @@
 
 ## 目前優先序
 
-1. 提交 React release E2E 硬閘與重整歷史修復、確認遠端首跑；接著部署隔離的 Vue staging
-   preview，完成 direct／TURN／honest fallback 三路 smoke、視覺驗收與可回退 artifact，再決定 production 切換。
+1. 為 `nerilo-staging` 配置可信 TURN 並讓 relay-only smoke 轉綠；接著完成產品負責人視覺
+   驗收與實體雙裝置驗收。preview、direct／honest fallback smoke 與可重建輸出已完成。
 2. 規劃跨裝置加密備份、私鑰復原與多副本合併；本機重載耐久已完成，但不能把複製 JSON 當備份。
 3. 由專案擁有者套用原生 TTL policy；成本儀表板、可信總量配額與 cleanup Functions 部署仍需 Blaze／Cloud Billing 決策。
 4. 取得真實使用資料後再擴功能；避免 React、Vue、SDK 三面同時發散。

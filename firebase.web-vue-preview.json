@@ -1,4 +1,10 @@
 {
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "anonymous": true
+    }
+  },
   "hosting": {
     "public": "web-vue/.output/public",
     "ignore": ["firebase.web-vue-preview.json", "**/.*", "**/node_modules/**"],

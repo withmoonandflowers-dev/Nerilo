@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
-    "generate": "nuxt generate",
-    "generate:preview": "nuxt generate --dotenv .env.preview",
+    "generate": "nuxt generate && node ../scripts/externalize-nuxt-runtime-config.mjs",
+    "generate:preview": "nuxt generate --dotenv .env.preview && node ../scripts/externalize-nuxt-runtime-config.mjs",
     "preview": "nuxt preview",
     "type-check": "nuxt typecheck",
     "check": "npm run type-check && npm run generate"

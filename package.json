@@ -74,6 +74,7 @@
     "deploy:production": "node scripts/validate-firebase-web-env.mjs --from .env.local --from .env.production --project nerilo --label React-production && npm run build:production && firebase deploy --only hosting --project production",
     "deploy:production:safe": "npm run type-check && npm run lint && npm run test:run && npm run deploy:production",
     "web-vue:preview:build": "node scripts/validate-firebase-web-env.mjs --from web-vue/.env.preview --project nerilo-staging --label Vue-preview && npm run type-check --prefix web-vue && npm run generate:preview --prefix web-vue && node scripts/verify-web-preview-build.mjs --dir web-vue/.output/public --project nerilo-staging --auth-domain nerilo-staging.firebaseapp.com --forbid-auth-domain nerilo.firebaseapp.com",
+    "setup:web-vue:preview-auth": "firebase deploy --only auth --config firebase.web-vue-preview.json --project staging",
     "deploy:web-vue:preview": "npm run web-vue:preview:build && firebase hosting:channel:deploy vue-candidate --config firebase.web-vue-preview.json --project staging --expires 7d",
     "ci": "npm run type-check && npm run lint && npm run test:run",
     "ci:full": "npm run type-check && npm run lint && npm run test:emulator",

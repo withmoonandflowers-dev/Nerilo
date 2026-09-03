@@ -10,7 +10,7 @@ import { consumeOpenGameFlag } from '~/lib/gameRoomFlag'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/core/messaging/reactions'
 import { applyRead, orderKeyOf, type ReadState } from '@legacy/core/messaging/readReceipts'
 import { reactionChipsFor, readReceiptTextFor } from '~/lib/chatDerive'
-import { PlaintextConfirmRequiredError, type EncryptionState } from '@legacy/core/messaging/encryptionGate'
+import { PlaintextConfirmRequiredError, visibleEncryptionState, type EncryptionState } from '@legacy/core/messaging/encryptionGate'
 import { encodeContent, decodeContent } from '@legacy/core/messaging/messageContent'
 import { boundedFallbackDecrypt } from '@legacy/core/messaging/fallbackDecrypt'
 import { MeshGameBus } from '~/lib/meshGameBus'
@@ -53,7 +53,11 @@ function toggleReaction(messageId: string, emoji: string) {
 }
 const reactionChips = (messageId: string) => reactionChipsFor(reactions.value, messageId, myMeshId.value)
 // ── 加密狀態（ADR-0026 R2 fail-visible；確認流細節見 usePlaintextConfirm）──
-const encryptionState = ref<EncryptionState>('exchanging')
+const engineEncryptionState = ref<EncryptionState>('exchanging')
+// 有本機房間金鑰不等於已建立端對端通道；傳輸未連線時不可亮「已加密」鎖頭。
+const encryptionState = computed<EncryptionState>(() =>
+  visibleEncryptionState(engineEncryptionState.value, connectionState.value === 'connected')
+)
 // Spec 009：gossip 協議版本不合（房內有 v1 舊版節點）→ 常駐提示，不靜默降級
 const protocolMismatch = ref(false)
 const { hasKeyConflict, conflictLimitReached } = useKeyConflicts(() => meshChat) // Spec 022 C3
@@ -224,7 +228,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
       const mapped: ConnectionState = s === 'idle' ? 'connecting' : s
       if (mapped !== connectionState.value) connectionState.value = mapped
       const enc = meshChat.getEncryptionState()
-      if (enc !== encryptionState.value) encryptionState.value = enc
+      if (enc !== engineEncryptionState.value) engineEncryptionState.value = enc
       updateCoverage(meshChat.getMeshCoverage(), participantCount) // Spec 011 Q5
     }, 2000)
   } catch (e) {

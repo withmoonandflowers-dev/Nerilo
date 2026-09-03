@@ -25,6 +25,19 @@ export function isEncryptedState(state: EncryptionState): boolean {
 }
 
 /**
+ * 使用者可見的加密狀態必須同時反映金鑰與傳輸：只有內容金鑰就緒且至少一條
+ * 傳輸已連線時才能宣稱端對端加密。底層先產生本機 send key、但 WebRTC 尚未
+ * 建立（或已失敗）時仍顯示 exchanging，避免把「有鑰」誤報成「有加密通道」。
+ */
+export function visibleEncryptionState(
+  state: EncryptionState,
+  transportConnected: boolean
+): EncryptionState {
+  if (state === 'encrypted' && !transportConnected) return 'exchanging';
+  return state;
+}
+
+/**
  * 送出閘攔下（Spec 012 Q2）：房間未達最低安全等級且已定局（真明文房，或交換逾時），
  * 需要使用者顯式確認才可降級送出。UI 收到此錯誤 → 走阻斷式確認流（allowDegraded 重送）；
  * 無確認 UI 的線（React 止血姿態）→ 標記失敗，不得默默明文出手。

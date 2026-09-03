@@ -155,11 +155,16 @@ then publishes the preview channel. Choose a 1, 7 or 30-day expiry at dispatch.
 ```bash
 cp web-vue/.env.preview.example web-vue/.env.preview
 # Fill values from nerilo-staging, then authenticate Firebase CLI.
+npm run setup:web-vue:preview-auth # first deployment only: Email/Password + Anonymous
 npm run deploy:web-vue:preview
 ```
 
-The local command performs the same project-ID guard, type-check and static
-generation before deploying a seven-day preview.
+The one-time Auth setup uses the Firebase CLI provider provisioning path and
+does not upgrade the project to Identity Platform or enable billing. The local
+deploy command performs the same project-ID guard, type-check and static
+generation before deploying a seven-day preview. Generation also externalizes
+Nuxt's runtime config bootstrap so the strict Hosting CSP can keep inline
+JavaScript disabled; the output guard fails if executable inline scripts return.
 
 Run the three release smoke paths against the URL printed by Firebase. The
 smoke config rejects the production Firebase hosts and any non-staging channel:
