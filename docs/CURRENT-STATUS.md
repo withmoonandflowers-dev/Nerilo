@@ -19,7 +19,7 @@
 | SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入三個進入點（21/4/2 匯出） |
 | Firestore rules | Emulator-backed **54/54**；含 room takeover、非成員 signal injection、收件人資格、payload 形狀／大小回歸 |
 | React P0 E2E | Emulator-backed **6/6**（2026-08-03；建房、加入、E2EE 握手、雙向訊息、離房） |
-| React release E2E | 維護中的 P0/P1/P2 **27/27**（2 workers，2026-09-03）；重整歷史、加密 fallback、3 人 mesh、遊戲與 rules 皆納入硬閘 |
+| React release E2E | 維護中的 P0/P1/P2 **21/27，6 項失敗**（2 workers，2026-09-04；來源：`runs/T1v_test-e2e-release_20260904T055849Z.md`）；失敗根因未定位 |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
 | Nuxt stable E2E | stable gate **13/13**（12 條旅程＋同 process warmup）；migration 5/5、p2p2p introduction 3/3 重複壓測全綠；硬閘已提交且遠端首跑成功 |
 | Offline rendezvous E2E | 真 HTTP 會合點＋兩個隔離 Chromium：單人等待、兩人 P2P/E2EE、訊息互通 **1/1** |
@@ -44,7 +44,8 @@
   標成 `@release`，新 workflow 移除 soft gate；舊檔保留為 quarantine，不再冒充發布訊號。
 - 維護套件唯一真回歸是 P1.10：歷史載入綁在 Star ChannelBus ready，頁面重整後 P2P 尚未
   重連時 IndexedDB 有資料但 UI 空白。現在 ChatPage 在加入／連線前先讀本機歷史，並統一
-  IndexedDB 回傳為時間正序；單項 1/1、release 27/27 均已本機通過。
+  IndexedDB 回傳為時間正序；2026-09-03 單項 1/1 本機通過。2026-09-04 同一 SHA 重跑 release 為
+  21/27，6 項失敗且根因未定位（來源：`runs/T1v_test-e2e-release_20260904T055849Z.md`）。
 
 ## 2026-08-03 授權與 AI gateway 收斂
 
