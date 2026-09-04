@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import {
   doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  collection, serverTimestamp, Timestamp,
+  collection, serverTimestamp, Timestamp, arrayUnion, increment,
 } from 'firebase/firestore';
 import {
   clearEmulatorData,
@@ -400,6 +400,129 @@ describe(
         participantCount: 1,
         status: 'open',
         hostMigrationEpoch: 3,
+      });
+    });
+  })
+);
+
+describe(
+  'Firestore Rules: 私有房自行加入',
+  withEmulator(() => {
+    const PRIVATE_ROOM_ID = 'private-join-room';
+
+    beforeEach(async () => {
+      await clearEmulatorData();
+      await adminDb().collection('p2pRooms').doc(PRIVATE_ROOM_ID).set({
+        ownerUid: UID_OWNER,
+        ownerName: 'Owner',
+        roomName: 'Private room',
+        participants: [UID_OWNER],
+        participantCount: 1,
+        maxParticipants: 5,
+        isPrivate: true,
+        status: 'waiting',
+        createdAt: Date.now(),
+      });
+    });
+
+    it('持邀請連結的非成員可盲寫加入私有房，並在取得房籍後啟用等待房', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('private-invitee', token);
+      const roomRef = doc(db, 'p2pRooms', PRIVATE_ROOM_ID);
+
+      await updateDoc(roomRef, {
+        participants: arrayUnion(UID_MEMBER),
+        participantCount: increment(1),
+      });
+      await updateDoc(roomRef, { status: 'open' });
+
+      const room = await adminDb().collection('p2pRooms').doc(PRIVATE_ROOM_ID).get();
+      expect(room.data()?.participants).toEqual([UID_OWNER, UID_MEMBER]);
+      expect(room.data()?.participantCount).toBe(2);
+      expect(room.data()?.status).toBe('open');
+    });
+
+    it('加入前的非成員仍不能讀取私有房內容', async () => {
+      const token = await createTestUser(UID_STRANGER);
+      const { db } = await signInWithToken('private-outsider-read', token);
+      await assertDenied(() => getDoc(doc(db, 'p2pRooms', PRIVATE_ROOM_ID)));
+    });
+
+    it('自行加入時不能夾帶修改房主、房名或容量', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('private-join-tamper', token);
+      await assertDenied(() => updateDoc(doc(db, 'p2pRooms', PRIVATE_ROOM_ID), {
+        participants: arrayUnion(UID_MEMBER),
+        participantCount: increment(1),
+        ownerUid: UID_MEMBER,
+        roomName: 'Tampered',
+        maxParticipants: 10,
+      }));
+    });
+
+    it('自行加入時不能把其他人加入名冊', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('private-join-other', token);
+      await assertDenied(() => updateDoc(doc(db, 'p2pRooms', PRIVATE_ROOM_ID), {
+        participants: arrayUnion(UID_STRANGER),
+        participantCount: increment(1),
+      }));
+    });
+
+    it('participantCount 與 participants 大小不一致時拒絕加入', async () => {
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('private-join-count-mismatch', token);
+      await assertDenied(() => updateDoc(doc(db, 'p2pRooms', PRIVATE_ROOM_ID), {
+        participants: arrayUnion(UID_MEMBER),
+        participantCount: increment(2),
+      }));
+    });
+
+    it('已關閉的私有房仍不可加入', async () => {
+      await adminDb().collection('p2pRooms').doc(PRIVATE_ROOM_ID).update({ status: 'closed' });
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('private-join-closed', token);
+      await assertDenied(() => updateDoc(doc(db, 'p2pRooms', PRIVATE_ROOM_ID), {
+        participants: arrayUnion(UID_MEMBER),
+        participantCount: increment(1),
+      }));
+    });
+
+    it('缺 participantCount 的舊房僅公開房可用絕對值 transaction 退路加入', async () => {
+      const legacyPublicId = 'legacy-public-room';
+      const legacyPrivateId = 'legacy-private-room';
+      const legacyRoom = {
+        ownerUid: UID_OWNER,
+        participants: [UID_OWNER],
+        maxParticipants: 5,
+        status: 'waiting',
+        createdAt: Date.now(),
+      };
+      await adminDb().collection('p2pRooms').doc(legacyPublicId).set({
+        ...legacyRoom, isPrivate: false,
+      });
+      await adminDb().collection('p2pRooms').doc(legacyPrivateId).set({
+        ...legacyRoom, isPrivate: true,
+      });
+      const token = await createTestUser(UID_MEMBER);
+      const { db } = await signInWithToken('legacy-room-invitee', token);
+      const blindJoin = (roomId: string) => updateDoc(doc(db, 'p2pRooms', roomId), {
+        participants: arrayUnion(UID_MEMBER), participantCount: increment(1),
+      });
+
+      await assertDenied(() => blindJoin(legacyPublicId));
+      const publicRoom = await getDoc(doc(db, 'p2pRooms', legacyPublicId));
+      expect(publicRoom.exists()).toBe(true);
+      await updateDoc(doc(db, 'p2pRooms', legacyPublicId), {
+        participants: [UID_OWNER, UID_MEMBER], participantCount: 2, status: 'open',
+      });
+      const joined = await adminDb().collection('p2pRooms').doc(legacyPublicId).get();
+      expect(joined.data()?.participants).toEqual([UID_OWNER, UID_MEMBER]);
+      expect(joined.data()?.participantCount).toBe(2);
+
+      await assertDenied(() => blindJoin(legacyPrivateId));
+      await expect(getDoc(doc(db, 'p2pRooms', legacyPrivateId))).rejects.toMatchObject({
+        code: 'permission-denied',
       });
     });
   })

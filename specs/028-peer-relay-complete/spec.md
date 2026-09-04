@@ -132,7 +132,7 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
 - **R8 PULL 房籍未綁定**：任何能向信使傳送 courier namespace 訊息且知道 `roomId` 的節點，都能拉取該房現存密文，並得知紀錄存在與否、數量及 `senderId` 集合，也可能用重複 `PULL` 放大流量。內容仍需房間金鑰才能解密，但這不構成取回授權。A2 的任何綠燈不得被解讀為「信使取回路徑已授權」；A2 只證明傳輸與補收會運作，不證明存取控制。操作者裁決階段 A 登記但不修，修法納入階段 B 的 protocol 軌 Spec 029。
 - **R9 A2 劇本已降級**：A2 驗證的是同一個 context 離開房間後再回來，不是關閉 context 後還原原身分。報告必須清楚寫出這項邊界，不得宣稱驗過 close-context restore 或關閉裝置後還原身分。
 - **R10 3 人 mesh 金鑰分發的完成性未定位，已隔離**：90 秒等待下，`mesh-diagnostic.spec.ts` 與 `multi-peer.spec.ts` 兩次 release 實跑都在同一個金鑰就緒斷言逾時。依停損條款未再增加 timeout，兩支測試已用 `test.fixme` 隔離。隔離前另開 trace 的測試撞到 240 秒總 timeout，截斷的 `trace.zip` 沒有可用的 DOM 快照；`mesh-diagnostic` 的 console 過濾器也不含 `keyx` 與 sender key 字樣，因此本輪未取得各 context 房間金鑰狀態收斂的證據。退場前須另行設計取樣方式，取得各 context 的狀態收斂證據並定位根因，再移除兩支測試的 `test.fixme` 並回填本節；在那之前不得宣稱 3 人 mesh 的訊息保證已驗證。重查方向是 sender key 分發、成員間 `keyx` 傳播與各 context 的房間金鑰狀態收斂。來源為 `runs/T2v_release-postfix2_20260904T164224Z.md`。
-- **R11 私有房受邀者無法加入，階段 A 不修**：`firestore.rules:281-288` 的讀取規則只允許非私有房、已在 `participants` 的成員或房主讀取房間；`src/services/RoomService.ts:312` 的 `_joinRoomTransaction` 第一步卻是讀取房間文件。私有房受邀者不符合三個條件，因此會收到 `permission-denied`，房主停在 `/waiting/`。verify 的 A/B 實測確認 `isPrivate=true` 時 Bob 被拒且 Alice 停在等待頁，`isPrivate=false` 時可以正常配對。讀取限制自 2026-03-25 存在，smoke 自 2026-08-24 改用 `privateRoom: true` 後即不可能通過；最後一次已知全綠是 2026-07-04。這是影響真實使用者的產品缺陷，不是測試或 TURN 問題。階段 A 不修改，因為 `firestore.rules` 不在本封包允許路徑，而且依 `CLAUDE.md`，master push 會自動把規則部署到 production，屬協作規則第一節第一類的不可逆或對外變更，必須由操作者裁決。修法可能納入同樣處理取用授權的 Spec 029。R11 解決前，V1 relay-only smoke 無法通過。來源為 `runs/T2v_smoke-postfix2_20260904T172948Z.md`。
+- **R11 私有房加入路徑已修復，待 verifier 本機驗證**：T-003 經操作者核准後，`RoomService.joinRoom` 改為先以 `arrayUnion(uid)` 與 `increment(1)` 盲寫本人房籍，再於取得讀取權後用 transaction 檢查狀態，雙人 `waiting` 房才翻成 `open`。新建房同步初始化 `participantCount`，避免原子遞增從缺省值 0 起算而與 `participants.size()` 不一致。既有 update 規則原本已允許只加入自己的寫入，但第二步由既有成員單獨把 `waiting` 翻成 `open` 沒有可用分支，因此新增 `isJoinedWaitingRoomActivationOnly()`。該分支要求本人已在名冊、名冊不變、至少兩人、計數一致、房主不變，且只容許 `status` 與活性時間欄位變更；`firestore.rules:281-288` 的 private room 讀取規則未放寬。相容策略分四種：公開新房與私有新房有初始 `participantCount`，可直接盲寫；公開舊房缺少該欄位時，盲寫會被拒，但文件仍可讀，客戶端會退回舊式 transaction，以名冊長度寫入絕對 `participantCount`；私有舊房盲寫與讀取都會被拒，仍需資料回填後才能加入。`migrating` 仍回報 `room-migrating`，若本次呼叫剛加入，會先以 `isSelfLeaveOnly()` 形狀移除本人，因此存在極短的先加入再退出時窗。`room-closed`、`room-full` 與 `room-not-found` 在拒絕後文件仍可讀，或 SDK 明確回傳 `not-found` 時維持原本可讀錯誤；私有房非成員若盲寫被拒，客戶端仍無權讀取文件，無法可靠區分關閉、滿房、不存在與舊資料缺欄位，只能保留原始 `permission-denied`，log 會提示舊私有房可能需要回填。這是未放寬讀取規則的已知相容與錯誤訊息取捨。新增七條 rules 整合測試與一條 `@release` 私有房邀請回歸測試，尚待 verifier 執行。另有一項需由該 E2E 釐清的 React 邊界：`ChatPage` 目前在呼叫 `joinRoom` 前仍先讀房間，若 private room 非成員在此被擋，須另行修訂允許路徑後處理，不得把單獨 rules 綠燈寫成完整邀請旅程已通過。原始缺陷證據為 `runs/T2v_smoke-postfix2_20260904T172948Z.md`。
 
 ## 5. 任務分解（tasks）
 
@@ -154,10 +154,10 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
   - 數字來源：測試輸出的 `PEER_RELAY_METRICS=<json>`、Playwright list reporter 與 test attachment，由 verifier 彙整成 `runs/T2v_peer-relay-complete_<UTC>.md`。
   - 及格線：指令 exit code 為 0；至少 5 次完整嘗試；`successRate` 為 100%；`duplicateCount` 為 0；每則預期訊息補收後恰好一次；報告同時列出寄存與補收兩跳的 p50/p95 延遲。報告必須明寫「真實兩台實體裝置場測未做」。
 
-- [x] **V3 React release 實際執行的 24 項全數通過**
+- [ ] **V3 React release 實際執行的 25 項全數通過**
   - 指令：`npm run test:e2e:release`。
-  - 數字來源：Playwright list reporter 摘要與 `runs/T2v_release-postfix2_20260904T164224Z.md`。
-  - 及格線：總數維持 27，skip 固定為 3 項，只允許 `security.spec.ts` P2.6、`mesh-diagnostic.spec.ts` 與 `multi-peer.spec.ts`。其餘 24 項須全數通過、0 項失敗，且指令 exit code 為 0；不得出現本節未列出的新增 skip。隔離後實測為 24 過、0 敗、3 skip，exit code 0。若測試總數或隔離清單改變，須先更新本 spec 的分母與理由。
+  - 數字來源：既有基線為 Playwright list reporter 摘要與 `runs/T2v_release-postfix2_20260904T164224Z.md`；T-003 新增案例的結果待 verifier 落檔。
+  - 及格線：總數維持 28，skip 固定為 3 項，只允許 `security.spec.ts` P2.6、`mesh-diagnostic.spec.ts` 與 `multi-peer.spec.ts`。其餘 25 項須全數通過、0 項失敗，且指令 exit code 為 0；不得出現本節未列出的新增 skip。新增私有房邀請案例前的基線為 24 過、0 敗、3 skip，exit code 0；該基線不能證明新增案例已通過。若測試總數或隔離清單改變，須先更新本 spec 的分母與理由。
   - 隔離退場條件：P2.6 取得完整 trace 並定位根因後，移除 `test.fixme` 並回填本節；在那之前不得把它算進通過數，也不得宣稱 leaveRoom 規則已驗證。兩支 R10 測試依第 4.5 節 R10 的退場條件處理。
 
 - [ ] **V4 三個既有閘門維持全綠**
