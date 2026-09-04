@@ -72,15 +72,38 @@ export async function teardown(...users: User[]): Promise<void> {
   }
 }
 
-/** 建房 → 落地 /waiting/{roomId}，回傳 roomId */
-export async function createRoom(page: Page): Promise<string> {
+/** 建房 → 落地 /waiting/{roomId}，回傳 roomId。私有變體只在 test mode 由房主收緊可見性。 */
+export async function createRoom(page: Page, opts?: { privateRoom?: boolean }): Promise<string> {
   await page.getByRole('button', { name: '建立或加入房間' }).click();
   // sheet 內 tab 與 submit 同文字「建立房間」，鎖定表單 submit
   await page.locator('.sheet__form button[type="submit"]').click();
   await expect(page).toHaveURL(/\/waiting\/.+/, { timeout: 10_000 });
   const match = page.url().match(/\/waiting\/([^/?#]+)/);
   if (!match) throw new Error('Could not extract roomId from waiting URL');
-  return match[1]!;
+  const roomId = match[1]!;
+  if (opts?.privateRoom) {
+    await expect.poll(
+      () => page.evaluate(() => {
+        const hook = (window as unknown as { __nerilo_test__?: { firestore?: unknown } }).__nerilo_test__;
+        return !!hook?.firestore;
+      }),
+      { timeout: 10_000 }
+    ).toBe(true);
+    await page.evaluate(async (id) => {
+      const hook = (window as unknown as {
+        __nerilo_test__?: {
+          db?: unknown;
+          firestore?: {
+            doc: (db: unknown, ...path: string[]) => unknown;
+            updateDoc: (ref: unknown, data: Record<string, unknown>) => Promise<void>;
+          };
+        };
+      }).__nerilo_test__;
+      if (!hook?.db || !hook.firestore) throw new Error('test hook firestore 不可用');
+      await hook.firestore.updateDoc(hook.firestore.doc(hook.db, 'p2pRooms', id), { isPrivate: true });
+    }, roomId);
+  }
+  return roomId;
 }
 
 export async function joinRoom(page: Page, roomId: string): Promise<void> {

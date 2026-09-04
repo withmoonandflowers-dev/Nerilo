@@ -58,10 +58,11 @@
 
 ## 3. 待釐清
 
-- [ ] **Q1 私有房的權威入籍寫入**：本規格要求介紹憑證先通過驗證，再由權威房籍記錄 subject。現行 Firestore self-join 是持連結者自行加入，沒有可驗 ECDSA 介紹憑證的寫入閘門。B1 實作前須決定受限的入籍寫入機制，且不得放寬私有房讀取。沒有此裁決時，介紹憑證只能做 protocol 驗證，不能宣稱已強制私有房授權。
-- [ ] **Q2 nonce 的全房消耗狀態**：單一驗證者可以阻止本機重放，但不同成員同時驗證同一 nonce 時仍需共同的已消耗狀態。B1 須決定由權威房籍、經簽章的 room directory gossip 或其他可驗機制收斂。未決前，同一 subject 的重複入籍必須保持冪等，且不得以此宣稱已阻止跨驗證者流量放大。
-- [ ] **Q3 Vue 的 rendezvous 設定來源**：Vue 生產線目前沒有注入 signaling factory 或 directory。B2 須決定 HTTP rendezvous 位址從使用者輸入、邀請資料或部署設定何處取得，以及如何避免把測試用位址寫死進產品。
-- [ ] **Q4 離線入籍後的房籍合併**：Firestore 不可達時，已在房內的成員可依本規格驗證 subject，但離線核准如何在恢復連線後與 Firestore 權威房籍合併尚未定位。衝突、撤銷與舊快照不得以最後寫入者勝出處理。B2 在本題完成前只能驗 signaling 可達，不得宣稱跨 backend 房籍已完整收斂。
+- [ ] **Q1 私有房的權威入籍寫入**：本規格要求介紹憑證先通過驗證，再由權威房籍記錄 subject。現行 Firestore self-join 是持連結者自行加入，沒有可驗 ECDSA 介紹憑證的寫入閘門。本階段不裁決，也不修改 Firestore 規則。後續實作須決定受限的入籍寫入機制，且不得放寬私有房讀取。沒有此裁決時，介紹憑證只能做 protocol 驗證，不能宣稱已強制私有房授權。
+- [x] **Q2 nonce 的全房消耗狀態，本階段處置**：本階段不實作跨驗證者 nonce 收斂，只提供單一驗證者的重放檢查，並要求相同房間、nonce 與 subject 的重複入籍冪等。不同驗證者仍可能各自接受同一憑證，因此不得宣稱已阻止跨驗證者的流量放大。完整收斂依賴 Q1 的權威房籍或可驗簽章 gossip，留待後續規格更新。
+- [x] **Q3 Vue 的 rendezvous 設定來源**：位址固定依序取自邀請資料的 `nrz1.rendezvousUrl`、使用者在 waiting UI 保存的輸入、`VITE_RENDEZVOUS_URL` 部署設定。每層都只接受不含帳密的 `http` 或 `https` URL，不把測試位址寫死進產品。三者皆無有效值時不啟用 HTTP cold，維持既有 Firestore cold。
+- [ ] **Q4 離線入籍後的房籍合併**：Firestore 不可達時，已在房內的成員可依本規格驗證 subject，但離線核准如何在恢復連線後與 Firestore 權威房籍合併尚未定位。衝突、撤銷與舊快照不得以最後寫入者勝出處理。B2 在本題完成前只能驗 signaling 可達，不得宣稱跨後端房籍已完整收斂。
+- [ ] **Q5 HTTP cold 故障後重選 warm**：現行 selector 只有 warm 失敗後黏著單一 cold，HTTP `send` 失敗會直接拋錯。本階段不新增 cold 到 warm 的重選。後續須先定義失敗偵測、可重選條件、單次操作上限與防抖，再做 characterization 與實作；不得以無界 retry 或加長逾時掩蓋故障。
 
 ## 4. 線上格式（wire format）
 
@@ -131,6 +132,7 @@ subject 回覆：
   "credential": { "v": "nintro1" },
   "verifierNodeId": "current-member-node-id",
   "challenge": "與 challenge 相同",
+  "challengeExpiresAt": 1788566430000,
   "signature": "subject 對第 5.2 節 canonical 資料的 Base64 ECDSA 簽章"
 }
 ```
@@ -224,15 +226,15 @@ JSON.stringify(["NERILO-INTRODUCTION-PROOF", "nintro-proof1", roomId,
 
 ### 7.2 介紹人不在，改走本地會合點
 
-`MeshGossipManager.buildWarmColdFactory` 的 warm 優先骨架可以沿用，但 Spec 030 的 cold 必須注入 `createHttpSignaling` 與同一 base URL 的 `createHttpRoomDirectory`，不能只換 signaling。Vue 生產線的 composition root 負責建立這兩個 adapter，並在建構 `MeshChatService` 時一起注入；domain 與 transport 不得自行讀取 Vue runtime 設定。
+`MeshGossipManager.buildWarmColdFactory` 的 warm 優先骨架可以沿用。本階段的 Vue 房間仍以 Firestore directory 作權威名冊，只依 Q3 選出的位址建立 `createHttpSignaling` 並注入 `MeshChatService` 的 cold factory。沒有有效位址時傳入 `undefined`，由 `MeshGossipManager` 動態載入原本的 Firestore signaling。這讓 HTTP 只承載 signaling，不會在 Q4 未決時把無認證 HTTP participants 當成正式房籍。
+
+完全本地的 Spec 027 rendezvous app 仍可同時注入 `createHttpSignaling` 與 `createHttpRoomDirectory`。它是獨立的信任區網模式，不能外推成一般 Firestore 房的權威入場模型。
 
 warm 仍依 ADR-0032 使用 20 秒有界耐心與 NACK。沒有開啟 link，或 warm 在耐心窗內持續 NACK／逾時後，當次 signaling 才可切到 HTTP cold。rendezvous 只搬運 Protocol Spec 007 與本規格的加密 payload；其無認證 participants 不得覆蓋權威房籍。
 
 ### 7.3 會合點故障，改走介紹
 
-這個方向目前尚未實作。HTTP `send` 的網路錯誤、非成功 HTTP 狀態，或 3,000 ms 內未完成都算一次 cold send 失敗。若同一目標此時存在已開啟 warm link，選路器可把同一 signaling operation 改送 warm 一次；沒有 warm link 就回 `no-route`，不得無界重試。
-
-同一 `roomId + remoteNodeId` 在 5,000 ms 內連續兩次 cold send 失敗後，把 HTTP 標為 `unavailable` 10,000 ms。這段冷卻期內不做探測式來回切換。冷卻後須有一次成功健康請求才可標回 `available`。單一 signaling operation 最多跨 backend 重送一次，收端仍依 Protocol Spec 007 的 `from + nonce` 去重。
+這個方向目前尚未實作，並登記為 Q5。本階段若 HTTP cold 的 `send` 失敗，維持現行拋錯，不回頭重試 warm。失敗偵測、重選與防抖的數字須先由後續 characterization 決定；原先的 3,000 ms、5,000 ms 與 10,000 ms 只是假設，沒有實跑依據，從本版規格撤回。不得把「介紹人不在可退 HTTP」寫成「HTTP 掛了也會自動走介紹」。
 
 ### 7.4 房間與名冊銜接
 
@@ -253,7 +255,7 @@ warm 仍依 ADR-0032 使用 20 秒有界耐心與 NACK。沒有開啟 link，或
 ### 8.2 安全考量
 
 - **不可信介紹人**：carrier 可以丟棄、延遲或觀察連線 metadata，但 Protocol Spec 007 保護 SDP，`nintro1` 保護入場對象與資格。兩者解決不同問題。
-- **重放**：subject 綁定、短效憑證、challenge 與 nonce 可阻止一般跨身分重放。跨 verifier 的 nonce 收斂仍受 Q2 限制。
+- **重放**：subject 綁定、短效憑證、challenge 與本機 nonce 檢查可阻止一般跨身分重放。同一 subject 的重複入籍須冪等；本階段沒有跨 verifier 收斂，不得宣稱已阻止跨驗證者的流量放大。
 - **女巫與資源耗盡**：未授權 subject 可大量要求 challenge 或簽發。實作須在驗簽前限制欄位大小，並對每個通道與 room 設有界速率。確切上限由 B1 characterization 回填。
 - **中繼資料**：issuer 與 verifier知道 subject 想加入哪個房；rendezvous 可見傳輸端點、時間與密文大小。隱藏社交圖譜不在本規格範圍。
 - **過期房籍**：verifier 若只持離線舊快照，可能接受已離房 issuer。Q4 未解前，離線情境只能報告已驗 signaling 備援，不能報告已驗完整授權。
@@ -264,7 +266,7 @@ warm 仍依 ADR-0032 使用 20 秒有界耐心與 NACK。沒有開啟 link，或
 
 B1 須將下列案例落在 `tests/unit/InviteRendezvous.spec.ts`、新的 introduction credential 純模組測試，以及 `tests/unit/SigRelayRouter.spec.ts`。不能以 mock 固定回傳通過取代簽章與房籍判定。
 
-- [ ] **C1 合法介紹**：目前仍在籍的 issuer 簽發 subject-bound 憑證；subject 以正確私鑰完成新 challenge 後，權威入籍成功。
+- [ ] **C1 合法介紹**：目前仍在籍的 issuer 簽發 subject-bound 憑證；subject 以正確私鑰完成指定的新 challenge 後，純協議驗證通過。Q1 未決前不把這項結果寫成權威入籍成功。
 - [ ] **C2 非成員簽發者**：issuer 不在 participants，拒絕為 `issuer-not-member`，不寫房籍、不註冊 mesh identity、不分發 keyx。
 - [ ] **C3 冒名 subject**：複製合法憑證但用另一把私鑰簽 proof，拒絕為 `proof-invalid`。
 - [ ] **C4 改欄位**：改 room、subject、issuer、期限、nonce 或 scope 任一欄位，簽章驗證失敗。
@@ -276,30 +278,25 @@ B1 須將下列案例落在 `tests/unit/InviteRendezvous.spec.ts`、新的 intro
 單元驗證指令：
 
 ```sh
-npx vitest run tests/unit/InviteRendezvous.spec.ts tests/unit/SigRelayRouter.spec.ts tests/unit/MeshWarmColdFactory.spec.ts
+npx vitest run tests/unit/IntroductionCredential.spec.ts tests/unit/InviteRendezvous.spec.ts tests/unit/RendezvousConfig.spec.ts tests/unit/HttpRendezvousCold.spec.ts tests/unit/SigRelayRouter.spec.ts tests/unit/MeshWarmColdFactory.spec.ts
 ```
 
 及格線：題列既有案例與 B1 新增的 C1 至 C8 全數通過，0 個 skip，exit code 0。
 
 ### 9.2 三種入場路徑
 
-三條 E2E 必須各自建立一個原本不在 participants 的 browser context，完成授權、進入 `/chat/` 並和既有成員交換一則 E2EE 訊息。只看到房間或只完成 signaling 不算入場成功。
+三條 E2E 必須各自建立一個原本不在 participants 的 browser context，依該路徑完成現有入場、進入 `/chat/` 並和既有成員交換一則 E2EE 訊息。只看到房間或只完成 signaling 不算入場成功。Q1 未決前，介紹路徑的結果只能標為現況 characterization，不能標為 `nintro1` 權威授權驗收。
 
 ```sh
-npx playwright test --config playwright.vue.config.ts tests/e2e-vue/stranger-directory-entry.spec.ts --workers=1
-npx playwright test --config playwright.vue.config.ts tests/e2e-vue/p2p2p-introduction.spec.ts --workers=1
-npx playwright test --config playwright.rendezvous.config.ts tests/e2e-rendezvous/stranger-entry.spec.ts --workers=1
+npx playwright test --config playwright.vue.config.ts tests/e2e-vue/stranger-entry.spec.ts --workers=1
+npx playwright test --config playwright.rendezvous.config.ts tests/e2e-rendezvous/rendezvous-app.spec.ts --workers=1
 ```
 
-及格線：目錄、介紹、本地會合各 1/1 通過，0 個 retry，0 個 skip，每個指令 exit code 0。介紹案例須斷言 issuer 是 participant、subject proof 通過且 carrier 不需是房主。本地會合案例須證明 HTTP participants 沒有被直接當成權威房籍。
+及格線：`stranger-entry.spec.ts` 的公開與私有目錄／素連結、非房主成員介紹公開與私有房共 4/4 通過；既有 `rendezvous-app.spec.ts` 的本地會合 1/1 通過。全部 0 個 retry、0 個 skip，每個指令 exit code 0。現行介紹 E2E 是 characterization，證明不看 ownerUid 與加密中繼會動，不證明 `nintro1` 已接上權威入籍。本地會合案例證明 HTTP 可成房，也不外推為一般房間授權。
 
 ### 9.3 斷 WAN 與雙向故障
 
-```sh
-npx playwright test --config playwright.rendezvous.config.ts tests/e2e-rendezvous/stranger-entry-fallback.spec.ts --workers=1
-```
-
-及格線：至少包含兩個案例且 2/2 通過。第一例阻擋 WAN／Firestore signaling，但保留本地 HTTP rendezvous，陌生人仍能透過已授權的本地路徑進入並交換 E2EE 訊息。第二例讓 HTTP rendezvous 的 `send` 失敗，同時保留一條已開啟 warm link，須在一次跨 backend 重送上限內改走介紹。兩例都須記錄實際 route、切換次數與完成時間，0 個 retry，0 個 skip，exit code 0。這是瀏覽器模擬，不得寫成兩台實體裝置場測。
+本階段沿用 `tests/e2e-rendezvous/rendezvous-app.spec.ts` 驗證本地 HTTP 會合可達，沒有新增斷 WAN 測試，也沒有實作 HTTP cold 失敗後重選 warm。完整雙向故障驗收須等 Q4、Q5 補齊後再定義可執行指令與及格線。在此之前不得宣稱斷 WAN 入籍或雙向自動切換已驗證，也不得把瀏覽器模擬寫成兩台實體裝置場測。
 
 ### 9.4 p2p2p introduction 穩定度
 
@@ -311,18 +308,20 @@ npx playwright test --config playwright.vue.config.ts tests/e2e-vue/p2p2p-introd
 
 ## 10. 參考實作對照與已知偏離
 
-- `src/core/p2p/InviteRendezvous.ts:71-95`：現行 `nrz1` 只有基本 shape 檢查，未實作 `nintro1`、subject proof 或拒絕原因。
-- `web-vue/app/pages/waiting/[roomId].vue:40-75`：現行 fragment 只暫存 introducer hint；本輪只修 R11 的私有房加入前讀取，不實作本協議。
+- `src/core/p2p/InviteRendezvous.ts`：`nrz1` 新增選填 `rendezvousUrl` 並限制為不含帳密的 `http(s)` URL；它仍是路徑提示，不是介紹憑證。
+- `src/core/p2p/IntroductionCredential.ts`：已實作 `nintro1`、subject proof、拒絕原因與本機冪等追蹤的純協議簽驗，尚未接上權威入籍。
+- `web-vue/app/lib/rendezvousConfig.ts`：實作 Q3 三層來源與 URL 正規化，不保存測試專用預設值。
+- `web-vue/app/pages/waiting/[roomId].vue`：接收邀請位址、提供使用者輸入，並把有效位址放入分享連結。R11 加入前讀取修法保留。
 - `src/services/meshIdentityRegistry.ts:50-80`：現行只在登錄時檢查 writer 與 `introducedBy` 是否在 participants，未驗介紹憑證。
 - `src/core/p2p/SigRelayRouter.ts:69-121,223-256`：現行 carrier 由開啟 links 決定，hop 上限 1；沒有入場資格判定。
 - `src/core/mesh/MeshGossipManager.ts:357-423`、`src/core/p2p/WarmColdSignalingTransport.ts:66-131`：只有 warm 到單一 cold 的退守，沒有 cold 到 warm 的健康重選。
 - `src/sdk/httpSignaling.ts:21-121`：HTTP signaling 與 directory 可注入，但 rendezvous 無認證，send 失敗直接拋錯。
-- `web-vue/app/pages/chat/[roomId].vue:188-200`：Vue 建構 `MeshChatService` 時未注入 signaling factory 或 directory，現行 cold 會動態選 Firestore。
+- `web-vue/app/pages/chat/[roomId].vue`：有有效 Q3 位址時注入 HTTP signaling factory，否則保留 Firestore cold；directory 仍用 Firestore，Q4 未解前不做跨後端房籍合併。
 - `tools/rendezvous-server.mjs:3-13,68-149`：本地會合點沒有帳號與房籍授權，participants 不可直接升格為權威房籍。
 - `tests/e2e-vue/p2p2p-introduction.spec.ts:50-141`：現有單一三 context 介紹案例，未涵蓋 `nintro1` 或三種入場路徑。
 
 ### 10.1 B1、B2 實作順序
 
-1. B1 先處理 Q1、Q2，新增純協議模組、拒絕向量與權威入籍寫入，再改 waiting／chat 接線。
-2. B2 處理 Q3、Q4，於 Vue 組裝入口同時注入 HTTP signaling 與 directory，新增 cold 到 warm 重選及防抖。
+1. 本階段 B1 已新增純協議模組、拒絕向量與現況 E2E 回歸鎖。Q1 未決，因此沒有接權威入籍，也不得宣稱私有房介紹授權已強制。
+2. 本階段 B2 已依 Q3 注入可選 HTTP signaling cold。Q4 未決，因此沒有替換 Firestore directory；Q5 未決，因此沒有新增 cold 到 warm 重選與防抖。
 3. 每次實作若發現本規格的通道、權威或時序假設不成立，先更新本 spec 與 ADR，再修改程式。不得默默降級成無憑證入場。
