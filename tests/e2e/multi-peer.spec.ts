@@ -35,9 +35,12 @@ test.describe('P1 multi-peer @release', () => {
       await expectChatReady(alice.page, 60_000);
       await expectChatReady(bob.page, 60_000);
       await expectChatReady(carol.page, 60_000);
-      await expectE2EEReady(alice.page);
-      await expectE2EEReady(bob.page);
-      await expectE2EEReady(carol.page);
+      // 這是送出前置條件的等待，不是每則訊息 20s 的送達 deadline。
+      // 20s 送達 deadline 與 180s 總 test timeout 都未更動；本檔原本沒有 5s 沉澱步驟。
+      // ADR-0004 與 ChatPage.tsx:543 禁止金鑰未就緒時明文降級，因此這是必要前提，不是為了讓測試變綠。
+      await expectE2EEReady(alice.page, 90_000);
+      await expectE2EEReady(bob.page, 90_000);
+      await expectE2EEReady(carol.page, 90_000);
 
       // Each peer sends one tagged message.
       const aMsg = uniqueMessage('A says');

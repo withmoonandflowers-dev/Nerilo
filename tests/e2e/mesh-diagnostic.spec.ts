@@ -10,17 +10,19 @@
  * - 總 test timeout 240s 只涵蓋帳號註冊與 WebRTC/ICE 連線成形（模擬器下
  *   合法地需要 30-60s），可靠性主張完全落在上面兩個數字。
  *
- * 補償不 gating：發送前只等兩個「模式訊號」，不等 full mesh 連滿——
+ * 補償不 gating 指不等待 pairwise DataChannel 全部連線就緒，不包含金鑰就緒：
  * - `.e2ee-indicator-dtls`：頁面已切到 mesh 拓撲。房主的頁面在第 2 人加入時
  *   會先以 2 人星型啟動、第 3 人加入才切 mesh；星型時代送出的訊息屬於另一個
- *   傳輸棧，mesh 對帳管不到（實測會在切換重載時重複或遺失——遷移窗問題，
+ *   傳輸棧，mesh 對帳管不到（實測會在切換重載時重複或遺失，這是遷移窗問題，
  *   Spec 010 拍板：React 線不修、記誠實邊界，由 Vue 切 production 退役星型棧
  *   收斂；Vue 線的回歸鎖在 tests/e2e-vue/migration-window.spec.ts，該測試把
  *   這裡刻意繞開的時窗直接納入斷言）。本診斷驗的是 mesh 的保證，gating 保留。
  * - banner 已連線：mesh 下代表「連上至少 1 個鄰居」，不是全部。
+ * - ADR-0004 生效後，產品會拒絕在房間金鑰未就緒時降級成明文送出，因此仍須等待
+ *   三個成員的金鑰就緒；pairwise DataChannel 連線就緒則維持刻意不等待。
  * 因此發送當下 pairwise DataChannel 常常尚未全就緒（例如 A–C 未通），訊息
  * 必須靠 seq-based anti-entropy 對帳（digest 交換 → 缺哪則補哪則）走任何
- * 已通的路徑補到位——這正是要驗證的補償機制，而非連線就緒 gating。
+ * 已通的路徑補到位。這仍是要驗證的補償機制，不是 pairwise 連線就緒 gating。
  */
 import { test, expect, type Page } from '@playwright/test';
 import {
@@ -77,7 +79,10 @@ test.describe('3 人 mesh 診斷（矩陣全 =1）@release', () => {
       ] as Array<[Page]>) {
         await expect(page.locator('.e2ee-indicator-dtls')).toBeVisible({ timeout: 60_000 });
         await expectChatReady(page, 60_000);
-        await expectE2EEReady(page);
+        // 這是送出前置條件的等待，不是每格 20s 的送達 deadline。
+        // 每格 20s 送達 deadline、5s 沉澱與 240s 總 test timeout 都未更動。
+        // ADR-0004 與 ChatPage.tsx:543 禁止金鑰未就緒時明文降級，因此這是必要前提，不是為了讓測試變綠。
+        await expectE2EEReady(page, 90_000);
       }
 
       // 三人立刻接連發送：此刻部分 pairwise 連線通常尚未成形，靠對帳補
