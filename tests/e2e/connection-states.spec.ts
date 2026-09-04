@@ -81,8 +81,9 @@ test.describe('P1 connection states @release', () => {
 
       // Fallback banner must surface within a reasonable wait. P0.5's
       // expectChatReady accepts either state — here we require fallback.
-      await expect(alice.page.getByText('備援模式')).toBeVisible({ timeout: 30_000 });
-      await expect(bob.page.getByText('備援模式')).toBeVisible({ timeout: 30_000 });
+      // Match the ConnectionBanner's exact accessible name, not the separate E2EE status.
+      await expect(alice.page.getByRole('status', { name: '連線狀態：備援模式', exact: true })).toBeVisible({ timeout: 30_000 });
+      await expect(bob.page.getByRole('status', { name: '連線狀態：備援模式', exact: true })).toBeVisible({ timeout: 30_000 });
 
       // P1.8: the E2EE indicator's fallback variant should be visible.
       await expect(alice.page.locator('.e2ee-indicator-fallback')).toBeVisible({ timeout: 10_000 });

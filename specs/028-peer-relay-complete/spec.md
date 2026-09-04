@@ -60,7 +60,7 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 ## 3. 待釐清（clarify）
 
-- [x] **Q1 原生 coturn 的可達位址與 relay port 範圍，已回答**：coturn 4.17.2 已安裝，執行檔為 `/usr/local/bin/turnserver`。verify 以前景行程只綁 `127.0.0.1` 並加上 `--no-cli`；Chromium 以 `iceTransportPolicy: 'relay'` 取得 `127.0.0.1:49164` 的 relay candidate，port 位於 `--min-port=49160` 至 `--max-port=49200` 範圍，且沒有 `onicecandidateerror`。來源為 `runs/T2v_smoke-prod_20260904T093510Z.md`。測試後關閉行程，不用 `brew services` 長駐；臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo。
+- [x] **Q1 原生 coturn 的可達位址與 relay port 範圍，已回答**：coturn 4.17.2 已安裝，執行檔為 `/usr/local/bin/turnserver`。verify 以前景行程只綁 `127.0.0.1`，並加上 `--no-cli` 與 `--allow-loopback-peers`；後一個旗標是本機兩端都位於 loopback 時的必要條件，未加時 coturn 會拒絕 loopback peer。Chromium 以 `iceTransportPolicy: 'relay'` 取得 `127.0.0.1:49164` 的 relay candidate，relay port 位於 `--min-port=49160` 至 `--max-port=49200` 範圍，且沒有 `onicecandidateerror`；後續獨立量測也確認兩端選中的 candidate 都是 relay，連線狀態為 connected。來源為 `runs/T2v_smoke-prod_20260904T093510Z.md` 與 `runs/T2v_smoke-postfix2_20260904T172948Z.md`。測試後關閉行程，不用 `brew services` 長駐；臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo。
 - [ ] **Q2 A1 的本機受測站位址**：`playwright.smoke.config.ts` 不會啟動 web server。A1 預設以載入 `.env.local` TURN 設定的本機 React dev server 為 `SMOKE_BASE_URL`，不得打未含本輪憑證的正式站。實作時須把確定的 host、port 與啟動指令回填。
 - [x] **Q3 A2 的兩個 context 拓撲，已回答**：`tests/e2e-vue/_helpers/users.ts:18-19` 的 `setupUser` 每次都呼叫 `browser.newContext()`，沒有 `storageState`；第 12 至 13 行也會用新的隨機 email 註冊新帳號。身分私鑰存在 IndexedDB 的 `nerilo_identity`／`keypairs`，位置為 `src/core/mesh/IdentityManager.ts:4-6,32-64`。房間金鑰須靠同一個 profile 的 ECDH 私鑰重播 `keyx` 才能還原，位置為 `src/core/mesh/MeshGossipManager.ts:218-235` 與 `src/core/mesh/RoomContentKeys.ts:193-235`。既有「離開再回來」測試 `tests/e2e-vue/rejoin.spec.ts:38-55` 與 `tests/e2e-vue/all-offline-revival.spec.ts:60-80` 都保留同一個 context，只回 dashboard 再進房。因此，原訂「A 關閉 context 後以原身分重開」無法沿用既有手法完成；第三個全新 context 也沒有 A 的 identity、ECDH 與 `keyx` 本地狀態，不能假冒原 A。處置是依第 4.3 節改用同一個 context 離開再回來。
 - [x] **Q4 A2 的 PULL 授權，已回答**：`CourierServer` 的 `PULL` 分支只有取出 `roomId`、呼叫 `store.serveRoom(roomId)`、回覆 `records`，位置為 `src/core/relay/CourierService.ts:372-376`。這條分支沒有簽章、`pubKey`／`senderId` 綁定、房籍證明或世代閘門。唯一的共通閘門是協議版本與拒絕 `from === selfId`，位置為 `src/core/relay/CourierService.ts:286`。`CourierStore.serveRoom` 只接收 `roomId`，沒有 requester 參數，位置為 `src/core/relay/CourierStore.ts:277-287`。
@@ -78,7 +78,7 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 ### 4.2 A1 可信 TURN
 
-1. 使用已安裝的 coturn 4.17.2，執行檔為 `/usr/local/bin/turnserver`。verify 在 relay-only smoke 前以前景行程啟動，只綁 `127.0.0.1` 並加上 `--no-cli`，測試結束後關閉，不用 `brew services` 長駐。臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo，也不使用需註冊或付款的服務。
+1. 使用已安裝的 coturn 4.17.2，執行檔為 `/usr/local/bin/turnserver`。verify 在 relay-only smoke 前以前景行程啟動，只綁 `127.0.0.1` 並加上 `--no-cli`、`--allow-loopback-peers`；缺少後一個旗標時，本機 loopback 兩端必定無法互通。測試結束後關閉行程，不用 `brew services` 長駐。臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo，也不使用需註冊或付款的服務。
 2. 本機 React 站由 `.env.local` 讀取 `VITE_TURN_URLS`、`VITE_TURN_USERNAME` 與 `VITE_TURN_CREDENTIAL`。這些值不得出現在 spec、commit、console 摘要或 T2v 報告。
 3. 以 `SMOKE_BASE_URL` 指向本機站執行 `npm run smoke:prod`。`tests/smoke/production.smoke.spec.ts` 的 S2 會把 `iceTransportPolicy` 強制設為 `relay`，並斷言選中的本地 candidate 類型為 `relay`。
 4. `scripts/smoke-report.mjs` 讀取 `smoke-artifacts/results.json` 與 `stats.jsonl`，產生 `SMOKE-REPORT.md`。若 S2 沒有統計資料，依第 113 至 119 行先看測試是否在註冊、建房或連線前失敗，不直接判定 TURN 壞掉。
@@ -122,7 +122,7 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
 
 ### 4.5 風險與外部相依
 
-- **R1 原生 coturn 的瀏覽器可達性已驗證**：Chromium 以 `iceTransportPolicy: 'relay'` 直接向只綁 `127.0.0.1` 的 coturn 取得 `candidate:3034062809 1 udp 33562623 127.0.0.1 49164 typ relay raddr 0.0.0.0 rport 0`。relay count 為 1，沒有 `onicecandidateerror`，49164 也位於設定的 49160 至 49200 relay port 範圍。這只證明單一 `PeerConnection` 能取得 relay candidate，尚未證明兩端經 relay 完成連線與訊息往返。來源為 `runs/T2v_smoke-prod_20260904T093510Z.md`。
+- **R1 已結案：兩端經 relay 完成連線與同輪訊息往返**：本機 coturn 只綁 `127.0.0.1` 時，啟動命令必須加上 `--allow-loopback-peers`，否則 coturn 預設拒絕 loopback peer，兩端必定無法互通。加上旗標後，獨立量測取得兩端 `local: relay`、`remote: relay`、`connectionState: connected`，RTT 為 1 至 2 毫秒；訊息送達延遲為 137 毫秒，兩端 E2EE 指示器均到達「端到端加密」。該量測同時看到連線橫幅處於備援模式，因此證據能確認 relay candidate pair 已連線且訊息在同輪送達，但未以 DataChannel 的 `bytesSent`／`bytesReceived` 證明該則訊息實際經 TURN 傳送。來源為 `runs/T2v_smoke-postfix2_20260904T172948Z.md`。
 - **R2 TURN 網路映射錯誤**：coturn 行程啟動不等於瀏覽器取得 relay candidate。及格證據只能是 S2 選中的 relay candidate pair 與成功訊息往返。
 - **R3 憑證外洩**：log、trace 與報告可能收進環境值。落檔前必須掃描 TURN 使用者名稱、密碼與 URL 中的 credential，發現即停止交付並通報操作者，由操作者處理敏感產物。
 - **R4 測試鉤子高估能力**：A2 若直接操作 store 或跳過房籍、簽章、欠條與內容金鑰，只能算模組測試。產品級 E2E 必須走 Vue production 接線。
@@ -131,11 +131,12 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
 - **R7 測試環境誤判**：瀏覽器 E2E 一律由無沙盒 verifier 執行並落檔。Codex 沙盒內的 Chromium 啟動結果不得作為產品狀態證據。
 - **R8 PULL 房籍未綁定**：任何能向信使傳送 courier namespace 訊息且知道 `roomId` 的節點，都能拉取該房現存密文，並得知紀錄存在與否、數量及 `senderId` 集合，也可能用重複 `PULL` 放大流量。內容仍需房間金鑰才能解密，但這不構成取回授權。A2 的任何綠燈不得被解讀為「信使取回路徑已授權」；A2 只證明傳輸與補收會運作，不證明存取控制。操作者裁決階段 A 登記但不修，修法納入階段 B 的 protocol 軌 Spec 029。
 - **R9 A2 劇本已降級**：A2 驗證的是同一個 context 離開房間後再回來，不是關閉 context 後還原原身分。報告必須清楚寫出這項邊界，不得宣稱驗過 close-context restore 或關閉裝置後還原身分。
-- **R10 3 人 mesh 金鑰分發的完成性未定位**：`runs/T2v_release-postfix_20260904T094715Z.md` 顯示預設 20 秒內只有 Alice 約在 16.1 秒到達「端到端加密已啟用（房間金鑰）」，Bob 與 Carol 仍停在「金鑰交換中」。本輪把送出前的金鑰就緒等待明定為 90 秒，這不改送達 deadline、沉澱時間或總 test timeout。若 verifier 重跑後三人仍未全數就緒，不得再增加 timeout；應判定為產品訊號，以「3 人 mesh 金鑰分發是否對所有成員完成，未定位」記錄，並對受影響測試加上 `test.fixme` 隔離。重查方向是 sender key 分發、成員間 `keyx` 傳播與各 context 的房間金鑰狀態收斂。
+- **R10 3 人 mesh 金鑰分發的完成性未定位，已隔離**：90 秒等待下，`mesh-diagnostic.spec.ts` 與 `multi-peer.spec.ts` 兩次 release 實跑都在同一個金鑰就緒斷言逾時。依停損條款未再增加 timeout，兩支測試已用 `test.fixme` 隔離。隔離前另開 trace 的測試撞到 240 秒總 timeout，截斷的 `trace.zip` 沒有可用的 DOM 快照；`mesh-diagnostic` 的 console 過濾器也不含 `keyx` 與 sender key 字樣，因此本輪未取得各 context 房間金鑰狀態收斂的證據。退場前須另行設計取樣方式，取得各 context 的狀態收斂證據並定位根因，再移除兩支測試的 `test.fixme` 並回填本節；在那之前不得宣稱 3 人 mesh 的訊息保證已驗證。重查方向是 sender key 分發、成員間 `keyx` 傳播與各 context 的房間金鑰狀態收斂。來源為 `runs/T2v_release-postfix2_20260904T164224Z.md`。
+- **R11 私有房受邀者無法加入，階段 A 不修**：`firestore.rules:281-288` 的讀取規則只允許非私有房、已在 `participants` 的成員或房主讀取房間；`src/services/RoomService.ts:312` 的 `_joinRoomTransaction` 第一步卻是讀取房間文件。私有房受邀者不符合三個條件，因此會收到 `permission-denied`，房主停在 `/waiting/`。verify 的 A/B 實測確認 `isPrivate=true` 時 Bob 被拒且 Alice 停在等待頁，`isPrivate=false` 時可以正常配對。讀取限制自 2026-03-25 存在，smoke 自 2026-08-24 改用 `privateRoom: true` 後即不可能通過；最後一次已知全綠是 2026-07-04。這是影響真實使用者的產品缺陷，不是測試或 TURN 問題。階段 A 不修改，因為 `firestore.rules` 不在本封包允許路徑，而且依 `CLAUDE.md`，master push 會自動把規則部署到 production，屬協作規則第一節第一類的不可逆或對外變更，必須由操作者裁決。修法可能納入同樣處理取用授權的 Spec 029。R11 解決前，V1 relay-only smoke 無法通過。來源為 `runs/T2v_smoke-postfix2_20260904T172948Z.md`。
 
 ## 5. 任務分解（tasks）
 
-- [ ] **A1 ⚠ 可信 TURN**：解決 Q1、Q2；使用已安裝的 `/usr/local/bin/turnserver`，由 verifier 以前景行程只綁 `127.0.0.1` 並加上 `--no-cli`，搭配 repo 外測試 realm、帳密與含本機 TURN 設定的 React dev server；執行 S2 relay-only smoke 後關閉 turnserver，落檔原始結果與候選 pair，不用 `brew services` 長駐。只在 `scripts/smoke-report.mjs` 的歸因或輸出確有缺口時修改該檔，不碰部署設定。
+- [ ] **A1 ⚠ 可信 TURN**：解決 Q1、Q2；使用已安裝的 `/usr/local/bin/turnserver`，由 verifier 以前景行程只綁 `127.0.0.1` 並加上 `--no-cli`、`--allow-loopback-peers`，搭配 repo 外測試 realm、帳密與含本機 TURN 設定的 React dev server；本機 loopback 情境缺少後一個旗標時必定無法互通。執行 S2 relay-only smoke 後關閉 turnserver，落檔原始結果與候選 pair，不用 `brew services` 長駐。只在 `scripts/smoke-report.mjs` 的歸因或輸出確有缺口時修改該檔，不碰部署設定。
 - [ ] **A2 ⚠ 信使模擬 E2E**：Q3、Q4 characterization 已完成；依第 4.3 節的修訂劇本，讓 A 以同一個 context 離開房間再回來，並以 B 的獨立 context 寄存到 C 後關閉 B；驗證密文不變、成功率、每跳延遲、離線補收與恰好一次；由 verifier 落檔 T2v 報告。這不證明 close-context restore 或 `PULL` 已完成授權，真實兩台實體裝置場測也未做。
 - [ ] **A3 ⚠ 收斂已知 6 項 release 失敗**：先取得同一 SHA 的 trace 並分類。只修證實為時序或選擇器型的項目；四項共用 helper 同形失敗先寫根因，不硬改；最後重跑 release 與三個不回退閘門。
 
@@ -153,11 +154,11 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
   - 數字來源：測試輸出的 `PEER_RELAY_METRICS=<json>`、Playwright list reporter 與 test attachment，由 verifier 彙整成 `runs/T2v_peer-relay-complete_<UTC>.md`。
   - 及格線：指令 exit code 為 0；至少 5 次完整嘗試；`successRate` 為 100%；`duplicateCount` 為 0；每則預期訊息補收後恰好一次；報告同時列出寄存與補收兩跳的 p50/p95 延遲。報告必須明寫「真實兩台實體裝置場測未做」。
 
-- [ ] **V3 React release 不低於 21/27**
+- [x] **V3 React release 實際執行的 24 項全數通過**
   - 指令：`npm run test:e2e:release`。
-  - 數字來源：Playwright list reporter 摘要與 `runs/T2v_test-e2e-release_<UTC>.md`。
-  - 及格線：總數維持 27。其中 `security.spec.ts` P2.6 依協作規則第二節第三輪以 `test.fixme` 隔離，計為 1 項 skip，這是本 spec 明列的唯一允許 skip。其餘 26 項執行，通過數不得低於 21，且不得出現本節未列出的新增 skip。基線來自 `runs/T1v_test-e2e-release_20260904T055849Z.md` 與 `runs/T2v_a3-traces_20260904T082327Z.md`（兩次皆 21 過 6 敗，失敗成員漂移）。若測試總數改變或需要再隔離其他項目，先更新本 spec 的分母與理由。
-  - 隔離退場條件：P2.6 取得完整 trace 並定位根因後，移除 `test.fixme` 並回填本節；在那之前不得把它算進通過數，也不得宣稱 leaveRoom 規則已驗證。
+  - 數字來源：Playwright list reporter 摘要與 `runs/T2v_release-postfix2_20260904T164224Z.md`。
+  - 及格線：總數維持 27，skip 固定為 3 項，只允許 `security.spec.ts` P2.6、`mesh-diagnostic.spec.ts` 與 `multi-peer.spec.ts`。其餘 24 項須全數通過、0 項失敗，且指令 exit code 為 0；不得出現本節未列出的新增 skip。隔離後實測為 24 過、0 敗、3 skip，exit code 0。若測試總數或隔離清單改變，須先更新本 spec 的分母與理由。
+  - 隔離退場條件：P2.6 取得完整 trace 並定位根因後，移除 `test.fixme` 並回填本節；在那之前不得把它算進通過數，也不得宣稱 leaveRoom 規則已驗證。兩支 R10 測試依第 4.5 節 R10 的退場條件處理。
 
 - [ ] **V4 三個既有閘門維持全綠**
   - 指令：`npm run test:e2e:stable`、`npm run test:e2e:vue-stable`、`npm run test:e2e:rendezvous`。
