@@ -48,25 +48,53 @@ watchEffect(async () => {
     }
   }
 
-  const current = await RoomService.getRoom(roomId.value, true)
-  if (!current) {
+  // R11：私有房非成員會被 firestore.rules 拒絕加入前讀取。只有這個錯誤可先略過，
+  // 讓 joinRoom 取得房籍後再讀；其他讀取錯誤維持原本的失敗行為。
+  let current: P2PRoom | null = null
+  let preJoinReadDenied = false
+  try {
+    current = await RoomService.getRoom(roomId.value, true)
+  } catch (e: unknown) {
+    const code = (e as { code?: string })?.code ?? ''
+    if (code !== 'permission-denied' && !code.endsWith('/permission-denied')) throw e
+    preJoinReadDenied = true
+    featureLog('waiting', 'pre-join-read-denied', { roomId: roomId.value, uid })
+  }
+  if (!current && !preJoinReadDenied) {
     notFound.value = true
     return
   }
-  if (current.status === 'closed') {
+  if (current?.status === 'closed') {
     toastError('房間已關閉')
     navigateTo('/dashboard', { replace: true })
     return
   }
-  if (current.status === 'open') {
+  if (current?.status === 'open') {
     navigateTo(`/chat/${roomId.value}`, { replace: true })
     return
   }
 
-  if (!current.participants.includes(uid)) {
+  if (!current || !current.participants.includes(uid)) {
     try {
       await RoomService.joinRoom(roomId.value, uid)
       featureLog('waiting', 'joined', { roomId: roomId.value, uid })
+
+      // 私有房在加入前不可讀。加入後的伺服器快照是房名、房主、名冊與
+      // closed/open 導向的共同依據，不能沿用加入前的空值或舊快照。
+      current = await RoomService.getRoom(roomId.value, true)
+      if (!current) {
+        notFound.value = true
+        return
+      }
+      if (current.status === 'closed') {
+        toastError('房間已關閉')
+        navigateTo('/dashboard', { replace: true })
+        return
+      }
+      if (current.status === 'open') {
+        navigateTo(`/chat/${roomId.value}`, { replace: true })
+        return
+      }
     } catch (e) {
       toastError(e instanceof Error ? e.message : '加入房間失敗')
       navigateTo('/dashboard', { replace: true })
