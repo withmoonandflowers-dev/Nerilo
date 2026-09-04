@@ -43,6 +43,18 @@ describe('InviteRendezvous — 編解碼', () => {
     expect(parseInviteRendezvous(`#nrz=${bad}`)).toBeNull();
   });
 
+  it('HTTP rendezvous 位址可隨邀請資料往返，且拒絕非 http(s) 或帶帳密網址', () => {
+    const url = buildInviteUrl('https://x.y', {
+      room: 'r', inviter, rendezvousUrl: 'http://192.168.1.10:9973/',
+    });
+    expect(parseInviteRendezvous(url)?.rendezvousUrl).toBe('http://192.168.1.10:9973');
+
+    for (const rendezvousUrl of ['javascript:alert(1)', 'ftp://example.test', 'https://u:p@example.test']) {
+      const encoded = btoa(JSON.stringify({ v: 'nrz1', room: 'r', inviter: { uid: 'u' }, rendezvousUrl }));
+      expect(parseInviteRendezvous(`#nrz=${encoded}`)).toBeNull();
+    }
+  });
+
   it('不可信輸入不拋錯：壞編碼/壞 JSON/缺欄位/版本不符 → null', () => {
     for (const s of ['', '#', '#nrz=', '#nrz=!!!', '#nrz=e30', '#other=x',
       `#nrz=${btoa(JSON.stringify({ v: 'nrz9', room: 'r', inviter: { uid: 'u' } }))}`,

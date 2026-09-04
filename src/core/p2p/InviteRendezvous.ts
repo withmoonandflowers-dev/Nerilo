@@ -28,6 +28,8 @@ export interface InviteRendezvous {
     /** 邀請者 ECDH 公鑰（Base64 SPKI，可選）。 */
     ecdhPubKey?: string;
   };
+  /** 選填的 HTTP rendezvous 位址（Spec 030 Q3）；只作 cold signaling，不構成房籍授權。 */
+  rendezvousUrl?: string;
 }
 
 /** fragment 參數名。 */
@@ -50,6 +52,18 @@ function fromBase64Url(s: string): string {
   const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
   const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
   return decodeURIComponent(escape(atob(b64 + pad)));
+}
+
+function isRendezvousUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && url.username === ''
+      && url.password === '';
+  } catch {
+    return false;
+  }
 }
 
 /** 編碼會合資訊 → fragment 值。 */
@@ -82,6 +96,7 @@ export function parseInviteRendezvous(hashOrUrl: string): InviteRendezvous | nul
     if (!inviter || typeof inviter.uid !== 'string' || inviter.uid.length === 0) return null;
     if (inviter.pubKey !== undefined && typeof inviter.pubKey !== 'string') return null;
     if (inviter.ecdhPubKey !== undefined && typeof inviter.ecdhPubKey !== 'string') return null;
+    if (parsed.rendezvousUrl !== undefined && !isRendezvousUrl(parsed.rendezvousUrl)) return null;
     return {
       v: 'nrz1',
       room: parsed.room,
@@ -90,6 +105,7 @@ export function parseInviteRendezvous(hashOrUrl: string): InviteRendezvous | nul
         ...(inviter.pubKey ? { pubKey: inviter.pubKey } : {}),
         ...(inviter.ecdhPubKey ? { ecdhPubKey: inviter.ecdhPubKey } : {}),
       },
+      ...(parsed.rendezvousUrl ? { rendezvousUrl: parsed.rendezvousUrl.replace(/\/$/, '') } : {}),
     };
   } catch {
     return null;
