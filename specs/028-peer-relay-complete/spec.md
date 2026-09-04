@@ -60,7 +60,7 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 ## 3. 待釐清（clarify）
 
-- [ ] **Q1 本機 coturn 的可達位址與 Docker 網路模式**：Docker daemon 目前沒有啟動。操作者啟動後，A1 要先用 `coturn/coturn` 映像確認 macOS Docker 對瀏覽器可達的 TURN 位址、relay port 範圍與 UDP 映射，再把確定的啟動指令回填本節。若本機方案不可達，停止並請操作者提供既有雲端 TURN 憑證；agent 不自行註冊或付款。
+- [ ] **Q1 原生 coturn 的可達位址與 relay port 範圍**：coturn 4.17.2 已安裝，執行檔為 `/usr/local/bin/turnserver`。verify 執行 relay-only smoke 時，須以前景行程啟動並只綁 `127.0.0.1`，加上 `--no-cli`，跑完即關閉，不用 `brew services` 長駐。臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo。待確認的是瀏覽器可達的 TURN 位址與 relay port 範圍；實測後須把確定值與啟動指令回填本節。
 - [ ] **Q2 A1 的本機受測站位址**：`playwright.smoke.config.ts` 不會啟動 web server。A1 預設以載入 `.env.local` TURN 設定的本機 React dev server 為 `SMOKE_BASE_URL`，不得打未含本輪憑證的正式站。實作時須把確定的 host、port 與啟動指令回填。
 - [x] **Q3 A2 的兩個 context 拓撲，已回答**：`tests/e2e-vue/_helpers/users.ts:18-19` 的 `setupUser` 每次都呼叫 `browser.newContext()`，沒有 `storageState`；第 12 至 13 行也會用新的隨機 email 註冊新帳號。身分私鑰存在 IndexedDB 的 `nerilo_identity`／`keypairs`，位置為 `src/core/mesh/IdentityManager.ts:4-6,32-64`。房間金鑰須靠同一個 profile 的 ECDH 私鑰重播 `keyx` 才能還原，位置為 `src/core/mesh/MeshGossipManager.ts:218-235` 與 `src/core/mesh/RoomContentKeys.ts:193-235`。既有「離開再回來」測試 `tests/e2e-vue/rejoin.spec.ts:38-55` 與 `tests/e2e-vue/all-offline-revival.spec.ts:60-80` 都保留同一個 context，只回 dashboard 再進房。因此，原訂「A 關閉 context 後以原身分重開」無法沿用既有手法完成；第三個全新 context 也沒有 A 的 identity、ECDH 與 `keyx` 本地狀態，不能假冒原 A。處置是依第 4.3 節改用同一個 context 離開再回來。
 - [x] **Q4 A2 的 PULL 授權，已回答**：`CourierServer` 的 `PULL` 分支只有取出 `roomId`、呼叫 `store.serveRoom(roomId)`、回覆 `records`，位置為 `src/core/relay/CourierService.ts:372-376`。這條分支沒有簽章、`pubKey`／`senderId` 綁定、房籍證明或世代閘門。唯一的共通閘門是協議版本與拒絕 `from === selfId`，位置為 `src/core/relay/CourierService.ts:286`。`CourierStore.serveRoom` 只接收 `roomId`，沒有 requester 參數，位置為 `src/core/relay/CourierStore.ts:277-287`。
@@ -78,7 +78,7 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 ### 4.2 A1 可信 TURN
 
-1. 操作者啟動 Docker daemon，並在 repo 外管理測試帳密。優先使用 `coturn/coturn`，不使用需註冊或付款的服務。
+1. 使用已安裝的 coturn 4.17.2，執行檔為 `/usr/local/bin/turnserver`。verify 在 relay-only smoke 前以前景行程啟動，只綁 `127.0.0.1` 並加上 `--no-cli`，測試結束後關閉，不用 `brew services` 長駐。臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo，也不使用需註冊或付款的服務。
 2. 本機 React 站由 `.env.local` 讀取 `VITE_TURN_URLS`、`VITE_TURN_USERNAME` 與 `VITE_TURN_CREDENTIAL`。這些值不得出現在 spec、commit、console 摘要或 T2v 報告。
 3. 以 `SMOKE_BASE_URL` 指向本機站執行 `npm run smoke:prod`。`tests/smoke/production.smoke.spec.ts` 的 S2 會把 `iceTransportPolicy` 強制設為 `relay`，並斷言選中的本地 candidate 類型為 `relay`。
 4. `scripts/smoke-report.mjs` 讀取 `smoke-artifacts/results.json` 與 `stats.jsonl`，產生 `SMOKE-REPORT.md`。若 S2 沒有統計資料，依第 113 至 119 行先看測試是否在註冊、建房或連線前失敗，不直接判定 TURN 壞掉。
@@ -98,7 +98,7 @@ A2C characterization 已確認既有測試無法在關閉 context 後還原原 A
 5. 每輪記錄 B 到 C 的寄存延遲、C 到 A 的補收延遲、完整轉達延遲、是否送達、是否重複，以及 C 保存的密文是否逐位元組未變。
 6. 至少執行 5 輪。測試輸出單行 `PEER_RELAY_METRICS=<json>`，同時以 `testInfo.attach` 附上 JSON。verifier 將原始指令、UTC 起訖、attempts、delivered、successRate、duplicateCount、每跳 p50/p95、同 context 離開再回來的邊界，以及真實裝置未做聲明寫入 `runs/T2v_peer-relay-complete_<UTC>.md`。
 
-測試不得使用 `depositAndPull` 一步完成整段旅程，也不得直接把密文塞進 A 的本地庫。要透過 production 使用的 `runCourierBackup`、`CourierClient` 與 `CourierServer` 路徑。Q4 已確認 `PULL` 未綁定房籍；A2 綠燈只能證明傳輸與補收會運作，不能當成取回路徑已完成授權的證據。存取控制缺口的處置待操作者裁決。
+測試不得使用 `depositAndPull` 一步完成整段旅程，也不得直接把密文塞進 A 的本地庫。要透過 production 使用的 `runCourierBackup`、`CourierClient` 與 `CourierServer` 路徑。Q4 已確認 `PULL` 未綁定房籍；A2 綠燈只能證明傳輸與補收會運作，不能當成取回路徑已完成授權的證據。操作者裁決階段 A 登記但不修，修法納入階段 B 的 protocol 軌 Spec 029。
 
 ### 4.4 A3 已知 release 失敗
 
@@ -117,19 +117,19 @@ A3 只修已證實為時序或選擇器型的項目。四項 `_helpers/users.ts:
 
 ### 4.5 風險與外部相依
 
-- **R1 Docker 不可用**：Docker daemon 現況為未啟動。A1 在操作者啟動前無法產生本機 TURN 證據。
+- **R1 原生 coturn 的瀏覽器可達性未驗證**：`/usr/local/bin/turnserver` 可執行不代表只綁 `127.0.0.1` 時瀏覽器一定取得 relay candidate。A1 仍須實測可達的 TURN 位址與 relay port 範圍，並以前景行程完成後確實關閉。
 - **R2 TURN 網路映射錯誤**：coturn 行程啟動不等於瀏覽器取得 relay candidate。及格證據只能是 S2 選中的 relay candidate pair 與成功訊息往返。
 - **R3 憑證外洩**：log、trace 與報告可能收進環境值。落檔前必須掃描 TURN 使用者名稱、密碼與 URL 中的 credential，發現即停止交付並通報操作者，由操作者處理敏感產物。
 - **R4 測試鉤子高估能力**：A2 若直接操作 store 或跳過房籍、簽章、欠條與內容金鑰，只能算模組測試。產品級 E2E 必須走 Vue production 接線。
 - **R5 恰好一次回歸**：離線補收與即時路徑重疊可能產生重複。A2 必須以畫面或正式投影輸出計數，不只檢查 store 有資料。
 - **R6 中央相依仍在**：階段 A 的 Firestore 名冊與站級 signaling 仍是中央服務。真正的冷啟動備援由階段 B 處理。
 - **R7 測試環境誤判**：瀏覽器 E2E 一律由無沙盒 verifier 執行並落檔。Codex 沙盒內的 Chromium 啟動結果不得作為產品狀態證據。
-- **R8 PULL 房籍未綁定**：任何能向信使傳送 courier namespace 訊息且知道 `roomId` 的節點，都能拉取該房現存密文，並得知紀錄存在與否、數量及 `senderId` 集合，也可能用重複 `PULL` 放大流量。內容仍需房間金鑰才能解密，但這不構成取回授權。A2 的任何綠燈不得被解讀為「信使取回路徑已授權」；A2 只證明傳輸與補收會運作，不證明存取控制。處置待操作者裁決。
+- **R8 PULL 房籍未綁定**：任何能向信使傳送 courier namespace 訊息且知道 `roomId` 的節點，都能拉取該房現存密文，並得知紀錄存在與否、數量及 `senderId` 集合，也可能用重複 `PULL` 放大流量。內容仍需房間金鑰才能解密，但這不構成取回授權。A2 的任何綠燈不得被解讀為「信使取回路徑已授權」；A2 只證明傳輸與補收會運作，不證明存取控制。操作者裁決階段 A 登記但不修，修法納入階段 B 的 protocol 軌 Spec 029。
 - **R9 A2 劇本已降級**：A2 驗證的是同一個 context 離開房間後再回來，不是關閉 context 後還原原身分。報告必須清楚寫出這項邊界，不得宣稱驗過 close-context restore 或關閉裝置後還原身分。
 
 ## 5. 任務分解（tasks）
 
-- [ ] **A1 ⚠ 可信 TURN**：解決 Q1、Q2；由操作者啟動 Docker 與提供 repo 外測試帳密；啟動 `coturn/coturn` 與含本機 TURN 設定的 React dev server；由 verifier 執行 S2 relay-only smoke，落檔原始結果與候選 pair。只在 `scripts/smoke-report.mjs` 的歸因或輸出確有缺口時修改該檔，不碰部署設定。
+- [ ] **A1 ⚠ 可信 TURN**：解決 Q1、Q2；使用已安裝的 `/usr/local/bin/turnserver`，由 verifier 以前景行程只綁 `127.0.0.1` 並加上 `--no-cli`，搭配 repo 外測試 realm、帳密與含本機 TURN 設定的 React dev server；執行 S2 relay-only smoke 後關閉 turnserver，落檔原始結果與候選 pair，不用 `brew services` 長駐。只在 `scripts/smoke-report.mjs` 的歸因或輸出確有缺口時修改該檔，不碰部署設定。
 - [ ] **A2 ⚠ 信使模擬 E2E**：Q3、Q4 characterization 已完成；依第 4.3 節的修訂劇本，讓 A 以同一個 context 離開房間再回來，並以 B 的獨立 context 寄存到 C 後關閉 B；驗證密文不變、成功率、每跳延遲、離線補收與恰好一次；由 verifier 落檔 T2v 報告。這不證明 close-context restore 或 `PULL` 已完成授權，真實兩台實體裝置場測也未做。
 - [ ] **A3 ⚠ 收斂已知 6 項 release 失敗**：先取得同一 SHA 的 trace 並分類。只修證實為時序或選擇器型的項目；四項共用 helper 同形失敗先寫根因，不硬改；最後重跑 release 與三個不回退閘門。
 
