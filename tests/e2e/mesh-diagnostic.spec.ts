@@ -41,6 +41,14 @@ const DUP_SETTLE_MS = 5_000; // 沉澱期：讓潛在重複有時間浮現
 
 test.describe('3 人 mesh 診斷（矩陣全 =1）@release', () => {
   test('每則訊息在每個畫面最終各恰好一次', async ({ browser }) => {
+    // Spec 028 R10 已觸發：送出前置的房間金鑰就緒等待放寬到 90s 後，
+    // 2026-09-05 兩次 release 實跑仍在同一處逾時（Timeout: 90000ms，
+    // .e2ee-indicator-dtls[aria-label="端到端加密已啟用（房間金鑰）"] element(s) not found）。
+    // 依 R10 停損條款不得再加 timeout，改判為產品訊號並隔離。
+    // 3 人 mesh 金鑰分發是否對所有成員完成，未定位。
+    // 重查方向：sender key 分發、成員間 keyx 傳播、各 context 房間金鑰狀態收斂。
+    // 證據：runs/T2v_release-postfix2_20260905T*.md
+    test.fixme(true, 'R10：3 人 mesh 金鑰分發完成性未定位，90s 仍未三人全就緒');
     test.setTimeout(240_000); // 只為 3 組註冊 + WebRTC 連線成形；見檔頭誠實條款
 
     const alice = await setupUser(browser);

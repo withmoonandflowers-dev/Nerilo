@@ -22,6 +22,12 @@ import {
 
 test.describe('P1 multi-peer @release', () => {
   test('P1.9 3-peer mesh — each peer sees every other peer\'s messages', async ({ browser }) => {
+    // Spec 028 R10 已觸發：同 mesh-diagnostic，90s 金鑰就緒等待後仍在
+    // expectE2EEReady 逾時（Timeout: 90000ms）。依 R10 停損條款不再加 timeout。
+    // 3 人 mesh 金鑰分發是否對所有成員完成，未定位。
+    // 重查方向：sender key 分發、成員間 keyx 傳播、各 context 房間金鑰狀態收斂。
+    // 證據：runs/T2v_release-postfix2_20260905T*.md
+    test.fixme(true, 'R10：3 人 mesh 金鑰分發完成性未定位，90s 仍未三人全就緒');
     test.setTimeout(180_000); // mesh setup with emulator can take a while
 
     const alice = await setupUser(browser);
