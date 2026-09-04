@@ -184,30 +184,43 @@ const ChatPage: React.FC = () => {
         featureLog('chat', 'init', { roomId, uid });
         logger.info('[ChatPage] init started', { roomId, uid });
 
-        // 1. 檢查房間是否存在
-        const room = await roomService.getRoom(roomId);
+        // 1. 先讀取可見的房間資訊。R11 的私有房非成員會被 firestore.rules:295
+        // 拒絕讀取，此時不能中止，必須讓下方 joinRoom 先取得房籍。
+        let room: P2PRoom | null = null;
+        let preJoinReadDenied = false;
+        try {
+          room = await roomService.getRoom(roomId);
+        } catch (error: unknown) {
+          const code = (error as { code?: string })?.code ?? '';
+          if (code !== 'permission-denied' && !code.endsWith('/permission-denied')) throw error;
+          preJoinReadDenied = true;
+          logger.info('[ChatPage] Pre-join room read denied; continuing with private-room join', {
+            roomId, uid,
+          });
+        }
         if (!isMounted()) return; // guard: cleanup ran while awaiting
-        if (!room) {
+        if (!room && !preJoinReadDenied) {
           logger.warn('[ChatPage] Room not found, navigating to dashboard', { roomId });
           navigate('/dashboard');
           return;
         }
 
-        setRoomName(room.roomName);
-        setIsRoomOwner(room.ownerUid === uid);
+        if (room) {
+          setRoomName(room.roomName);
+          setIsRoomOwner(room.ownerUid === uid);
+          logger.info('[ChatPage] Room found', {
+            roomId,
+            status: room.status,
+            participants: room.participants.length,
+            ownerUid: room.ownerUid,
+          });
 
-        logger.info('[ChatPage] Room found', {
-          roomId,
-          status: room.status,
-          participants: room.participants.length,
-          ownerUid: room.ownerUid,
-        });
-
-        // 2. 檢查房間狀態
-        if (room.status === 'closed') {
-          logger.warn('[ChatPage] Room is closed, navigating to dashboard', { roomId });
-          navigate('/dashboard');
-          return;
+          // 2. 檢查房間狀態
+          if (room.status === 'closed') {
+            logger.warn('[ChatPage] Room is closed, navigating to dashboard', { roomId });
+            navigate('/dashboard');
+            return;
+          }
         }
 
         // 本機歷史不應依賴 P2P 是否已重新連上。舊流程把 loadHistory 放在
@@ -239,6 +252,15 @@ const ChatPage: React.FC = () => {
           if (!isMounted()) return;
           if (!roomAfterJoin) {
             logger.warn('[ChatPage] Room not found after join, navigating to dashboard', { roomId });
+            navigate('/dashboard');
+            return;
+          }
+
+          // 私有房在加入前不可讀，房名與房主判斷以取得房籍後的 server snapshot 為準。
+          setRoomName(roomAfterJoin.roomName);
+          setIsRoomOwner(roomAfterJoin.ownerUid === uid);
+          if (roomAfterJoin.status === 'closed') {
+            logger.warn('[ChatPage] Room closed after join, navigating to dashboard', { roomId });
             navigate('/dashboard');
             return;
           }

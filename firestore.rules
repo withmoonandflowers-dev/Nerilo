@@ -144,6 +144,20 @@ service cloud.firestore {
              ['lastActiveAt', 'ttlExpireAt']);
     }
 
+    // 私有房加入採兩步：非成員先只加入自己，取得房籍後再把雙人 waiting 房啟用。
+    // 此分支不允許改名冊、房主、容量或其他 metadata，也不放寬任何讀取規則。
+    function isJoinedWaitingRoomActivationOnly() {
+      return request.auth.uid in resource.data.participants
+        && resource.data.status == 'waiting'
+        && request.resource.data.status == 'open'
+        && resource.data.participants.size() >= 2
+        && request.resource.data.participants == resource.data.participants
+        && participantCountMatches(request.resource.data)
+        && ownerUidUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+             ['status', 'lastActiveAt', 'ttlExpireAt']);
+    }
+
     // mesh identity 是每位成員自己的安全邊界；topology 只是非安全性的能力提示。
     function isOwnMeshIdentityUpdate() {
       return request.auth.uid in resource.data.participants
@@ -314,6 +328,7 @@ service cloud.firestore {
         // 必須排在 meshIdentity 分支之前：rules 的 || 由左至右短路且不吸收
         // 錯誤，後面分支若 evaluation error 會蓋掉這裡的 true。
         isSelfLeaveOnly() ||
+        isJoinedWaitingRoomActivationOnly() ||
         isParticipantActivityUpdate() ||
         isOwnMeshIdentityUpdate()
       );
