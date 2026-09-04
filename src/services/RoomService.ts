@@ -1,9 +1,10 @@
-import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, limit, Timestamp, runTransaction, increment, arrayUnion } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, limit, Timestamp, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateUUID } from '../utils/uuid';
 import { logger } from '../utils/logger';
 import type { P2PRoom, RoomStatus, RoomCapability, RoomMemberState } from '../types';
-import { normalizeMaxParticipants, roomCapacity } from './roomCapacity';
+import { normalizeMaxParticipants } from './roomCapacity';
+import { joinRoomWithRetry, withRosterRetry } from './roomJoin';
 
 /** Firestore meshIdentity 文件的原始欄位型別（joinedAt 可能為 Timestamp） */
 interface FirestoreMeshIdentity {
@@ -250,134 +251,8 @@ export class RoomService {
     return result;
   }
 
-  /** 名冊寫入共用重試；rules 競態也可能把前置條件衝突回報為 permission-denied。 */
-  private static async _withRosterRetry(
-    label: string,
-    ctx: Record<string, unknown>,
-    run: () => Promise<void>
-  ): Promise<void> {
-    const MAX_ATTEMPTS = 4;
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        await run();
-        return;
-      } catch (err: unknown) {
-        const code: string = (err as { code?: string })?.code ?? '';
-        const isRetryable =
-          code === 'failed-precondition' || code === 'aborted' || code === 'permission-denied';
-        if (!isRetryable || attempt >= MAX_ATTEMPTS) throw err;
-        const delayMs = 150 * attempt;
-        logger.warn(`[RoomService] ${label} transaction conflict, retrying`, {
-          ...ctx, attempt, code, delayMs,
-        });
-        await new Promise(r => setTimeout(r, delayMs));
-        lastError = err;
-      }
-    }
-    throw lastError;
-  }
-
   static async joinRoom(roomId: string, uid: string): Promise<void> {
-    logger.info('[RoomService] joinRoom called', { roomId, uid });
-    const state = { addedByThisCall: false };
-    await this._withRosterRetry('joinRoom', { roomId, uid }, () =>
-      this._joinRoomTransaction(db, roomId, uid, state)
-    );
-  }
-
-  private static async _joinRoomTransaction(db: Parameters<typeof runTransaction>[0], roomId: string,
-    uid: string, state: { addedByThisCall: boolean }): Promise<void> {
-    const roomDocRef = doc(db, 'p2pRooms', roomId);
-    const now = Date.now();
-    const ttlExpireAt = Timestamp.fromMillis(now + RoomService.PERSISTENT_TTL_MS);
-    let needsLegacyJoin = false;
-    type JoinCode = 'room-not-found' | 'room-closed' | 'room-migrating' | 'room-full';
-    const joinError = (code: JoinCode, status?: P2PRoom['status'], capacity?: number) => Object.assign(new Error(
-      code === 'room-not-found' ? '房間不存在' :
-        code === 'room-closed' ? '房間已關閉，請返回房間列表' :
-          code === 'room-migrating' ? '房間正在遷移主機中，請稍後重試' :
-            `房間已滿（上限 ${capacity} 人）`
-    ), { code, ...(status ? { roomStatus: status } : {}) });
-
-    try {
-      // 新公開房、新私有房：有 participantCount，走盲寫。公開舊房：失敗後可讀，
-      // 改走下方絕對值 transaction。私有舊房：仍不可讀，需先回填 participantCount。
-      await updateDoc(roomDocRef, { participants: arrayUnion(uid), participantCount: increment(1),
-        lastActiveAt: now, ttlExpireAt });
-      state.addedByThisCall = true;
-    } catch (writeError: unknown) {
-      let readableSnap: Awaited<ReturnType<typeof getDocFromServer>> | null = null;
-      try {
-        readableSnap = await getDocFromServer(roomDocRef);
-      } catch {
-        const code = (writeError as { code?: string })?.code ?? '';
-        if (code === 'not-found') throw joinError('room-not-found');
-        // 私有房非成員無法讀取失敗後文件，closed、full 與不存在無法可靠區分。
-        logger.warn('[RoomService] blind join denied; legacy private room may need participantCount backfill',
-          { roomId, uid, code });
-        throw writeError;
-      }
-      if (!readableSnap.exists()) throw joinError('room-not-found');
-      const readableData = readableSnap.data() as Partial<P2PRoom>;
-      if (readableData.status === 'closed') throw joinError('room-closed', readableData.status);
-      if (readableData.status === 'migrating') throw joinError('room-migrating', readableData.status);
-      const readableParticipants: string[] = readableData.participants || [];
-      if (!readableParticipants.includes(uid)) {
-        const capacity = roomCapacity(readableData);
-        if (readableParticipants.length >= capacity)
-          throw joinError('room-full', readableData.status, capacity);
-        needsLegacyJoin = true;
-        logger.info('[RoomService] joinRoom - using readable legacy-room transaction', { roomId, uid });
-      } else {
-        logger.info('[RoomService] joinRoom - already joined; completing checks', { roomId, uid });
-      }
-    }
-
-    let rejectionError: Error | null = null, completedLegacyJoin = false;
-    await runTransaction(db, async (transaction) => {
-      const roomSnap = await transaction.get(roomDocRef);
-      if (!roomSnap.exists()) throw joinError('room-not-found');
-      const roomData = roomSnap.data();
-      const participants: string[] = roomData.participants || [];
-      const containsUid = participants.includes(uid);
-
-      if (roomData.status === 'closed' || roomData.status === 'migrating') {
-        const roomStatus = roomData.status as 'closed' | 'migrating';
-        rejectionError = joinError(`room-${roomStatus}`, roomStatus);
-        // migrating 沒有事前閘門；先以 isSelfLeaveOnly 形狀退出再回報原錯誤碼。
-        // 這會產生一個很短的先加入再退出時窗，已於 Spec 028 R11 記錄。
-        if (state.addedByThisCall) {
-          const remainingParticipants = participants.filter((participant) => participant !== uid);
-          transaction.update(roomDocRef, { participants: remainingParticipants,
-            participantCount: remainingParticipants.length, lastActiveAt: now, ttlExpireAt });
-        }
-        return;
-      }
-
-      if (!containsUid && needsLegacyJoin) {
-        const capacity = roomCapacity(roomData);
-        if (participants.length >= capacity)
-          throw joinError('room-full', roomData.status, capacity);
-        const nextParticipants = [...participants, uid];
-        transaction.update(roomDocRef, { participants: nextParticipants, participantCount: nextParticipants.length,
-          ...(roomData.status === 'waiting' ? { status: 'open' } : {}),
-          lastActiveAt: now, ttlExpireAt });
-        completedLegacyJoin = true;
-        return;
-      }
-      if (!containsUid && !state.addedByThisCall)
-        throw Object.assign(new Error('加入房間後名冊未包含本人'), { code: 'failed-precondition' });
-
-      const effectiveParticipantCount = participants.length + (containsUid ? 0 : 1);
-      const shouldActivate = roomData.status === 'waiting' && effectiveParticipantCount >= 2;
-      if (shouldActivate)
-        transaction.update(roomDocRef, { status: 'open', lastActiveAt: now, ttlExpireAt });
-      logger.info('[RoomService] joinRoom - transaction committed', { roomId, uid,
-        newStatus: shouldActivate ? 'open' : roomData.status, newParticipantCount: effectiveParticipantCount });
-    });
-    if (completedLegacyJoin) state.addedByThisCall = true;
-    if (rejectionError) { state.addedByThisCall = false; throw rejectionError; }
+    await joinRoomWithRetry(db, roomId, uid, RoomService.PERSISTENT_TTL_MS);
   }
 
   /**
@@ -434,7 +309,7 @@ export class RoomService {
   }
 
   private static async _leaveRoomWrite(roomId: string, uid: string): Promise<void> {
-    await this._withRosterRetry('leaveRoom', { roomId, uid }, async () => {
+    await withRosterRetry('leaveRoom', { roomId, uid }, async () => {
       await runTransaction(db, async (transaction) => {
         const roomDocRef = doc(db, 'p2pRooms', roomId);
         const roomSnap = await transaction.get(roomDocRef);

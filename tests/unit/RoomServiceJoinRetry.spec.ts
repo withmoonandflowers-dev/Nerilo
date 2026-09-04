@@ -12,6 +12,8 @@ vi.mock('../../src/config/firebase', () => ({ db: {}, auth: {}, functions: {}, d
 
 const mockTransactionGet = vi.fn();
 const mockTransactionUpdate = vi.fn();
+const mockGetDocFromServer = vi.fn();
+const mockUpdateDoc = vi.fn();
 let attempts = 0;
 let failWith: string[] = [];
 
@@ -25,9 +27,9 @@ const mockRunTransaction = vi.fn(async (_db: unknown, cb: (t: unknown) => Promis
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(() => 'mock-collection'),
   doc: vi.fn((_db: unknown, _col: string, id: string) => ({ id, path: `p2pRooms/${id}` })),
-  setDoc: vi.fn(), getDoc: vi.fn(), getDocFromServer: vi.fn(),
+  setDoc: vi.fn(), getDoc: vi.fn(), getDocFromServer: mockGetDocFromServer,
   getDocs: vi.fn().mockResolvedValue({ docs: [] }),
-  updateDoc: vi.fn(), deleteDoc: vi.fn(),
+  updateDoc: mockUpdateDoc, deleteDoc: vi.fn(),
   runTransaction: (...args: unknown[]) => mockRunTransaction(...(args as [unknown, never])),
   increment: (n: number) => ({ __increment: n }),
   onSnapshot: vi.fn(() => vi.fn()),
@@ -41,12 +43,12 @@ vi.mock('../../src/utils/uuid', () => ({ generateUUID: vi.fn(() => 'generated-uu
 
 const { RoomService } = await import('../../src/services/RoomService');
 
-function roomSnap(participants: string[]) {
+function roomSnap(participants: string[], overrides: Record<string, unknown> = {}) {
   return {
     exists: () => true,
     data: () => ({
       ownerUid: 'owner-1', participants, participantCount: participants.length,
-      status: 'open', maxParticipants: 10,
+      status: 'open', maxParticipants: 10, ...overrides,
     }),
   };
 }
@@ -55,10 +57,37 @@ beforeEach(() => {
   attempts = 0;
   failWith = [];
   vi.clearAllMocks();
-  mockTransactionGet.mockResolvedValue(roomSnap(['owner-1']));
+  const initial = roomSnap(['owner-1']);
+  mockGetDocFromServer.mockResolvedValue(initial);
+  mockTransactionGet.mockResolvedValue(initial);
 });
 
 describe('joinRoom 對併發名冊變動的重試', () => {
+  it('同一 uid 連續加入兩次仍維持 participantCount 與名冊長度一致', async () => {
+    const alreadyJoined = roomSnap(['owner-1', 'joiner-9']);
+    mockGetDocFromServer.mockResolvedValue(alreadyJoined);
+
+    await RoomService.joinRoom('room-1', 'joiner-9');
+    await RoomService.joinRoom('room-1', 'joiner-9');
+
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+    expect(alreadyJoined.data().participantCount).toBe(alreadyJoined.data().participants.length);
+  });
+
+  it('房主再次加入時可用既有 owner 規則修正偏離的 participantCount', async () => {
+    const diverged = roomSnap(['owner-1', 'member-2'], { participantCount: 3 });
+    mockGetDocFromServer.mockResolvedValue(diverged);
+    mockTransactionGet.mockResolvedValue(diverged);
+
+    await RoomService.joinRoom('room-1', 'owner-1');
+
+    expect(mockTransactionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'p2pRooms/room-1' }),
+      { participantCount: 2 }
+    );
+  });
+
   it('第一次 permission-denied 後重讀並成功', async () => {
     failWith = ['permission-denied'];
     await expect(RoomService.joinRoom('room-1', 'joiner-9')).resolves.toBeUndefined();
