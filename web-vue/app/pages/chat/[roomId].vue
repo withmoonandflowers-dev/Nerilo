@@ -4,10 +4,7 @@ import { sendMessageViaFirestore, subscribeToFirestoreMessages } from '@legacy/s
 import type { ChatMessage, ConnectionState, P2PRoom } from '@legacy/types'
 import { generateUUID } from '@legacy/utils/uuid'
 import { featureLog } from '@legacy/utils/featureLog'
-import { MeshChatService } from '@legacy/core/messaging/MeshChatService'
-import { createHttpSignaling } from '@legacy/sdk/httpSignaling'
-import { readIntroducerHint } from '~/lib/introducerHint'
-import { resolveRendezvousUrl } from '~/lib/rendezvousConfig'
+import type { MeshChatService } from '@legacy/core/messaging/MeshChatService'
 import { consumeOpenGameFlag } from '~/lib/gameRoomFlag'
 import { applyReaction, hasReacted, type ReactionMap } from '@legacy/core/messaging/reactions'
 import { applyRead, orderKeyOf, type ReadState } from '@legacy/core/messaging/readReceipts'
@@ -162,6 +159,7 @@ const { meshHealth, statusText, updateCoverage } = useMeshHealth(connectionState
 // 房間 metadata 節流寫入（已讀/活躍度）與分頁互斥（B1）：見同名 composable
 const { touchRead, touchActivity } = useRoomActivity(() => roomId.value, () => user.value?.uid)
 const { otherTabActive, acquireTab, releaseTab } = useRoomTabLock()
+const { createMeshService } = useRendezvousSignaling()
 
 async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) {
   // 人數簿記必須在互斥鎖之前：第三人的 join snapshot 常落在 mesh 初始化的
@@ -193,22 +191,7 @@ async function initializeP2P(room: P2PRoom, effectiveParticipantCount?: number) 
     connectionState.value = 'connecting'
     isRoomOwner.value = room.ownerUid === uid // 房主＝座 0（first）；遊戲騎 mesh gossip（MeshGameBus）
     roomOwnerId.value = room.ownerUid ?? ''
-    // Spec 030 Q3：邀請資料、使用者設定、部署設定依序決定 HTTP cold。
-    // 未設定時保留 undefined，MeshGossipManager 照舊動態使用 Firestore cold。
-    // Q4 尚未裁決，正式房籍仍使用 Firestore directory，不把無認證 HTTP 名冊當權威。
-    const rendezvousUrl = resolveRendezvousUrl(
-      roomId.value,
-      import.meta.env.VITE_RENDEZVOUS_URL as string | undefined,
-    )
-    const signalingFactory = rendezvousUrl ? createHttpSignaling(rendezvousUrl) : undefined
-    const svc = new MeshChatService(
-      roomId.value,
-      uid,
-      undefined,
-      signalingFactory,
-      undefined,
-      readIntroducerHint(roomId.value, uid),
-    )
+    const svc = createMeshService(roomId.value, uid)
     // A8：initialize() 失敗也必須清理。MeshGossipManager 在初始化很早期就掛上
     // 名冊 onSnapshot 與多組計時器（2s 鄰居掃描、4s keyx…），遠早於最容易拋錯的
     // registerIdentity。此前失敗直接落到外層 catch，而 meshChat 仍是 null，
