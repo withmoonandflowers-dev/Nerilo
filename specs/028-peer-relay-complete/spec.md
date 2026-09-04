@@ -62,8 +62,12 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 - [ ] **Q1 本機 coturn 的可達位址與 Docker 網路模式**：Docker daemon 目前沒有啟動。操作者啟動後，A1 要先用 `coturn/coturn` 映像確認 macOS Docker 對瀏覽器可達的 TURN 位址、relay port 範圍與 UDP 映射，再把確定的啟動指令回填本節。若本機方案不可達，停止並請操作者提供既有雲端 TURN 憑證；agent 不自行註冊或付款。
 - [ ] **Q2 A1 的本機受測站位址**：`playwright.smoke.config.ts` 不會啟動 web server。A1 預設以載入 `.env.local` TURN 設定的本機 React dev server 為 `SMOKE_BASE_URL`，不得打未含本輪憑證的正式站。實作時須把確定的 host、port 與啟動指令回填。
-- [ ] **Q3 A2 的兩個 context 拓撲**：本 spec 將需求解讀為「同一時間最多兩個隔離 context」。C 保持在線；另一個 endpoint context 先承載 B 寄存，再關閉並以 A 的既有身分與房間金鑰重開完成補收。若 Playwright 無法在不共用儲存的前提下還原 A，允許建立第三個 context，但任一時刻仍只能有 endpoint 與 C 兩個在線。若這個解讀不成立，先修 spec。
-- [ ] **Q4 A2 的資格與呈現層前提**：`CourierServer` 的 `PULL` 目前以 `roomId` 取紀錄，是否已完整綁定請求者的房籍仍未定位。Spec 021 也把「補回後顯示在聊天畫面且恰好一次」列為 planned。A2 實作前要先做 characterization，確認房籍驗證、內容金鑰恢復與 UI 投影各自的現況；若缺口屬產品語義，先更新本 spec，不用測試鉤子繞過。
+- [x] **Q3 A2 的兩個 context 拓撲，已回答**：`tests/e2e-vue/_helpers/users.ts:18-19` 的 `setupUser` 每次都呼叫 `browser.newContext()`，沒有 `storageState`；第 12 至 13 行也會用新的隨機 email 註冊新帳號。身分私鑰存在 IndexedDB 的 `nerilo_identity`／`keypairs`，位置為 `src/core/mesh/IdentityManager.ts:4-6,32-64`。房間金鑰須靠同一個 profile 的 ECDH 私鑰重播 `keyx` 才能還原，位置為 `src/core/mesh/MeshGossipManager.ts:218-235` 與 `src/core/mesh/RoomContentKeys.ts:193-235`。既有「離開再回來」測試 `tests/e2e-vue/rejoin.spec.ts:38-55` 與 `tests/e2e-vue/all-offline-revival.spec.ts:60-80` 都保留同一個 context，只回 dashboard 再進房。因此，原訂「A 關閉 context 後以原身分重開」無法沿用既有手法完成；第三個全新 context 也沒有 A 的 identity、ECDH 與 `keyx` 本地狀態，不能假冒原 A。處置是依第 4.3 節改用同一個 context 離開再回來。
+- [x] **Q4 A2 的 PULL 授權，已回答**：`CourierServer` 的 `PULL` 分支只有取出 `roomId`、呼叫 `store.serveRoom(roomId)`、回覆 `records`，位置為 `src/core/relay/CourierService.ts:372-376`。這條分支沒有簽章、`pubKey`／`senderId` 綁定、房籍證明或世代閘門。唯一的共通閘門是協議版本與拒絕 `from === selfId`，位置為 `src/core/relay/CourierService.ts:286`。`CourierStore.serveRoom` 只接收 `roomId`，沒有 requester 參數，位置為 `src/core/relay/CourierStore.ts:277-287`。
+  - `IDENTIFY` 雖然會檢查 `pubKeyBindsNodeId`，位置為 `src/core/relay/CourierService.ts:360-366`，但 `PULL` 分支不讀 requester。房籍簽章只用於 `TOMBSTONE`，位置為 `src/core/relay/CourierService.ts:222-227,378-383`，未被 `PULL` 引用。`courierEligibility` 的資格檢查位於 deposit／push 端，位置為 `src/core/relay/CourierStore.ts:215-246`，不在 pull 端。
+  - 既有單元測試沒有「非房成員 PULL 被拒」案例。`tests/unit/CourierService.spec.ts:73-100` 只有同一個 client deposit 後 pull 的正向路徑，房籍測試只涵蓋 `TOMBSTONE`，位置為第 337 至 379 行。
+  - 影響是任何能向該信使傳送 courier namespace 訊息且知道 `roomId` 的節點，都能拉走該房現存的密文紀錄。內容仍需房間金鑰才能解密，但這會洩漏該房是否有紀錄、紀錄量與 `senderId` 集合，也能透過重複 `PULL` 放大信使流量。
+  - ADR-0024 記錄寄存端配額與四層刪除機制，並要求墓碑具備房籍簽章，但全文未記錄 `PULL` 授權的取捨。Spec 021 第 23 行的「身分與授權：無影響」談的是 `runCourierBackup` ingest 前的驗簽，不是誰能向信使拉取紀錄。這是未記錄的缺口，不是既有的刻意設計。是否修正及修正方式待操作者裁決。
 - [ ] **Q5 A3 五項非 strict-mode 失敗的根因**：T1v 只記錄錯誤形狀，根因均未定位。任何修正前要由無沙盒 verifier 產生同一 SHA 的 trace 與最小重現，再區分時序、選擇器與產品缺陷。
 
 ## 4. 技術計畫（plan）
@@ -83,15 +87,18 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 新增 `tests/e2e-vue/peer-relay-complete.spec.ts`，沿用 `playwright.vue.config.ts` 與 Firebase emulator。測試只走 Vue 現有接線，不新增 React 接線。
 
+A2C characterization 已確認既有測試無法在關閉 context 後還原原 A 的身分與房間金鑰。修訂後的劇本讓 A 的 context 全程保持開啟，只以回到 dashboard 模擬離線，沿用 `tests/e2e-vue/rejoin.spec.ts:38-55` 的手法。這不得稱為 close-context restore，報告也不得宣稱驗過「關閉裝置後還原身分」。若日後要保留 close-context 語義，必須先在本 spec 定義 profile／IndexedDB 還原機制與安全邊界。
+
 受測劇本如下：
 
 1. A 與 B 已透過合法路徑建立房籍與內容金鑰。這是測試前提，不列入信使延遲。
-2. A 離線。B 與 C 同時在線，B 無法直接連到 A，只能將合法密文紀錄寄存給 C。
-3. B 離線。A 以原身分回線，與仍在線的 C 對帳並補收。量測期間 A 與 B 不同時在線，因此沒有 A 到 B 的直連路徑。
-4. 每輪記錄 B 到 C 的寄存延遲、C 到 A 的補收延遲、完整轉達延遲、是否送達、是否重複，以及 C 保存的密文是否逐位元組未變。
-5. 至少執行 5 輪。測試輸出單行 `PEER_RELAY_METRICS=<json>`，同時以 `testInfo.attach` 附上 JSON。verifier 將原始指令、UTC 起訖、attempts、delivered、successRate、duplicateCount、每跳 p50/p95 與真實裝置未做聲明寫入 `runs/T2v_peer-relay-complete_<UTC>.md`。
+2. A 的 context 不關閉，只離開房間回到 dashboard，以同一個 context 模擬離線。
+3. B 使用獨立 context。B 與 C 同時在線時，B 無法直接連到 A，只能把合法密文紀錄寄存給 C，完成後關閉 B 的 context。
+4. A 使用原本未關閉的 context 再進房，與仍在線的 C 對帳並補收。量測期間 A 與 B 不同時位於房間內，因此沒有 A 到 B 的直連路徑。
+5. 每輪記錄 B 到 C 的寄存延遲、C 到 A 的補收延遲、完整轉達延遲、是否送達、是否重複，以及 C 保存的密文是否逐位元組未變。
+6. 至少執行 5 輪。測試輸出單行 `PEER_RELAY_METRICS=<json>`，同時以 `testInfo.attach` 附上 JSON。verifier 將原始指令、UTC 起訖、attempts、delivered、successRate、duplicateCount、每跳 p50/p95、同 context 離開再回來的邊界，以及真實裝置未做聲明寫入 `runs/T2v_peer-relay-complete_<UTC>.md`。
 
-測試不得使用 `depositAndPull` 一步完成整段旅程，也不得直接把密文塞進 A 的本地庫。要透過 production 使用的 `runCourierBackup`、`CourierClient` 與 `CourierServer` 路徑。若 Q4 確認現行 UI 投影尚未完成，先更新本 spec 與 Spec 021 的依賴關係，再決定是否把 A2 拆為傳輸層與呈現層兩個可見結果。
+測試不得使用 `depositAndPull` 一步完成整段旅程，也不得直接把密文塞進 A 的本地庫。要透過 production 使用的 `runCourierBackup`、`CourierClient` 與 `CourierServer` 路徑。Q4 已確認 `PULL` 未綁定房籍；A2 綠燈只能證明傳輸與補收會運作，不能當成取回路徑已完成授權的證據。存取控制缺口的處置待操作者裁決。
 
 ### 4.4 A3 已知 release 失敗
 
@@ -117,11 +124,13 @@ A3 只修已證實為時序或選擇器型的項目。四項 `_helpers/users.ts:
 - **R5 恰好一次回歸**：離線補收與即時路徑重疊可能產生重複。A2 必須以畫面或正式投影輸出計數，不只檢查 store 有資料。
 - **R6 中央相依仍在**：階段 A 的 Firestore 名冊與站級 signaling 仍是中央服務。真正的冷啟動備援由階段 B 處理。
 - **R7 測試環境誤判**：瀏覽器 E2E 一律由無沙盒 verifier 執行並落檔。Codex 沙盒內的 Chromium 啟動結果不得作為產品狀態證據。
+- **R8 PULL 房籍未綁定**：任何能向信使傳送 courier namespace 訊息且知道 `roomId` 的節點，都能拉取該房現存密文，並得知紀錄存在與否、數量及 `senderId` 集合，也可能用重複 `PULL` 放大流量。內容仍需房間金鑰才能解密，但這不構成取回授權。A2 的任何綠燈不得被解讀為「信使取回路徑已授權」；A2 只證明傳輸與補收會運作，不證明存取控制。處置待操作者裁決。
+- **R9 A2 劇本已降級**：A2 驗證的是同一個 context 離開房間後再回來，不是關閉 context 後還原原身分。報告必須清楚寫出這項邊界，不得宣稱驗過 close-context restore 或關閉裝置後還原身分。
 
 ## 5. 任務分解（tasks）
 
 - [ ] **A1 ⚠ 可信 TURN**：解決 Q1、Q2；由操作者啟動 Docker 與提供 repo 外測試帳密；啟動 `coturn/coturn` 與含本機 TURN 設定的 React dev server；由 verifier 執行 S2 relay-only smoke，落檔原始結果與候選 pair。只在 `scripts/smoke-report.mjs` 的歸因或輸出確有缺口時修改該檔，不碰部署設定。
-- [ ] **A2 ⚠ 信使模擬 E2E**：先完成 Q3、Q4 characterization；新增 Vue E2E，以同時最多兩個隔離 context 跑 B 寄存到 C、A 回線向 C 補收；驗證密文不變、成功率、每跳延遲、離線補收與恰好一次；由 verifier 落檔 T2v 報告。真實兩台實體裝置場測未做。
+- [ ] **A2 ⚠ 信使模擬 E2E**：Q3、Q4 characterization 已完成；依第 4.3 節的修訂劇本，讓 A 以同一個 context 離開房間再回來，並以 B 的獨立 context 寄存到 C 後關閉 B；驗證密文不變、成功率、每跳延遲、離線補收與恰好一次；由 verifier 落檔 T2v 報告。這不證明 close-context restore 或 `PULL` 已完成授權，真實兩台實體裝置場測也未做。
 - [ ] **A3 ⚠ 收斂已知 6 項 release 失敗**：先取得同一 SHA 的 trace 並分類。只修證實為時序或選擇器型的項目；四項共用 helper 同形失敗先寫根因，不硬改；最後重跑 release 與三個不回退閘門。
 
 ## 6. 驗收（黃金判準）
