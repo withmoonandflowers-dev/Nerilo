@@ -60,7 +60,7 @@ Nerilo 要讓已建立關係的成員在中央訊息服務不可用時，仍可�
 
 ## 3. 待釐清（clarify）
 
-- [ ] **Q1 原生 coturn 的可達位址與 relay port 範圍**：coturn 4.17.2 已安裝，執行檔為 `/usr/local/bin/turnserver`。verify 執行 relay-only smoke 時，須以前景行程啟動並只綁 `127.0.0.1`，加上 `--no-cli`，跑完即關閉，不用 `brew services` 長駐。臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo。待確認的是瀏覽器可達的 TURN 位址與 relay port 範圍；實測後須把確定值與啟動指令回填本節。
+- [x] **Q1 原生 coturn 的可達位址與 relay port 範圍，已回答**：coturn 4.17.2 已安裝，執行檔為 `/usr/local/bin/turnserver`。verify 以前景行程只綁 `127.0.0.1` 並加上 `--no-cli`；Chromium 以 `iceTransportPolicy: 'relay'` 取得 `127.0.0.1:49164` 的 relay candidate，port 位於 `--min-port=49160` 至 `--max-port=49200` 範圍，且沒有 `onicecandidateerror`。來源為 `runs/T2v_smoke-prod_20260904T093510Z.md`。測試後關閉行程，不用 `brew services` 長駐；臨時 realm 與帳密只放在 `.env.local` 與 `herdr-packets-Nerilo/`，不得進 repo。
 - [ ] **Q2 A1 的本機受測站位址**：`playwright.smoke.config.ts` 不會啟動 web server。A1 預設以載入 `.env.local` TURN 設定的本機 React dev server 為 `SMOKE_BASE_URL`，不得打未含本輪憑證的正式站。實作時須把確定的 host、port 與啟動指令回填。
 - [x] **Q3 A2 的兩個 context 拓撲，已回答**：`tests/e2e-vue/_helpers/users.ts:18-19` 的 `setupUser` 每次都呼叫 `browser.newContext()`，沒有 `storageState`；第 12 至 13 行也會用新的隨機 email 註冊新帳號。身分私鑰存在 IndexedDB 的 `nerilo_identity`／`keypairs`，位置為 `src/core/mesh/IdentityManager.ts:4-6,32-64`。房間金鑰須靠同一個 profile 的 ECDH 私鑰重播 `keyx` 才能還原，位置為 `src/core/mesh/MeshGossipManager.ts:218-235` 與 `src/core/mesh/RoomContentKeys.ts:193-235`。既有「離開再回來」測試 `tests/e2e-vue/rejoin.spec.ts:38-55` 與 `tests/e2e-vue/all-offline-revival.spec.ts:60-80` 都保留同一個 context，只回 dashboard 再進房。因此，原訂「A 關閉 context 後以原身分重開」無法沿用既有手法完成；第三個全新 context 也沒有 A 的 identity、ECDH 與 `keyx` 本地狀態，不能假冒原 A。處置是依第 4.3 節改用同一個 context 離開再回來。
 - [x] **Q4 A2 的 PULL 授權，已回答**：`CourierServer` 的 `PULL` 分支只有取出 `roomId`、呼叫 `store.serveRoom(roomId)`、回覆 `records`，位置為 `src/core/relay/CourierService.ts:372-376`。這條分支沒有簽章、`pubKey`／`senderId` 綁定、房籍證明或世代閘門。唯一的共通閘門是協議版本與拒絕 `from === selfId`，位置為 `src/core/relay/CourierService.ts:286`。`CourierStore.serveRoom` 只接收 `roomId`，沒有 requester 參數，位置為 `src/core/relay/CourierStore.ts:277-287`。
@@ -122,7 +122,7 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
 
 ### 4.5 風險與外部相依
 
-- **R1 原生 coturn 的瀏覽器可達性未驗證**：`/usr/local/bin/turnserver` 可執行不代表只綁 `127.0.0.1` 時瀏覽器一定取得 relay candidate。A1 仍須實測可達的 TURN 位址與 relay port 範圍，並以前景行程完成後確實關閉。
+- **R1 原生 coturn 的瀏覽器可達性已驗證**：Chromium 以 `iceTransportPolicy: 'relay'` 直接向只綁 `127.0.0.1` 的 coturn 取得 `candidate:3034062809 1 udp 33562623 127.0.0.1 49164 typ relay raddr 0.0.0.0 rport 0`。relay count 為 1，沒有 `onicecandidateerror`，49164 也位於設定的 49160 至 49200 relay port 範圍。這只證明單一 `PeerConnection` 能取得 relay candidate，尚未證明兩端經 relay 完成連線與訊息往返。來源為 `runs/T2v_smoke-prod_20260904T093510Z.md`。
 - **R2 TURN 網路映射錯誤**：coturn 行程啟動不等於瀏覽器取得 relay candidate。及格證據只能是 S2 選中的 relay candidate pair 與成功訊息往返。
 - **R3 憑證外洩**：log、trace 與報告可能收進環境值。落檔前必須掃描 TURN 使用者名稱、密碼與 URL 中的 credential，發現即停止交付並通報操作者，由操作者處理敏感產物。
 - **R4 測試鉤子高估能力**：A2 若直接操作 store 或跳過房籍、簽章、欠條與內容金鑰，只能算模組測試。產品級 E2E 必須走 Vue production 接線。

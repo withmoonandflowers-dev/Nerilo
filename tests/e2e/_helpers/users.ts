@@ -160,12 +160,16 @@ export async function expectChatReady(page: Page, timeoutMs = 30_000): Promise<v
  * the same as "ready to send": ChatService now blocks sends until the sender-key
  * exchange completes. Sending during the 金鑰交換中 window makes the message wait
  * (or, under a tight test budget, appear to never arrive). Gating on the settled
- * indicator — the 🔒/🔓 variant is visible AND the exchanging variant is gone —
+ * indicator for P2P, fallback, or encrypted mesh, while excluding exchanging state,
  * reflects the real send-readiness signal and removes round-trip flakiness.
  */
 export async function expectE2EEReady(page: Page, timeoutMs = 20_000): Promise<void> {
   await expect(
-    page.locator('.e2ee-indicator-p2p, .e2ee-indicator-fallback'),
+    page.locator(
+      '.e2ee-indicator-p2p, ' +
+        '.e2ee-indicator-fallback, ' +
+        '.e2ee-indicator-dtls[aria-label="端到端加密已啟用（房間金鑰）"]',
+    ),
   ).toBeVisible({ timeout: timeoutMs });
   await expect(page.locator('.e2ee-indicator-exchanging')).toHaveCount(0);
 }

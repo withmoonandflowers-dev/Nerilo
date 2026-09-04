@@ -8,6 +8,7 @@
  * 用法：node scripts/smoke-report.mjs（通常經由 npm run smoke:prod 自動執行）
  */
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import * as https from 'node:https';
 
@@ -16,13 +17,21 @@ const BASE_URL = process.env.SMOKE_BASE_URL ?? 'https://nerilo.web.app';
 
 function fetchText(url) {
   return new Promise((resolve) => {
-    https
-      .get(url, (res) => {
+    try {
+      const protocol = new URL(url).protocol;
+      const transport = protocol === 'http:' ? http : protocol === 'https:' ? https : null;
+      if (!transport) {
+        resolve('');
+        return;
+      }
+      transport.get(url, (res) => {
         let data = '';
         res.on('data', (c) => (data += c));
         res.on('end', () => resolve(data));
-      })
-      .on('error', () => resolve(''));
+      }).on('error', () => resolve(''));
+    } catch {
+      resolve('');
+    }
   });
 }
 
