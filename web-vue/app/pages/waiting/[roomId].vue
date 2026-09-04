@@ -5,6 +5,13 @@ import { IdentityManager } from '@legacy/core/mesh/IdentityManager'
 import { buildInviteUrl, parseInviteRendezvous, introducerStoreKey } from '@legacy/core/p2p/InviteRendezvous'
 import type { P2PRoom } from '@legacy/types'
 import { featureLog } from '@legacy/utils/featureLog'
+import {
+  normalizeRendezvousUrl,
+  readUserRendezvousUrl,
+  rememberInviteRendezvousUrl,
+  resolveRendezvousUrl,
+  saveUserRendezvousUrl,
+} from '~/lib/rendezvousConfig'
 
 definePageMeta({ pageTransition: { name: 'slide', mode: 'out-in' } })
 
@@ -17,6 +24,11 @@ const room = ref<P2PRoom | null>(null)
 const qrDataUrl = ref('')
 const busy = ref(false)
 const notFound = ref(false)
+const deploymentRendezvousUrl = import.meta.env.VITE_RENDEZVOUS_URL as string | undefined
+const rendezvousInput = ref(import.meta.client
+  ? (readUserRendezvousUrl() ?? normalizeRendezvousUrl(deploymentRendezvousUrl) ?? '')
+  : '')
+let shareInviter: { uid: string; pubKey?: string; ecdhPubKey?: string } | null = null
 
 // 分享連結：內嵌會合資訊（Spec 005 T4）——邀請者 uid+公鑰放 fragment（不上送伺服器）。
 // 身分金鑰非同步載入，先給素連結、就緒後升級成帶會合的完整版（QR 用完整版）。
@@ -43,6 +55,10 @@ watchEffect(async () => {
     if (rz && rz.room === roomId.value && rz.inviter.uid !== uid) {
       try {
         sessionStorage.setItem(introducerStoreKey(roomId.value), JSON.stringify(rz.inviter))
+        if (rz.rendezvousUrl) {
+          rememberInviteRendezvousUrl(roomId.value, rz.rendezvousUrl)
+          rendezvousInput.value = rz.rendezvousUrl
+        }
         featureLog('waiting', 'rendezvous-parsed', { roomId: roomId.value, introducer: rz.inviter.uid })
       } catch { /* sessionStorage 不可用（隱私模式）→ 走一般冷啟動，功能不受阻 */ }
     }
@@ -119,29 +135,50 @@ watchEffect(async () => {
 
   // ── 邀請側（Spec 005 T4）：把自己的身分（uid+公鑰）嵌進分享連結 fragment ──
   // 被邀請者據此指名我為首個 warm 目標；公鑰作頻外信任根（防伺服器換鑰 MITM）。
+  shareInviter = { uid }
   try {
     const idm = new IdentityManager()
     await idm.initialize()
-    shareUrl.value = buildInviteUrl(window.location.origin, {
-      room: roomId.value,
-      inviter: {
-        uid,
-        pubKey: await idm.exportPublicKey(),
-        ecdhPubKey: await idm.exportEcdhPublicKey(),
-      },
-    })
+    shareInviter = {
+      uid,
+      pubKey: await idm.exportPublicKey(),
+      ecdhPubKey: await idm.exportEcdhPublicKey(),
+    }
   } catch {
     /* 金鑰不可用（極舊環境）→ 素連結照常可用，只是少了會合資訊 */
   }
+  await refreshShareArtifacts()
+})
 
+onUnmounted(() => unsubscribe?.())
+
+async function refreshShareArtifacts() {
+  if (!import.meta.client || !shareInviter) return
+  const rendezvousUrl = resolveRendezvousUrl(roomId.value, deploymentRendezvousUrl)
+  shareUrl.value = buildInviteUrl(window.location.origin, {
+    room: roomId.value,
+    inviter: shareInviter,
+    ...(rendezvousUrl ? { rendezvousUrl } : {}),
+  })
   qrDataUrl.value = await QRCode.toDataURL(shareUrl.value, {
     width: 480,
     margin: 1,
     color: { dark: '#000000', light: '#ffffff' },
   })
-})
+}
 
-onUnmounted(() => unsubscribe?.())
+async function saveRendezvousSetting() {
+  const raw = rendezvousInput.value.trim()
+  const normalized = normalizeRendezvousUrl(raw)
+  if (raw && !normalized) {
+    toastError('會合點網址必須是有效的 http 或 https 網址')
+    return
+  }
+  saveUserRendezvousUrl(normalized)
+  rendezvousInput.value = normalized ?? ''
+  await refreshShareArtifacts()
+  success(normalized ? '會合點網址已儲存' : '已改回預設會合方式')
+}
 
 async function copyLink() {
   try {
@@ -215,6 +252,14 @@ async function startChat() {
       <div class="waiting__actions">
         <button type="button" class="btn-secondary" @click="copyLink">複製連結</button>
         <button type="button" class="btn-secondary" @click="shareLink">分享…</button>
+      </div>
+
+      <div class="waiting__rendezvous card">
+        <label for="rendezvous-url">本地會合點網址（選填）</label>
+        <input id="rendezvous-url" v-model="rendezvousInput" type="url"
+               placeholder="http://區網位址:連接埠" autocomplete="url" />
+        <button type="button" class="btn-secondary" @click="saveRendezvousSetting">儲存會合點</button>
+        <p>邀請資料優先，其次使用這裡的設定；留空時使用部署設定或既有 Firestore。</p>
       </div>
 
       <button v-if="isOwner" type="button" class="btn-primary waiting__start"
@@ -304,6 +349,26 @@ async function startChat() {
   max-width: 360px;
   margin-top: 20px;
 }
+.waiting__rendezvous {
+  width: 100%;
+  max-width: 360px;
+  margin-top: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+.waiting__rendezvous label { font-size: 14px; font-weight: 600; }
+.waiting__rendezvous input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  padding: 0 12px;
+  color: var(--text-1);
+  background: var(--bg);
+}
+.waiting__rendezvous p { margin: 0; font-size: 12px; color: var(--text-2); }
 .waiting__start { max-width: 360px; margin-top: 12px; }
 .waiting__cta { max-width: 260px; margin-top: 12px; }
 .waiting__pulse {

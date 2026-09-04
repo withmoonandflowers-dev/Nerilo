@@ -17,6 +17,7 @@ const injectedViteEnv = [
   'VITE_APPCHECK_KEY',
   'VITE_TELEMETRY_ENDPOINT',
   'VITE_DEPLOY_ENV',
+  'VITE_RENDEZVOUS_URL',
 ] as const
 
 const viteEnvDefines = Object.fromEntries(
