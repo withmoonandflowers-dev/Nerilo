@@ -14,6 +14,7 @@ import {
   createRoom,
   joinRoom,
   expectChatReady,
+  expectE2EEReady,
   sendMessage,
   expectMessageReceived,
   uniqueMessage,
@@ -34,6 +35,9 @@ test.describe('P1 multi-peer @release', () => {
       await expectChatReady(alice.page, 60_000);
       await expectChatReady(bob.page, 60_000);
       await expectChatReady(carol.page, 60_000);
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
+      await expectE2EEReady(carol.page);
 
       // Each peer sends one tagged message.
       const aMsg = uniqueMessage('A says');

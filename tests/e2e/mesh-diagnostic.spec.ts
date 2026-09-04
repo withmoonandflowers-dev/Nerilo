@@ -28,6 +28,7 @@ import {
   createRoom,
   joinRoom,
   expectChatReady,
+  expectE2EEReady,
   sendMessage,
   uniqueMessage,
   teardown,
@@ -76,6 +77,7 @@ test.describe('3 人 mesh 診斷（矩陣全 =1）@release', () => {
       ] as Array<[Page]>) {
         await expect(page.locator('.e2ee-indicator-dtls')).toBeVisible({ timeout: 60_000 });
         await expectChatReady(page, 60_000);
+        await expectE2EEReady(page);
       }
 
       // 三人立刻接連發送：此刻部分 pairwise 連線通常尚未成形，靠對帳補

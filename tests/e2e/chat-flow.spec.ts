@@ -18,6 +18,7 @@ import {
   createRoom,
   joinRoom,
   expectChatReady,
+  expectE2EEReady,
   sendMessage,
   expectMessageReceived,
   uniqueMessage,
@@ -32,6 +33,8 @@ test.describe('P1 chat flow @release', () => {
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page);
       await expectChatReady(bob.page);
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
 
       const msg = uniqueMessage('delivery-status');
       await sendMessage(alice.page, msg);
@@ -61,6 +64,8 @@ test.describe('P1 chat flow @release', () => {
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page);
       await expectChatReady(bob.page);
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
 
       const payload = '👋 你好世界 🌏 émoji éclair żółć عربى';
       await sendMessage(alice.page, payload);
@@ -80,6 +85,8 @@ test.describe('P1 chat flow @release', () => {
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page);
       await expectChatReady(bob.page);
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
 
       // 5 KB sentinel — well under the 256 KB DataChannel cap but big enough
       // to defeat in-memory shortcuts.
@@ -104,6 +111,8 @@ test.describe('P1 chat flow @release', () => {
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page);
       await expectChatReady(bob.page);
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
 
       const tag = Date.now().toString(36);
       const messages = Array.from({ length: 5 }, (_, i) => `burst-${tag}-${i}`);

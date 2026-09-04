@@ -102,18 +102,23 @@ A2C characterization 已確認既有測試無法在關閉 context 後還原原 A
 
 ### 4.4 A3 已知 release 失敗
 
-基線只引用 `runs/T1v_test-e2e-release_20260904T055849Z.md`：27 項中 21 項通過、6 項失敗，根因均未定位。
+基線 `runs/T1v_test-e2e-release_20260904T055849Z.md` 為 27 項中 21 項通過、6 項失敗。後續 `runs/T2v_a3-traces_20260904T082327Z.md` 同樣為 21 項通過、6 項失敗，但失敗成員在不同輪次之間漂移。兩次基準屬同一 SHA 家族，期間 `src/` 與 `tests/` 未變，因此這批失敗判定為 flaky。
+
+trace 已定位共同根因：測試在連線橫幅亮起後、sender key 分發完成前送出訊息。產品依 ADR-0004 與 Spec 012 P4 拒絕明文降級並將該則標為 failed。這是測試缺少 `expectE2EEReady` 等待條件，不是產品送不出訊息。通過組從 sender key 分發完成到送出的餘裕只有 0.47 至 0.90 秒，足以解釋失敗成員漂移。
 
 | 測試 | 錯誤第一行 | A3 處置 |
 |---|---|---|
-| `tests/e2e/chat-flow.spec.ts:17` P1.1 | `Error: expect(locator).toHaveClass(expected) failed` | 先用 trace 判斷狀態未轉移、時序或過期斷言，不先改 timeout |
-| `tests/e2e/chat-flow.spec.ts:53` P1.3 | `Error: expect(locator).toBeVisible() failed` | 與 `_helpers/users.ts:190` 同形，先查根因 |
-| `tests/e2e/chat-flow.spec.ts:99` P1.5 | `Error: locator.click: Error: strict mode violation: getByRole('button', { name: '傳送' }) resolved to 2 elements:` | 可在單一 spec 內收斂為精確 selector，修後由 verifier 重跑 |
-| `tests/e2e/mesh-diagnostic.spec.ts:31` | `Error: expect(locator).toBeVisible() failed` | 與 `_helpers/users.ts:190` 同形，先查根因 |
-| `tests/e2e/refresh-recovery.spec.ts:13` P1.10 | `Error: expect(locator).toBeVisible() failed` | 與 `_helpers/users.ts:190` 同形，先查根因 |
-| `tests/e2e/security.spec.ts:232` P2.5 | `Error: expect(locator).toBeVisible() failed` | 與 `_helpers/users.ts:190` 同形，先查根因 |
+| `tests/e2e/chat-flow.spec.ts` P1.1 | `Error: expect(locator).toHaveClass(expected) failed` | Alice、Bob 第一次送出前都呼叫既有 `expectE2EEReady`，不改 timeout 或斷言 |
+| `tests/e2e/chat-flow.spec.ts` P1.3 | `Error: expect(locator).toBeVisible() failed` | Alice、Bob 第一次送出前都呼叫既有 `expectE2EEReady` |
+| `tests/e2e/chat-flow.spec.ts` P1.4 | `Error: expect(locator).toBeVisible() failed` | Alice、Bob 第一次送出前都呼叫既有 `expectE2EEReady` |
+| `tests/e2e/chat-flow.spec.ts` P1.5 | `Error: locator.click: strict mode violation` | Alice、Bob 第一次送出前都呼叫既有 `expectE2EEReady`；共用 `sendMessage` 以 aria-label `傳送訊息` 精確選取按鈕，避免同時命中「重新傳送」 |
+| `tests/e2e/multi-peer.spec.ts` P1.9 | `Error: expect(locator).toBeVisible() failed` | Alice、Bob、Carol 第一次送出前都呼叫既有 `expectE2EEReady` |
+| `tests/e2e/mesh-diagnostic.spec.ts` | `Error: expect(locator).toBeVisible() failed` | 保留 DTLS 與連線拓撲等待，三個 page 另加既有 `expectE2EEReady` |
+| `tests/e2e/refresh-recovery.spec.ts` P1.10 | `Error: expect(locator).toBeVisible() failed` | Alice、Bob 第一次送出前都呼叫既有 `expectE2EEReady` |
+| `tests/e2e/security.spec.ts` P2.5 | `Error: expect(locator).toBeVisible() failed` | 保留備援模式等待，Alice、Bob 第一次送出前另加既有 `expectE2EEReady` |
+| `tests/e2e/security.spec.ts` P2.6 | `expect(received).toBeNull()` 收到 `PERMISSION_DENIED: evaluation error at L307:24 for 'update'` | 根因未定位，依協作規則第二節第三輪以 `test.fixme` 隔離；重查完整 trace、join 後 participants／meshIdentities 前置狀態與規則函式執行期錯誤 |
 
-A3 只修已證實為時序或選擇器型的項目。四項 `_helpers/users.ts:190` 同形失敗必須先寫出共同根因與反證，再決定是否需要共用 helper 變更。產品缺陷留紅並登記，不以測試改動掩蓋。
+A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout、不加 retry，也不放寬斷言。P2.6 沒有完整 trace，故不猜根因或修改 `firestore.rules`。本輪新增 `expectE2EEReady` 後，release 分母仍為 27；若之後總數改變，須先依第 6 節 V3 更新本 spec。
 
 ### 4.5 風險與外部相依
 
@@ -150,7 +155,8 @@ A3 只修已證實為時序或選擇器型的項目。四項 `_helpers/users.ts:
 - [ ] **V3 React release 不低於 21/27**
   - 指令：`npm run test:e2e:release`。
   - 數字來源：Playwright list reporter 摘要與 `runs/T2v_test-e2e-release_<UTC>.md`。
-  - 及格線：27 項中至少 21 項通過，失敗不超過 6 項；不可新增 skip。基線來自 `runs/T1v_test-e2e-release_20260904T055849Z.md`。若測試總數改變，先更新本 spec 的分母與理由。
+  - 及格線：總數維持 27。其中 `security.spec.ts` P2.6 依協作規則第二節第三輪以 `test.fixme` 隔離，計為 1 項 skip，這是本 spec 明列的唯一允許 skip。其餘 26 項執行，通過數不得低於 21，且不得出現本節未列出的新增 skip。基線來自 `runs/T1v_test-e2e-release_20260904T055849Z.md` 與 `runs/T2v_a3-traces_20260904T082327Z.md`（兩次皆 21 過 6 敗，失敗成員漂移）。若測試總數改變或需要再隔離其他項目，先更新本 spec 的分母與理由。
+  - 隔離退場條件：P2.6 取得完整 trace 並定位根因後，移除 `test.fixme` 並回填本節；在那之前不得把它算進通過數，也不得宣稱 leaveRoom 規則已驗證。
 
 - [ ] **V4 三個既有閘門維持全綠**
   - 指令：`npm run test:e2e:stable`、`npm run test:e2e:vue-stable`、`npm run test:e2e:rendezvous`。

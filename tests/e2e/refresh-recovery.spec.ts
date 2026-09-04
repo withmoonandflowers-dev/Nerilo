@@ -14,6 +14,7 @@ import {
   createRoom,
   joinRoom,
   expectChatReady,
+  expectE2EEReady,
   sendMessage,
   expectMessageReceived,
   uniqueMessage,
@@ -28,6 +29,8 @@ test.describe('P1 refresh recovery @release', () => {
       await joinRoom(bob.page, roomId);
       await expectChatReady(alice.page);
       await expectChatReady(bob.page);
+      await expectE2EEReady(alice.page);
+      await expectE2EEReady(bob.page);
 
       const msgs = [
         uniqueMessage('persisted-1'),

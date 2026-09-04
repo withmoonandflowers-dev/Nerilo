@@ -174,7 +174,7 @@ export async function expectE2EEReady(page: Page, timeoutMs = 20_000): Promise<v
 export async function sendMessage(page: Page, text: string): Promise<void> {
   const input = page.getByPlaceholder('輸入訊息...');
   await input.fill(text);
-  await page.getByRole('button', { name: '傳送' }).click();
+  await page.getByRole('button', { name: '傳送訊息', exact: true }).click();
   await expect(input).toHaveValue('', { timeout: 5_000 });
 }
 
