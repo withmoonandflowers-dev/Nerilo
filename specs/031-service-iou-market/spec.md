@@ -207,13 +207,24 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
   "v": "nswappair1",
   "pairId": "pair-41...",
   "intentHashes": [ "6b86b273...", "d4735e3a..." ],
-  "matcherNodeId": "5c1e...",
+  "matcher": { "nodeId": "5c1e...", "pubKey": "MFkw..." },
   "proposedAt": 1788702100000,
   "expiresAt": 1788702400000,
   "nonce": "ee40...",
   "signature": "MEQCIB..."
 }
 ```
+
+| 欄位 | 必選 | 語義 |
+|---|---|---|
+| `v` | 是 | 固定 `"nswappair1"`。其他值一律拒絕 |
+| `pairId` | 是 | 本次配對提議的識別碼 |
+| `intentHashes` | 是 | 兩份交換意向的雜湊，依字典序排列 |
+| `matcher` | 是 | 撮合節點的 nodeId 與 Base64 SPKI 公鑰，兩者必須互相綁定 |
+| `proposedAt` | 是 | 撮合節點提出配對的時間 |
+| `expiresAt` | 是 | 配對提議到期時間 |
+| `nonce` | 是 | 防重放隨機值 |
+| `signature` | 是 | 撮合節點對 5.6 canonical 的簽章 |
 
 `intentHashes` 依字典序排列，使兩造算出同一個 `pairId` 前置雜湊。撮合節點的簽章只表示
 「這則配對由我提出」，**不賦予它任何憑證權利**。兩造可以完全忽略撮合節點另行配對。
@@ -324,6 +335,42 @@ ECDSA P-256／SHA-256 簽署，Base64 輸出：
 簽章必須綁定請求內的完整憑證與背書鏈。驗證端除了依 5.1 或 5.3 驗證憑證與鏈，還必須重新計算
 請求內 `iou`、`chain` 的 `iouHash`、`chainHash`，確認與實際驗證的憑證及鏈相同，並檢查
 `claimant.pubKey` 導出的 nodeId 等於 `claimant.nodeId`。任一不符即拒絕。
+
+### 5.5 交換意向簽章與雜湊
+
+`nswapintent1` 的簽章覆蓋範圍是下列固定順序陣列的 UTF-8 JSON 字串，以
+ECDSA P-256／SHA-256 簽署，Base64 輸出：
+
+```
+["NERILO-SWAP-INTENT", "nswapintent1", intentId,
+ offer.iouId, offer.issuerNodeId, offer.denomination.unit, offer.denomination.amount,
+ want.unit, want.minAmount, wantIssuers,
+ holder.nodeId, holder.pubKey, expiresAt, nonce]
+```
+
+`wantIssuers` 為 `null` 時序列化成 JSON 的 `null`；為陣列時保留線上格式中的陣列順序。
+意向 hash 是對 `JSON.stringify([canonical, signature])` 取 SHA-256，輸出為十六進位小寫，
+其中 `canonical` 是本節定義的交換意向 canonical 字串。
+
+驗證端必須檢查 `holder.pubKey` 導出的 nodeId 等於 `holder.nodeId`，並以該公鑰驗證簽章。
+未知面額、過期意向、身分不綁定或簽章不符都必須 fail-closed。
+
+### 5.6 配對提議簽章與雜湊
+
+`nswappair1` 的簽章覆蓋範圍是下列固定順序陣列的 UTF-8 JSON 字串，以
+ECDSA P-256／SHA-256 簽署，Base64 輸出：
+
+```
+["NERILO-SWAP-PAIR", "nswappair1", pairId, intentHashes,
+ matcher.nodeId, matcher.pubKey, proposedAt, expiresAt, nonce]
+```
+
+`intentHashes` 必須恰有兩項，並依十六進位小寫 hash 字串的 Unicode code unit 順序遞增排列。
+順序不符即回 `malformed`。配對 hash 是對 `JSON.stringify([canonical, signature])` 取 SHA-256，
+輸出為十六進位小寫，其中 `canonical` 是本節定義的配對提議 canonical 字串。
+
+驗證端必須檢查 `matcher.pubKey` 導出的 nodeId 等於 `matcher.nodeId`，不符即回
+`identity-mismatch`，通過後再以該公鑰驗證簽章。
 
 ## 6. 狀態機與時序
 
