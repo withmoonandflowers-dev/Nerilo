@@ -79,6 +79,9 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
 | D-Q4 | 信用摘要的觀測者要不要互相背書成聚合證明 | 聚合會引入新的女巫面，需先看單一觀測者摘要的實際鑑別度 |
 | D-Q5 | 憑證是否需要與 `CoSignedReceipt` 的服務證明綁定 | 現況 `claimCredit()` 沒有非測試呼叫端，綁定對象目前不在產品路徑上（見 10.2） |
 | D-Q6 | `relay-bytes` 與 `priority` 要如何接到產品消費端 | 現行轉運路徑沒有配額或優先序消費端；需另行設計轉運配額排程器，不能把餘額扣減當成已履約 |
+| D-Q7 | 信用摘要是否要提供 mesh RTT 中位數 | `HeartbeatService` 目前只保留最近一次 pong 的 RTT，沒有樣本序列；要算中位數必須先新增取樣保存與觀測窗語義 |
+| D-Q8 | 如何累積觀測者自己的兌換互動紀錄 | 本階段沒有產品路徑記錄觀測者向其他開票人提出的兌換與履行結果，不能拿開票人自己的兌換簿替代 |
+| D-Q9 | 信用摘要是否要加入硬性到期欄位 | 本版只提供觀測窗，由消費端自行判斷新鮮度；硬性到期會成為跨實作的相容規則，需另行裁決 |
 
 ## 4. 線上格式（wire format）
 
@@ -244,7 +247,7 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
     "reconcileSuccesses": 9,
     "continuousReachableMs": 3600000,
     "consecutiveFailures": 0,
-    "meshRttMsMedian": 84,
+    "meshRttMsLatest": 84,
     "redeemRequests": 4,
     "redeemHonoured": 4,
     "doubleEndorsementsObserved": 0
@@ -255,10 +258,24 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
 }
 ```
 
+| 欄位 | 語義與來源 |
+|---|---|
+| `connectionAttempts` / `connectionSuccesses` | 觀測者本機 `CourierQualityStore` 對該節點的連線嘗試與成功次數 |
+| `reconcileAttempts` / `reconcileSuccesses` | 觀測者本機 `CourierQualityStore` 對該節點的對帳嘗試與成功次數 |
+| `continuousReachableMs` / `consecutiveFailures` | 觀測者本機量到的連續可達時間與連續失敗次數 |
+| `meshRttMsLatest` | `HeartbeatService` 保存的最近一次 pong RTT；取不到時為 `null` |
+| `redeemRequests` / `redeemHonoured` | 這位觀測者自己向 `subjectNodeId` 提出的兌換次數，以及其中被履行的次數 |
+| `doubleEndorsementsObserved` | 觀測者持有、且 `from` 等於 `subjectNodeId` 的雙重背書證據筆數 |
+
 **摘要由觀測者簽署，不是由被評價的開票人自己簽。** 自報的信用值不可驗證，
 本規格不定義自報格式，收到自報摘要一律視為未驗證資料。
-`meshRttMsMedian` 可為 `null`：現行 RTT 只在暖 mesh 鄰居之間存在（Spec 028 §9.1），
+`meshRttMsLatest` 可為 `null`：現行 RTT 只在暖 mesh 鄰居之間存在（Spec 028 §9.1），
 對只在名冊上見過的開票人取不到值，不得以任何預設值填補。
+本階段沒有產品路徑累積觀測者自己的兌換互動紀錄，所以實務上 `redeemRequests` 與
+`redeemHonoured` 恆為 0；呼叫端日後只有在完成 D-Q8 後才能注入非零值。
+
+協議層不定義信用摘要的到期時間。摘要是參考資訊，不是服務義務；消費端必須依 `window`
+自行決定新鮮度政策，不能把簽章有效解讀為資料仍然新鮮。
 
 ## 5. 密碼學語義
 
@@ -371,6 +388,29 @@ ECDSA P-256／SHA-256 簽署，Base64 輸出：
 
 驗證端必須檢查 `matcher.pubKey` 導出的 nodeId 等於 `matcher.nodeId`，不符即回
 `identity-mismatch`，通過後再以該公鑰驗證簽章。
+
+### 5.7 信用摘要簽章
+
+`ncred1` 的簽章覆蓋範圍是下列固定順序陣列的 UTF-8 JSON 字串，以
+ECDSA P-256／SHA-256 簽署，Base64 輸出：
+
+```
+["NERILO-SERVICE-CREDIT", "ncred1", subjectNodeId,
+ observer.nodeId, observer.pubKey, window.fromMs, window.toMs,
+ observations.connectionAttempts, observations.connectionSuccesses,
+ observations.reconcileAttempts, observations.reconcileSuccesses,
+ observations.continuousReachableMs, observations.consecutiveFailures,
+ observations.meshRttMsLatest, observations.redeemRequests,
+ observations.redeemHonoured, observations.doubleEndorsementsObserved,
+ issuedAt, nonce]
+```
+
+驗證端依序檢查版本、必選欄位與型別、`observer.pubKey` 與 `observer.nodeId` 的綁定及簽章。
+若 `observer.nodeId` 等於 `subjectNodeId`，該摘要是開票人自報，必須視為未驗證資料並回 `malformed`。
+`window.fromMs` 不得晚於 `window.toMs`。所有數值欄位都必須是非負整數，否則回 `malformed`；
+`meshRttMsLatest` 另可為 JSON 的 `null`，驗證端不得把它改寫成 0 或其他預設值。
+`issuedAt` 若超過驗證時點 `now` 加 30 秒的時鐘容忍，回 `malformed`。本版沒有到期檢查，
+摘要的新鮮度由消費端依 4.7 的 `window` 判斷。
 
 ## 6. 狀態機與時序
 
@@ -544,7 +584,7 @@ D4 建的登記簿因此同時補上這一塊，不是只為新格式而建。
       金額超過剩餘額度回 `insufficient-balance`；
       非現持有人提出兌換回 `chain-broken`；重放同一 `nonce` 的兌換被拒。
 - [ ] C8：`ncred1` 由觀測者簽署可驗；改 `observer` 回 `identity-mismatch`；
-      `meshRttMsMedian` 為 `null` 時仍可驗且不得被補成任何預設值。
+      `meshRttMsLatest` 為 `null` 時仍可驗且不得被補成任何預設值。
 
 ## 10. 參考實作對照與已知偏離
 
@@ -564,4 +604,14 @@ D4 建的登記簿因此同時補上這一塊，不是只為新格式而建。
   在那之前沒有累積任何資料，所以 4.7 的觀測窗不應早於該時點。
 - `CourierQuality` 只存在於頁面生命週期（Spec 028 §9.3.4），重載即歸零，
   所以 `ncred1` 的觀測窗實際上很短。摘要的鑑別度受此限制，不得誇大。
+- `HeartbeatService` 只保存暖 mesh 鄰居最近一次 pong 的 RTT，沒有樣本序列，因此 4.7 只能提供
+  `meshRttMsLatest`，不能計算中位數。若要中位數，必須先完成 D-Q7 的取樣保存與觀測窗設計。
+- 對只在名冊上見過、沒有同房成為暖 mesh 鄰居的開票人，`meshRttMsLatest` 恆為 `null`。
+  市場上多數陌生開票人會落在這一類。加上短暫的品質觀測窗，這份摘要的鑑別度有限，
+  **不得對外宣稱它是可靠的信用評等**。
+- 本階段沒有產品路徑累積觀測者向其他開票人的兌換互動，因此 `redeemRequests` 與
+  `redeemHonoured` 實務上恆為 0，見 D-Q8。開票人自己的 `IssuerRedemptionBook` 不可拿來替代，
+  否則會把自報資料偽裝成第三方觀測。
+- 信用摘要沒有硬性到期，舊摘要可被無限期重放。消費端若不依 `window` 自訂新鮮度政策，
+  就可能被舊資料誤導；是否加入協議層到期欄位列為 D-Q9。
 - 市場 UI 未做，本階段只有協議層與 SDK 表面。
