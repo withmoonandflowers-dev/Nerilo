@@ -75,15 +75,21 @@ export interface PersistedDepositClaim {
   issuerPubKey: string;
 }
 
-/** 欠條簿耐久快照；quotes 短命且單次使用，刻意不跨重載保存。 */
-export interface CourierIOUSnapshot {
-  version: 1;
+interface CourierIOUSnapshotBase {
   ownerNodeId: string;
   claims: PersistedDepositClaim[];
   acceptedContributions: AcceptedContributionIOU[];
   currentStoragePrice: number;
   lastPriceUpdateAt: number | null;
 }
+
+/** 欠條簿耐久快照；quotes 短命且單次使用，刻意不跨重載保存。 */
+export type CourierIOUSnapshot =
+  | (CourierIOUSnapshotBase & { version: 1 })
+  | (CourierIOUSnapshotBase & {
+      version: 2;
+      grantedCustodyCredits: Array<{ issuerNodeId: string; credit: number }>;
+    });
 
 export interface CourierIOUPersistence {
   load(ownerNodeId: string): Promise<CourierIOUSnapshot | null>;
@@ -105,6 +111,7 @@ export interface CourierIOUBookConfig {
 
 const INITIAL_STORAGE_PRICE = 0.000_001;
 const STORAGE_DURATION_MS = 14 * 86_400_000;
+const ONE_DAY_MS = 86_400_000;
 
 /**
  * 冷啟動代管配額：一個還沒賺過點數的新節點，對單一信使買得起的密文位元組量
@@ -227,6 +234,7 @@ export class CourierIOUBook {
   private readonly quotes = new Map<string, DepositQuote>();
   private readonly claims = new Map<string, PersistedDepositClaim>();
   private readonly acceptedContributions = new Map<string, AcceptedContributionIOU>();
+  private readonly grantedCustodyCredits = new Map<string, number>();
   private currentStoragePrice: number;
   private lastPriceUpdateAt: number | null = null;
   private revision = 0;
@@ -281,7 +289,28 @@ export class CourierIOUBook {
   }
 
   availableCredit(issuerNodeId: string): number {
-    return Math.max(0, this.config.creditLimitPerIssuer - this.outstanding(issuerNodeId));
+    return Math.max(0, this.creditLimit(issuerNodeId) - this.outstanding(issuerNodeId));
+  }
+
+  /**
+   * 把服務憑證的 byte-days 依兌換當下擁擠價格換成點數額度。
+   * byteDays 以「bytes × days」表示，所以用一天作 storageCost 的時間維度。
+   */
+  grantCustodyQuota(issuerNodeId: string, byteDays: number): number {
+    if (!issuerNodeId || !Number.isSafeInteger(byteDays) || byteDays <= 0) {
+      throw new RangeError('custody quota requires an issuer and positive integer byte-days');
+    }
+    const credit = storageCost(this.currentStoragePrice, byteDays, ONE_DAY_MS);
+    this.grantedCustodyCredits.set(
+      issuerNodeId,
+      (this.grantedCustodyCredits.get(issuerNodeId) ?? 0) + credit
+    );
+    this.revision++;
+    return credit;
+  }
+
+  grantedCustodyCredit(issuerNodeId: string): number {
+    return this.grantedCustodyCredits.get(issuerNodeId) ?? 0;
   }
 
   activeClaimIds(issuerNodeId: string): string[] {
@@ -308,7 +337,7 @@ export class CourierIOUBook {
     if (!(await verify(depositCanonical(unsigned), issuerSig))) {
       return { accepted: false, reason: 'invalid-iou' };
     }
-    if (this.outstanding(iou.issuerNodeId) + iou.amount > this.config.creditLimitPerIssuer) {
+    if (this.outstanding(iou.issuerNodeId) + iou.amount > this.creditLimit(iou.issuerNodeId)) {
       return { accepted: false, reason: 'insufficient-credit' };
     }
     this.claims.set(iou.iouId, { iou, issuerPubKey });
@@ -324,13 +353,21 @@ export class CourierIOUBook {
 
   private snapshot(): CourierIOUSnapshot {
     return {
-      version: 1,
+      version: 2,
       ownerNodeId: this.ownerNodeId,
       claims: [...this.claims.values()],
       acceptedContributions: [...this.acceptedContributions.values()],
       currentStoragePrice: this.currentStoragePrice,
       lastPriceUpdateAt: this.lastPriceUpdateAt,
+      grantedCustodyCredits: [...this.grantedCustodyCredits].map(([issuerNodeId, credit]) => ({
+        issuerNodeId,
+        credit,
+      })),
     };
+  }
+
+  private creditLimit(issuerNodeId: string): number {
+    return this.config.creditLimitPerIssuer + this.grantedCustodyCredit(issuerNodeId);
   }
 
   /**
@@ -364,10 +401,26 @@ export class CourierIOUBook {
     } catch {
       return;
     }
-    if (!snapshot || snapshot.version !== 1 || snapshot.ownerNodeId !== this.ownerNodeId) return;
+    if (!snapshot
+      || (snapshot.version !== 1 && snapshot.version !== 2)
+      || snapshot.ownerNodeId !== this.ownerNodeId) return;
 
     this.claims.clear();
     this.acceptedContributions.clear();
+    this.grantedCustodyCredits.clear();
+    if (snapshot.version === 2 && Array.isArray(snapshot.grantedCustodyCredits)) {
+      for (const grant of snapshot.grantedCustodyCredits) {
+        if (!grant
+          || typeof grant.issuerNodeId !== 'string'
+          || grant.issuerNodeId.length === 0
+          || !Number.isFinite(grant.credit)
+          || grant.credit <= 0) continue;
+        this.grantedCustodyCredits.set(
+          grant.issuerNodeId,
+          (this.grantedCustodyCredits.get(grant.issuerNodeId) ?? 0) + grant.credit
+        );
+      }
+    }
     const issuerTotals = new Map<string, number>();
     const persistedClaims = Array.isArray(snapshot.claims) ? snapshot.claims : [];
     for (const persisted of persistedClaims) {
@@ -379,7 +432,7 @@ export class CourierIOUBook {
         const { issuerSig, ...unsigned } = iou;
         if (!(await verify(depositCanonical(unsigned), issuerSig))) continue;
         const next = (issuerTotals.get(iou.issuerNodeId) ?? 0) + iou.amount;
-        if (next > this.config.creditLimitPerIssuer) continue;
+        if (next > this.creditLimit(iou.issuerNodeId)) continue;
         issuerTotals.set(iou.issuerNodeId, next);
         this.claims.set(iou.iouId, persisted);
       } catch {

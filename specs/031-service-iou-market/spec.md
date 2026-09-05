@@ -78,6 +78,7 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
 | D-Q3 | 開票人離線時的代理登記，要不要允許多個代理並存 | 多代理會把「先到先認」變成分區各自先到，見 7.3 |
 | D-Q4 | 信用摘要的觀測者要不要互相背書成聚合證明 | 聚合會引入新的女巫面，需先看單一觀測者摘要的實際鑑別度 |
 | D-Q5 | 憑證是否需要與 `CoSignedReceipt` 的服務證明綁定 | 現況 `claimCredit()` 沒有非測試呼叫端，綁定對象目前不在產品路徑上（見 10.2） |
+| D-Q6 | `relay-bytes` 與 `priority` 要如何接到產品消費端 | 現行轉運路徑沒有配額或優先序消費端；需另行設計轉運配額排程器，不能把餘額扣減當成已履約 |
 
 ## 4. 線上格式（wire format）
 
@@ -305,6 +306,25 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
 
 驗證通過後的現持有人是最後一則的 `toNodeId`；鏈為空時是 `iou.holder.nodeId`。
 
+### 5.4 兌換請求簽章
+
+`nsredeem1` 的簽章覆蓋範圍是下列固定順序陣列的 UTF-8 JSON 字串，以
+ECDSA P-256／SHA-256 簽署，Base64 輸出：
+
+```
+["NERILO-SERVICE-REDEEM", "nsredeem1", iouHash, chainHash,
+ claimant.nodeId, claimant.pubKey, requested.unit, requested.amount,
+ requestedAt, nonce]
+```
+
+`iouHash` 依 5.2 的憑證雜湊定義計算。`chainHash` 的計算方式是先依鏈順序計算每則背書的
+5.2 雜湊，再對 `JSON.stringify([endorsementHash1, endorsementHash2, ...])` 取 SHA-256，
+輸出為十六進位小寫。空鏈的 `chainHash` 是對 JSON 字串 `[]` 取 SHA-256。
+
+簽章必須綁定請求內的完整憑證與背書鏈。驗證端除了依 5.1 或 5.3 驗證憑證與鏈，還必須重新計算
+請求內 `iou`、`chain` 的 `iouHash`、`chainHash`，確認與實際驗證的憑證及鏈相同，並檢查
+`claimant.pubKey` 導出的 nodeId 等於 `claimant.nodeId`。任一不符即拒絕。
+
 ## 6. 狀態機與時序
 
 ### 6.1 憑證生命週期
@@ -349,6 +369,9 @@ issued ──endorse──> endorsed(seq=n) ──register──> registered
 - **餘額是開票人本機狀態，不在線上格式裡**。持有人不能自行宣稱餘額；
   市場上的買方必須向開票人查詢，或承擔餘額已被消耗的風險。這是刻意的取捨，理由見 ADR-0038。
 - 部分兌換不改變背書鏈；同一條鏈可多次兌換直到 `exhausted` 或 `expired`。
+- 三種面額都可完成協議驗證、扣減餘額並取得兌換結果，但目前只有 `custody-byte-days` 有產品消費端。
+  它會依兌換當下的擁擠價格換算成寄存點數額度。`relay-bytes` 與 `priority` 兌換成功只會扣減餘額
+  並產生回執，產品行為不會因此改變。要讓這兩種面額實際影響服務，必須另做 D-Q6 的轉運配額排程器。
 
 ### 6.4 拒絕原因（closed set）
 
@@ -466,7 +489,8 @@ D4 建的登記簿因此同時補上這一塊，不是只為新格式而建。
       只送一則回 `swap-incomplete`；超過 `expiresAt` 後送達回 `swap-expired`；
       重送已完成的配對不產生第二次轉移。
 - [ ] C6：撮合節點把 `nswappair1` 的 `intentHashes` 改掉時，兩造重算雜湊會發現並中止。
-- [ ] C7：兌換 `relay-bytes` 面額端對端成功；金額超過剩餘額度回 `insufficient-balance`；
+- [ ] C7：兌換 `custody-byte-days` 面額後，持有人原先因額度不足被拒的寄存會被接受；
+      金額超過剩餘額度回 `insufficient-balance`；
       非現持有人提出兌換回 `chain-broken`；重放同一 `nonce` 的兌換被拒。
 - [ ] C8：`ncred1` 由觀測者簽署可驗；改 `observer` 回 `identity-mismatch`；
       `meshRttMsMedian` 為 `null` 時仍可驗且不得被補成任何預設值。
