@@ -127,7 +127,23 @@ export class WarmColdSignalingTransport implements SignalingTransport {
       // label 內插進訊息字串：e2e 以 console 文字斷言選路（勿改回物件參數）
       logger.info(`[WarmColdSignalingTransport] warm 無路，退回 cold（${this.label}，此 pair 黏住）`);
     }
-    await (await this.ensureCold()).send(data);
+    const cold = await this.ensureCold();
+    try {
+      await cold.send(data);
+    } catch (coldError) {
+      // cold 本身失敗時才重選一次 warm。一般 cold 成功仍維持黏住，避免逐則重試 NACK。
+      if (this.warm && this.hasWarmPath()) {
+        try {
+          await this.warm.send(data);
+          this.stickCold = false;
+          logger.info(`[WarmColdSignalingTransport] cold 失敗，重選 warm 成功（${this.label}）`);
+          return;
+        } catch {
+          // 診斷必須保留 cold 原因；warm 失敗不解除黏住，也不取代原始錯誤。
+        }
+      }
+      throw coldError;
+    }
   }
 
   async cleanupOlderThan(beforeMs: number): Promise<void> {

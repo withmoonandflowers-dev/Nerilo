@@ -380,6 +380,163 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
     expect(summary.rooms).toBe(1); // 只有 good 成功
     expect(courierStore.serveRoom('good').map((m) => m.messageId)).toEqual(['G']);
   });
+
+  it('本地 loadRoom 失敗不會換信使或建立第二個連線', async () => {
+    const reconcile = vi.fn();
+    const first = { reconcile } as CourierClient;
+    const openClient = vi.fn(async (courierUid: string) => {
+      if (courierUid === 'first') return first;
+      throw new Error('第二個候選不應被嘗試');
+    });
+    const deps: CourierBackupDeps = {
+      listRooms: async () => ['local-broken'],
+      loadRoom: async () => { throw new Error('local read failed'); },
+      saveRecord: async () => {},
+      verifyRecord: async () => true,
+      discoverCourierUids: async () => ['first', 'second'],
+      openClient,
+    };
+
+    await expect(runCourierBackup(deps)).resolves.toEqual({ rooms: 0, received: 0, pushed: 0 });
+    expect(openClient).toHaveBeenCalledTimes(1);
+    expect(openClient).toHaveBeenCalledWith('first');
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  function scriptedClient(
+    reconcile: CourierClient['reconcile']
+  ): CourierClient {
+    return { reconcile } as CourierClient;
+  }
+
+  async function drainRetryTimers<T>(promise: Promise<T>): Promise<T> {
+    let settled = false;
+    void promise.finally(() => { settled = true; });
+    for (let index = 0; index < 20 && !settled; index += 1) {
+      await Promise.resolve();
+      await vi.runOnlyPendingTimersAsync();
+    }
+    return promise;
+  }
+
+  it('第一個信使對帳全敗後切換第二個，紀錄冪等落地並回傳正切換時間', async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 1_000;
+      const qualityStore = new CourierQualityStore(() => now);
+      const incoming = rec({ roomId: 'room1', senderId: 'sender', sessionEpoch: 2, seq: 7 });
+      // 對齊 GossipReplicaStore.records2 的複合主鍵；同一紀錄由兩個信使回填仍只留一列。
+      const persisted = new Map<string, GossipMessage>();
+      const saveRecord = vi.fn(async (roomId: string, message: GossipMessage) => {
+        persisted.set(`${roomId}:${message.senderId}:${message.sessionEpoch}:${message.seq}`, message);
+      });
+      const first = scriptedClient(async (_roomId, _local, _floors, _epochs, ingest) => {
+        now += 5;
+        ingest(incoming);
+        throw new Error('first courier failed');
+      });
+      const second = scriptedClient(async (_roomId, _local, _floors, _epochs, ingest) => {
+        now += 7;
+        ingest(incoming);
+        return { received: 1, pushed: 0 };
+      });
+      const deps: CourierBackupDeps = {
+        listRooms: async () => ['room1'],
+        loadRoom: async () => ({ records: [], floors: [], acceptedEpochs: [] }),
+        saveRecord,
+        verifyRecord: async () => true,
+        discoverCourierUids: async () => ['first', 'second'],
+        openClient: async (courierUid) => (courierUid === 'first' ? first : second),
+        qualityStore,
+      };
+
+      const summary = await drainRetryTimers(runCourierBackup(deps));
+      await Promise.resolve();
+
+      expect(summary).toEqual({
+        rooms: 1,
+        received: 1,
+        pushed: 0,
+        switches: [{ from: 'first', to: 'second', ms: 22 }],
+      });
+      expect(persisted.size).toBe(1);
+      expect(saveRecord).toHaveBeenCalledTimes(5);
+      expect(qualityStore.get('first')).toMatchObject({ lastReconcileSucceeded: false });
+      expect(qualityStore.get('second')).toMatchObject({ lastReconcileSucceeded: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('部分房成功時下一個信使只接手失敗房，summary 不重複累加', async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 2_000;
+      const qualityStore = new CourierQualityStore(() => now);
+      const firstRooms: string[] = [];
+      const secondRooms: string[] = [];
+      const first = scriptedClient(async (roomId) => {
+        firstRooms.push(roomId);
+        now += 3;
+        if (roomId === 'bad') throw new Error('bad room failed');
+        return { received: 1, pushed: 2 };
+      });
+      const second = scriptedClient(async (roomId) => {
+        secondRooms.push(roomId);
+        now += 9;
+        return { received: 3, pushed: 4 };
+      });
+      const deps: CourierBackupDeps = {
+        listRooms: async () => ['good', 'bad'],
+        loadRoom: async () => ({ records: [], floors: [], acceptedEpochs: [] }),
+        saveRecord: async () => {},
+        verifyRecord: async () => true,
+        discoverCourierUids: async () => ['first', 'second'],
+        openClient: async (courierUid) => (courierUid === 'first' ? first : second),
+        qualityStore,
+      };
+
+      const summary = await drainRetryTimers(runCourierBackup(deps));
+
+      expect(firstRooms).toEqual(['good', 'bad', 'bad', 'bad', 'bad']);
+      expect(secondRooms).toEqual(['bad']);
+      expect(summary).toEqual({
+        rooms: 2,
+        received: 4,
+        pushed: 6,
+        switches: [{ from: 'first', to: 'second', ms: 18 }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('候選用盡仍對帳失敗時維持 best-effort，不拋例外', async () => {
+    vi.useFakeTimers();
+    try {
+      const qualityStore = new CourierQualityStore(() => 3_000);
+      const failing = scriptedClient(async () => { throw new Error('still unavailable'); });
+      const deps: CourierBackupDeps = {
+        listRooms: async () => ['room1'],
+        loadRoom: async () => ({ records: [], floors: [], acceptedEpochs: [] }),
+        saveRecord: async () => {},
+        verifyRecord: async () => true,
+        discoverCourierUids: async () => ['first', 'second'],
+        openClient: async () => failing,
+        qualityStore,
+      };
+
+      await expect(drainRetryTimers(runCourierBackup(deps))).resolves.toEqual({
+        rooms: 0,
+        received: 0,
+        pushed: 0,
+      });
+      expect(qualityStore.get('first')).toMatchObject({ lastReconcileSucceeded: false });
+      expect(qualityStore.get('second')).toMatchObject({ lastReconcileSucceeded: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('CourierService — tombstone 真房籍簽章（預設驗證器）', () => {

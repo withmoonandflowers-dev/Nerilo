@@ -204,6 +204,99 @@ describe('WarmColdSignalingTransport — 三態選路', () => {
     await t.cleanupOwn('me');
     expect(log).toEqual([]); // cold 未建立 → 無事發生
   });
+
+  it('cold 送失敗且暖路徑恢復時重選 warm，成功後解除黏住', async () => {
+    const log: string[] = [];
+    let warmPath = false;
+    let coldError: Error | null = null;
+    const warm: SignalingTransport = {
+      ...fakeTransport('warm', log),
+      send: async (data) => { log.push(`warm:send:${data.type as string}`); },
+    };
+    const cold: SignalingTransport = {
+      ...fakeTransport('cold', log),
+      send: async (data) => {
+        log.push(`cold:send:${data.type as string}`);
+        if (coldError) throw coldError;
+      },
+    };
+    const t = new WarmColdSignalingTransport(warm, () => cold, () => warmPath, 'test');
+
+    await t.send({ type: 'offer' }); // 無暖路徑，建立 cold 黏著。
+    warmPath = true;
+    coldError = new Error('cold unavailable');
+    await t.send({ type: 'ice' }); // cold 失敗後 warm 成功，解除黏著。
+    await t.send({ type: 'answer' }); // 下一則直接走 warm。
+
+    expect(log).toEqual([
+      'cold:send:offer',
+      'cold:send:ice',
+      'warm:send:ice',
+      'warm:send:answer',
+    ]);
+  });
+
+  it('cold 送失敗且沒有暖路徑時拋原始 cold 錯誤', async () => {
+    const coldError = new Error('original cold failure');
+    const warmSend = vi.fn(async () => {});
+    const t = new WarmColdSignalingTransport(
+      { ...fakeTransport('warm', []), send: warmSend },
+      () => ({ ...fakeTransport('cold', []), send: async () => { throw coldError; } }),
+      () => false,
+      'test'
+    );
+
+    let received: unknown;
+    try {
+      await t.send({ type: 'offer' });
+    } catch (error) {
+      received = error;
+    }
+    expect(received).toBe(coldError);
+    expect(warmSend).not.toHaveBeenCalled();
+  });
+
+  it('cold 與重選 warm 都失敗時拋 cold 原始錯誤且保持黏住', async () => {
+    const log: string[] = [];
+    let warmPath = false;
+    let coldFails = false;
+    const coldError = new Error('original cold failure');
+    const warm: SignalingTransport = {
+      ...fakeTransport('warm', log),
+      send: async (data) => {
+        log.push(`warm:send:${data.type as string}`);
+        throw new Error('warm failure');
+      },
+    };
+    const cold: SignalingTransport = {
+      ...fakeTransport('cold', log),
+      send: async (data) => {
+        log.push(`cold:send:${data.type as string}`);
+        if (coldFails) throw coldError;
+      },
+    };
+    const t = new WarmColdSignalingTransport(warm, () => cold, () => warmPath, 'test');
+
+    await t.send({ type: 'offer' });
+    warmPath = true;
+    coldFails = true;
+    let received: unknown;
+    try {
+      await t.send({ type: 'ice' });
+    } catch (error) {
+      received = error;
+    }
+    expect(received).toBe(coldError);
+
+    coldFails = false;
+    await t.send({ type: 'answer' });
+    expect(log).toEqual([
+      'cold:send:offer',
+      'cold:send:ice',
+      'warm:send:ice',
+      'cold:send:answer',
+    ]);
+  });
 });
 
 // ── 端到端小整合：router + warm/cold，暖路徑成功時 cold 零寫入 ─────────────────

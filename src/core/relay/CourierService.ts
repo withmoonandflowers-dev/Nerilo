@@ -598,6 +598,20 @@ export class CourierClient {
 }
 
 /** 成員背景備份一輪需要的注入依賴（純邏輯，可測；composable 提供真實作）。 */
+export interface CourierSwitchMetric {
+  from: string;
+  to: string;
+  ms: number;
+}
+
+export interface CourierBackupSummary {
+  rooms: number;
+  received: number;
+  pushed: number;
+  /** 只有實際完成切換時才出現，保留既有三欄回傳形狀的相容性。 */
+  switches?: CourierSwitchMetric[];
+}
+
 export interface CourierBackupDeps {
   /** 我持有紀錄的房 id（getGossipReplicaStore().listRooms）。 */
   listRooms: () => Promise<string[]>;
@@ -631,14 +645,15 @@ export interface CourierBackupDeps {
 
 /**
  * 成員背景備份一輪（app 觸發整合，ADR-0023 P4-C）：
- * 發現候選信使 → 逐一嘗試直到「可達」的一個 → 對「我持有紀錄的每一房」做一輪 reconcile
- * （推我有信使缺的、收信使有我缺的並落地）。全程 best-effort，任一步失敗只影響本次備份，不拋。
+ * 發現候選信使 → 逐一嘗試 → 對「我持有紀錄的每一房」做一輪 reconcile
+ * （推我有信使缺的、收信使有我缺的並落地）。中途失敗時，下一候選只接手未完成房間。
+ * 全程 best-effort，候選用盡仍不拋例外。
  * reconcile 為 digest-based，穩態下重跑幾乎零傳輸（只送 digest）。
  */
 export async function runCourierBackup(
   deps: CourierBackupDeps
-): Promise<{ rooms: number; received: number; pushed: number }> {
-  const summary = { rooms: 0, received: 0, pushed: 0 };
+): Promise<CourierBackupSummary> {
+  const summary: CourierBackupSummary = { rooms: 0, received: 0, pushed: 0 };
 
   let roomIds: string[] = [];
   try {
@@ -657,6 +672,8 @@ export async function runCourierBackup(
   }
   const qualityStore = deps.qualityStore ?? defaultCourierQualityStore;
   candidates = qualityStore.rankCandidates(candidates);
+  let pendingRoomIds = roomIds;
+  let pendingSwitch: { from: string; observedAt: number } | null = null;
 
   for (const courierUid of candidates) {
     // openClient 只在連線真的到 'connected'（DataChannel 開）才回 client；陳舊/不可達
@@ -677,7 +694,9 @@ export async function runCourierBackup(
 
     let reconcileAttempted = false;
     let reconcileFailed = false;
-    for (const roomId of roomIds) {
+    let firstReconcileFailureAt: number | null = null;
+    const failedRoomIds: string[] = [];
+    for (const roomId of pendingRoomIds) {
       let thisReconcileAttempted = false;
       try {
         const { records, floors, acceptedEpochs } = await deps.loadRoom(roomId);
@@ -715,19 +734,41 @@ export async function runCourierBackup(
         // 已連上，但信使 CourierServer 可能剛掛上（inbound 不緩衝晚訂閱者）→ 重試跨越該視窗。
         thisReconcileAttempted = true;
         reconcileAttempted = true;
-        const res = await retry(() =>
-          client!.reconcile(roomId, localStore, floorMap, epochMap, ingest)
-        );
+        const res = await retry(async () => {
+          try {
+            return await client!.reconcile(roomId, localStore, floorMap, epochMap, ingest);
+          } catch (err) {
+            firstReconcileFailureAt ??= qualityStore.nowMs();
+            throw err;
+          }
+        });
         summary.rooms += 1;
         summary.received += res.received;
         summary.pushed += res.pushed;
+        if (pendingSwitch && pendingSwitch.from !== courierUid) {
+          (summary.switches ??= []).push({
+            from: pendingSwitch.from,
+            to: courierUid,
+            ms: qualityStore.nowMs() - pendingSwitch.observedAt,
+          });
+          pendingSwitch = null;
+        }
       } catch (err) {
-        if (thisReconcileAttempted) reconcileFailed = true;
+        if (thisReconcileAttempted) {
+          failedRoomIds.push(roomId);
+          reconcileFailed = true;
+        }
         logger.warn('[runCourierBackup] room reconcile failed', { roomId, err });
       }
     }
     if (reconcileAttempted) qualityStore.recordReconcile(courierUid, !reconcileFailed);
-    return summary; // 用了這個可達信使，完成本輪
+    if (failedRoomIds.length === 0) return summary;
+    pendingSwitch ??= {
+      from: courierUid,
+      observedAt: firstReconcileFailureAt ?? qualityStore.nowMs(),
+    };
+    // 已成功房間不重跑；下一候選只接手本信使仍失敗的房間。
+    pendingRoomIds = failedRoomIds;
   }
   return summary;
 }
