@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-09-06（npm 最新版仍為 0.11.1；0.12.0 候選已完成 R11 私有房加入修復及 Spec 028 階段 C 的本機驗證，尚未發佈）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-09-06（npm 最新版仍為 0.11.1；0.12.0 候選已完成 R11 私有房加入修復、Spec 028 階段 C 的本機驗證，以及 Spec 031 服務債權憑證與次級市場的協議層，尚未發佈）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -15,22 +15,31 @@
 
 | 層級 | 最新基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；**168 files / 1740 tests** 全綠，6 warnings（HEAD `c5c1bd5`，2026-09-06） |
+| Core quality | TypeScript、ESLint gate 通過；**173 files / 1840 tests** 全綠，6 warnings（HEAD `24fdbf3`，2026-09-06） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入三個進入點（21/4/2 匯出） |
-| Firestore rules | Emulator-backed **90/90**（2026-09-06） |
-| React release E2E* | **25 passed / 0 failed / 3 skipped**（2026-09-06） |
-| React stable E2E* | **11/11**（2026-09-06） |
+| Firestore rules | Emulator-backed **90/90**（HEAD `24fdbf3`，2026-09-06） |
+| React release E2E* | **25 passed / 0 failed / 3 skipped**（HEAD `24fdbf3`，2026-09-06） |
+| React stable E2E* | **11/11**（HEAD `24fdbf3`，2026-09-06） |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
-| Nuxt stable E2E* | stable gate **13/13**（2026-09-06） |
-| Offline rendezvous E2E* | 真 HTTP 會合點與兩個隔離 Chromium：**1/1**（2026-09-06） |
+| Nuxt stable E2E* | stable gate **13/13**（HEAD `24fdbf3`，2026-09-06） |
+| Offline rendezvous E2E* | 真 HTTP 會合點與兩個隔離 Chromium：**1/1**（HEAD `24fdbf3`，2026-09-06） |
 | 信使失效切換 E2E* | `@courier` **1/1**，切換 **20,324 ms**；本地紀錄前後均為 3（2026-09-06） |
+| 服務欠條登記與兌換 E2E* | `@iou` **1/1**；`custody-byte-days` 面額 10 兌換 4 後剩 6，授予寄存配額 0.000004 點；分岔鏈以 `already-endorsed-elsewhere` 被拒（HEAD `24fdbf3`，2026-09-06） |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
 
-\* 2026-09-06 的瀏覽器 E2E 以 `PW_DISABLE_MDNS=1` 執行。本機 Chromium 無法解析 mDNS
+\* 表中帶星號的 2026-09-06 瀏覽器 E2E（含服務欠條登記與兌換）以 `PW_DISABLE_MDNS=1` 執行。本機 Chromium 無法解析 mDNS
 `.local` host candidate，未設定時同機兩個 peer 完全無法連線，所有 WebRTC E2E 都會失敗；
 未改動的 rendezvous 也同樣失敗，開啟 flag 後則一起通過。同一天稍早在 `80435a6` 上，
 vue-stable 仍為 13/13。這是 macOS Local Network 權限造成的本機環境問題，並非程式缺陷。
 該 flag 會改變實際 ICE candidate 型別，乾淨環境的正式數字須待權限修好後重測。
+
+## 2026-09-06 Spec 031 服務債權憑證（階段 D）
+
+- 已完成憑證與背書鏈格式、兌換、兩段式撮合、開票人先到先認登記簿與雙重背書證據，以及由觀測者簽署的信用摘要。這些能力都是協議層，兌換流程已接上信使通道。
+- 市場 UI、法幣定價與兌現、公鏈、代幣與全域共識均未完成，也不在本階段範圍內。
+- `relay-bytes` 與 `priority` 沒有產品消費端。這兩種面額兌換時只扣餘額，不會改變產品行為（D-Q6）。
+- 雙重背書可偵測並歸屬，但無法預防。這是拒絕共識層後必須保留的邊界；代理登記只能縮小衝突視窗，不能消除問題。
+- 信用摘要目前資料很薄。`CourierQuality` 只存在於頁面生命週期，RTT 也只有暖 mesh 鄰居間才有。現況不得宣稱為可靠的信用評等。
 
 ## 2026-09-05 R11 私有房加入候選修復
 
