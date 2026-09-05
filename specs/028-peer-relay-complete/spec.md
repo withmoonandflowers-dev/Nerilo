@@ -287,6 +287,14 @@ C1 只用本節點自己觀測得到的量，不接受任何對端自報值。
 `useNodePresence.ts:39`）與 `RelayAnnouncement.metrics`（現行產品從不填）
 都由宣告者自己決定，無法驗證，C1 不納入分數，也不新增填寫端。
 
+這項保證只涵蓋分數計算：自報的 `capacity` 與 `metrics` 不會進入分數。所有候選都尚未被
+觀測時，例如首次啟動，分數同為 0，先後仍由 directory 的輸入順序決定。該順序依自報的
+`capacity` 再依 `announcedAt` 排列（`src/core/relay/FirestoreRelayDirectory.ts:87-113`）。
+若要完全排除自報值影響，連首次要先連誰也必須改掉。現況影響有限但不為零：產品的
+`useNodePresence` 對所有節點固定寫入 `capacity: 1`（`web-vue/app/composables/useNodePresence.ts:39`），
+所以 capacity 目前沒有鑑別度，實際生效的是 `announcedAt` 新鮮度，而它也是節點自報的 client clock。
+未觀測候選是否要改成不受自報值影響的排序，以及如何避免反覆連向已崩潰的陳舊條目，登記為 C-Q6。
+
 #### 9.3.3 分數不上線、不交換
 
 本階段的分數是每個節點的私有本地觀測，不放進任何訊息、不 gossip、不寫進 directory。
@@ -298,9 +306,11 @@ C1 只用本節點自己觀測得到的量，不接受任何對端自報值。
 - 信使觀測：跟隨既有 `BACKUP_INTERVAL_MS = 30_000`（`useCourierNode.ts:47`）的備份輪次，
   以及 `useNodePresence` 的 5 秒名冊心跳（`useNodePresence.ts:14`），不新增 timer。
 - 暖鄰居 RTT：跟隨既有 30 秒心跳，不新增 timer。
-- `PeerScoring` 的 decay timer（60 秒，`PeerScoring.ts:47-50`）現行沒有被 `start()`，
-  C1 決定是否啟動時要一併寫下理由；不啟動就是分數永不衰減，這是要明講的取捨。
-- 保存範圍與生命週期由 C1 決定並寫回本節；跨頁面重載是否保留屬 C1 的裁決點。
+- `PeerScoring` 的 60 秒 decay 已啟動（`src/core/mesh/NeighborHealthLifecycle.ts:10-16`）。
+  若不啟動，invalid 計數永不衰減，一次暫時性的驗簽失敗會永久扣分，鄰居之後長期正常也無法恢復。
+  timer 由 `MeshGossipManager.cleanup()` 經 `PeerScoring.destroy()` 呼叫 `stop()` 停止，沒有洩漏路徑。
+- `CourierQuality` 使用 `src/core/relay/CourierQuality.ts` 的模組單例，只存在於頁面生命週期。
+  是否跨頁面重載保存仍未裁決，列在 C-Q3。
 
 ### 9.4 切換條件與防抖（C2 實作對象，門檻數字待實測回填）
 
@@ -318,6 +328,10 @@ C1 只用本節點自己觀測得到的量，不接受任何對端自報值。
    （`src/core/p2p/WarmColdSignalingTransport.ts:41,126`），
    最後一行 `await (await this.ensureCold()).send(data)` 失敗直接往外拋
    （`:130`），沒有重選、沒有退避。
+
+尚未黏住 cold 之前，介紹加入的耐心窗原本就會重試 warm（`WarmColdSignalingTransport.ts:87-125`，
+Spec 005 T4/T6）。C2-2 新增的是黏住之後，只有 cold 自己送失敗時才解除黏住並重選 warm，
+兩者的觸發時點不同。
 
 **切換時間的定義與量測方法：**
 
@@ -340,9 +354,10 @@ C1 只用本節點自己觀測得到的量，不接受任何對端自報值。
 |---|---|---|
 | C-Q1 | 丟包率要不要做，若要做資料源是 WebRTC `getStats` 還是應用層序號缺口 | 兩者都要新增取樣路徑；`getStats` 只在 PARK 模組用過，其成本與瀏覽器差異未實測 |
 | C-Q2 | 頻寬估計要不要做，以及是否值得為它引入 `getStats` | 同上；且信使場景的傳輸量很小，估計值可能沒有鑑別度 |
-| C-Q3 | `PeerScoring` 的 decay 是否啟動、分數是否跨頁面重載保存 | 需要 C1 實作時的實際觀測密度才能判斷 |
+| C-Q3 | `CourierQuality` 分數是否跨頁面重載保存 | 現況只存在於頁面生命週期；跨重載保存的成本與資料時效仍未裁決 |
 | C-Q4 | 分數是否納入 `SigRelayRouter` 的 carrier 選擇，或本階段只做信使選擇 | 取決於 C1 修好 `addPeer` 後 `PeerScoring` 是否真的累積出有鑑別度的分數 |
-| C-Q5 | 切換門檻與防抖秒數 | 依 9.4 由 characterization 產生後回填，不預設 |
+| C-Q5（已裁決） | 信使切換時間是否設門檻 | 本階段量了就報，不設門檻；cold 到 warm 的同次 send 重選不屬此題 |
+| C-Q6 | 未觀測候選的排序是否去除自報值偏差，例如改為隨機化 | 去除偏差後仍須避免反覆連向已崩潰的陳舊條目，本階段不裁決 |
 
 ### 9.6 邊界（C 階段明確不做）
 
@@ -360,6 +375,6 @@ C1 只用本節點自己觀測得到的量，不接受任何對端自報值。
 | C1 分數真的有狀態 | 單元測試證明產品路徑走過一輪後 `getPeerScore` 有條目、且分數會隨行為變動 | 針對 9.2 缺陷的回歸鎖 |
 | C1 選對轉運站 | 三個候選品質不同時，第二輪選中上一輪表現最好的那個 | E2E 或整合測試，三候選以測試鉤子造出不同結果 |
 | C2 信使中途失效會換人 | 使用中的信使失效後，同一輪內改用另一個候選並完成對帳 | E2E，落檔切換時間中位數與最大值 |
-| C2 cold 失敗會重選 | HTTP cold `send` 失敗後不再直接拋出，依 C-Q5 的門檻重選並成功 | E2E，落檔切換時間 |
+| C2 cold 失敗會重選 | cold `send` 失敗且當下有暖路徑時，同一次 send 內試一次 warm；成功則解除黏住，之後恢復 warm 優先。warm 也失敗或當下沒有暖路徑時，維持黏住並拋出 cold 的原始錯誤 | 單元測試涵蓋三個分支；本項沒有獨立切換秒數，不以毫秒數驗收 |
 | 恰好一次 | 切換前後訊息不重不漏 | 既有送達矩陣斷言 |
 | 既有閘門不退步 | type-check 0 錯、lint 0 錯警告 ≤10、單元 1727 全過、rules 90/90、release 25 過 0 敗、stable 11/11、vue-stable 13/13、rendezvous 1/1、@stranger 4/4 | 協作規則第六節 |

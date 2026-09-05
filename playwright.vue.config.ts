@@ -26,6 +26,12 @@ export default defineConfig({
   workers: 2,
   use: {
     baseURL: 'http://localhost:3210',
+    // 僅供本機無法解析 mDNS .local（macOS Local Network 權限）時繞道，預設關閉；正解是修權限。
+    // 啟用後 host candidate 會揭露真實 IP，改變實際 ICE candidate 型別，量測報告必須標註。
+    // CI 不得設定 PW_DISABLE_MDNS，避免把繞道結果當成一般環境結果。
+    launchOptions: process.env.PW_DISABLE_MDNS
+      ? { args: ['--disable-features=WebRtcHideLocalIpsWithMdns'] }
+      : {},
     // retries=0 時 'on-first-retry' 永遠觸發不到，等於沒有 trace：失敗時 test-results/
     // 全空，CI 上傳步驟撈不到東西（2026-08-07 mesh-e2ee 排程紅時實證）。
     // 不改用 retries 換 trace，重試會遮蔽 flake，違反 constitution 第 5 條誠實條款。
