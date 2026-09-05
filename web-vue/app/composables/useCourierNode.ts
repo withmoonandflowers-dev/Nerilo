@@ -32,6 +32,22 @@ import { maxEpochs } from '@legacy/core/mesh/antiEntropy'
 import { signTombstone } from '@legacy/core/relay/TombstoneCrypto'
 import { ecdsaSigner } from '@legacy/core/relay/CourierReceipts'
 import { CourierIOUBook } from '@legacy/core/incentive/CourierIOU'
+import {
+  createEndorsement,
+  createServiceIOU,
+  endorsementHash,
+  iouHash,
+  type ServiceDenominationUnit,
+  type ServiceEndorsement,
+  type ServiceIOU,
+  type ServiceIOUParty,
+} from '@legacy/core/incentive/ServiceIOU'
+import { IssuerEndorsementRegistry } from '@legacy/core/incentive/IssuerEndorsementRegistry'
+import {
+  createRedeemRequest,
+  IssuerRedemptionBook,
+} from '@legacy/core/incentive/ServiceIOURedemption'
+import { generateUUID } from '@legacy/utils/uuid'
 import { getCourierIOUReplicaStore } from '@legacy/services/CourierIOUReplicaStore'
 import {
   RoomAdvertCache,
@@ -104,6 +120,8 @@ export function useCourierNode() {
   let currentUid = ''
   let backupTimer: ReturnType<typeof setInterval> | null = null
   let iouBook: CourierIOUBook | null = null
+  let endorsementRegistry: IssuerEndorsementRegistry | null = null
+  let redemptionBook: IssuerRedemptionBook | null = null
   let memberCredit: MemberCreditConfig | undefined
   let identityReady: Promise<void> = Promise.resolve()
   const servers: CourierServer[] = []
@@ -271,7 +289,16 @@ export function useCourierNode() {
         if (!bus || !courierStore) return
         await identityReady // waitBus 通常已數秒，身分早就緒；保險同步
         if (!iouBook) return
-        const server = new CourierServer(bus, courierStore, uid, undefined, undefined, iouBook)
+        const server = new CourierServer(
+          bus,
+          courierStore,
+          uid,
+          undefined,
+          undefined,
+          iouBook,
+          endorsementRegistry ?? undefined,
+          redemptionBook ?? undefined
+        )
         server.start()
         servers.push(server)
         attachRoomDir(bus, uid) // 同一條 bus 疊房間目錄（ns='roomdir'）
@@ -296,6 +323,8 @@ export function useCourierNode() {
         iouBook = new CourierIOUBook(
           nodeId, sign, undefined, undefined, getCourierIOUReplicaStore() ?? undefined, pubKey
         )
+        endorsementRegistry = new IssuerEndorsementRegistry(nodeId)
+        redemptionBook = new IssuerRedemptionBook(nodeId)
         await iouBook.hydrate()
         memberCredit = { nodeId, pubKey, sign }
       } catch {
@@ -380,6 +409,81 @@ export function useCourierNode() {
         await identityReady
         return iouBook?.availableCredit(issuerNodeId) ?? 0
       },
+      serviceIou: {
+        myParty: async (): Promise<ServiceIOUParty> => {
+          await identityReady
+          if (!identity || !nodeId) throw new Error('identity not ready')
+          return { nodeId, pubKey: await identity.exportPublicKey() }
+        },
+        issue: async (
+          holderNodeId: string,
+          holderPubKey: string,
+          unit: ServiceDenominationUnit,
+          amount: number,
+          expiresAt: number,
+          kind: ServiceIOU['kind']
+        ): Promise<ServiceIOU> => {
+          await identityReady
+          if (!identity || !nodeId) throw new Error('identity not ready')
+          const pubKey = await identity.exportPublicKey()
+          return createServiceIOU({
+            v: 'nsiou1',
+            iouId: generateUUID(),
+            kind,
+            issuer: { nodeId, pubKey },
+            holder: { nodeId: holderNodeId, pubKey: holderPubKey },
+            denomination: { unit, amount },
+            issuedAt: Date.now(),
+            expiresAt,
+            nonce: generateUUID(),
+          }, ecdsaSigner(identity.getPrivateKey()))
+        },
+        endorse: async (
+          iou: ServiceIOU,
+          chain: ServiceEndorsement[],
+          toNodeId: string
+        ): Promise<ServiceEndorsement> => {
+          await identityReady
+          if (!identity || !nodeId) throw new Error('identity not ready')
+          const pubKey = await identity.exportPublicKey()
+          const prevHash = chain.length === 0
+            ? await iouHash(iou)
+            : await endorsementHash(chain[chain.length - 1]!)
+          return createEndorsement({
+            v: 'nsend1',
+            iouId: iou.iouId,
+            seq: chain.length + 1,
+            from: { nodeId, pubKey },
+            toNodeId,
+            prevHash,
+            swapPairHash: null,
+            endorsedAt: Date.now(),
+            nonce: generateUUID(),
+          }, ecdsaSigner(identity.getPrivateKey()))
+        },
+        redeem: async (
+          courierUid: string,
+          iou: ServiceIOU,
+          chain: ServiceEndorsement[],
+          unit: ServiceDenominationUnit,
+          amount: number
+        ) => {
+          await identityReady
+          if (!identity || !nodeId) throw new Error('identity not ready')
+          const claimant = { nodeId, pubKey: await identity.exportPublicKey() }
+          const request = await createRedeemRequest(
+            iou,
+            chain,
+            claimant,
+            { unit, amount },
+            Date.now(),
+            ecdsaSigner(identity.getPrivateKey())
+          )
+          const client = await openClient(uid, courierUid)
+          if (!client) throw new Error('relay bus not ready')
+          return client.serviceRedeem(iou, chain, request)
+        },
+      },
     }
     // 讓 E2E 走真 production backup 路徑（同 runCourierBackup），但確定性觸發（不等 30s interval）。
     w.__nerilo_test__.backup = {
@@ -417,6 +521,8 @@ export function useCourierNode() {
     }
     memberCredit = undefined
     iouBook = null
+    endorsementRegistry = null
+    redemptionBook = null
     stopListen?.()
     stopListen = null
     await connector?.closeAll()

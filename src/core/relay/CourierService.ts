@@ -48,6 +48,18 @@ import {
   type IOURepayResult,
   type RepaymentRequest,
 } from '../incentive/CourierIOU';
+import type { IssuerEndorsementRegistry, SwapRegistrationBundle } from '../incentive/IssuerEndorsementRegistry';
+import type { IssuerRedemptionBook, ServiceRedeemRequest } from '../incentive/ServiceIOURedemption';
+import type { ServiceEndorsement, ServiceIOU } from '../incentive/ServiceIOU';
+import { buildRoomStore } from './CourierRoomStore';
+import {
+  redeemServiceIOU,
+  serviceRedeemPayload,
+  type CourierServiceRedeemAck,
+} from './ServiceIOUCourier';
+
+export { buildRoomStore } from './CourierRoomStore';
+export type { CourierServiceRedeemAck } from './ServiceIOUCourier';
 
 export const COURIER_NS = 'courier';
 
@@ -71,6 +83,9 @@ export const CourierMsgType = {
   QUOTE_RESP: 'quote-resp',
   REPAY: 'repay',
   REPAY_ACK: 'repay-ack',
+  /** Spec 031：整條背書鏈先登記，再於同一來回向開票人兌換。 */
+  SERVICE_REDEEM: 'service-redeem',
+  SERVICE_REDEEM_ACK: 'service-redeem-ack',
 } as const;
 
 export type CourierDepositResult =
@@ -159,33 +174,6 @@ interface PricedDepositPayload {
   issuerPubKey: string;
 }
 
-/**
- * 由紀錄陣列建分代 anti-entropy store 視圖（Spec 009）：
- * Map<senderId, Map<sessionEpoch, Map<seq, GossipMessage>>>。
- * 缺 sessionEpoch 的 legacy 紀錄進 0 代桶（永不宣告/補送，v2 收端必拒）。
- */
-export function buildRoomStore(
-  records: GossipMessage[]
-): Map<string, Map<number, Map<number, GossipMessage>>> {
-  const store = new Map<string, Map<number, Map<number, GossipMessage>>>();
-  for (const m of records) {
-    const epoch =
-      Number.isSafeInteger(m.sessionEpoch) && m.sessionEpoch >= 1 ? m.sessionEpoch : 0;
-    let epochs = store.get(m.senderId);
-    if (!epochs) {
-      epochs = new Map<number, Map<number, GossipMessage>>();
-      store.set(m.senderId, epochs);
-    }
-    let inner = epochs.get(epoch);
-    if (!inner) {
-      inner = new Map<number, GossipMessage>();
-      epochs.set(epoch, inner);
-    }
-    if (!inner.has(m.seq)) inner.set(m.seq, m); // first-write-wins（對齊 CourierStore）
-  }
-  return store;
-}
-
 function envelope(type: string, from: string, payload: unknown, over: Partial<P2PEnvelope> = {}): P2PEnvelope {
   return {
     v: 1,
@@ -217,7 +205,9 @@ export class CourierServer {
     private readonly selfId: string,
     private readonly verifyOverride?: (roomId: string, proof: unknown) => boolean | Promise<boolean>,
     private readonly credit?: CourierCreditConfig,
-    private readonly iouBook?: CourierIOUBook
+    private readonly iouBook?: CourierIOUBook,
+    private readonly endorsementRegistry?: IssuerEndorsementRegistry,
+    private readonly redemptionBook?: IssuerRedemptionBook
   ) {}
 
   /** 房籍簽章墓碑驗證：注入者優先，否則預設用 store 的 senderId 集合做盲驗。 */
@@ -356,6 +346,15 @@ export class CourierServer {
             ? await this.iouBook.repay(env.payload as RepaymentRequest)
             : { accepted: false, reason: 'invalid-settlement' };
           await this.reply(env, CourierMsgType.REPAY_ACK, result);
+          break;
+        }
+        case CourierMsgType.SERVICE_REDEEM: {
+          const ack = await redeemServiceIOU(env.payload, {
+            iouBook: this.iouBook,
+            endorsementRegistry: this.endorsementRegistry,
+            redemptionBook: this.redemptionBook,
+          }, Date.now());
+          await this.reply(env, CourierMsgType.SERVICE_REDEEM_ACK, ack);
           break;
         }
         case CourierMsgType.IDENTIFY: {
@@ -522,6 +521,18 @@ export class CourierClient {
   async repay(request: RepaymentRequest): Promise<IOURepayResult> {
     const req = envelope(CourierMsgType.REPAY, this.selfId, request);
     return (await this.request(req)).payload as IOURepayResult;
+  }
+
+  /** 以單一來回請開票人先登記背書鏈，再兌換服務面額。 */
+  async serviceRedeem(
+    iou: ServiceIOU,
+    chain: readonly ServiceEndorsement[],
+    request: ServiceRedeemRequest,
+    swapBundles?: ReadonlyMap<number, SwapRegistrationBundle>
+  ): Promise<CourierServiceRedeemAck> {
+    const payload = serviceRedeemPayload(iou, chain, request, swapBundles);
+    const req = envelope(CourierMsgType.SERVICE_REDEEM, this.selfId, payload);
+    return (await this.request(req)).payload as CourierServiceRedeemAck;
   }
 
   /** 回線取回某房的全部代管密文紀錄。 */

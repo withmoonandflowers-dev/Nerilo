@@ -22,6 +22,21 @@ import { maxEpochs } from '../../src/core/mesh/antiEntropy';
 import { signTombstone, senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
 import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
 import { arrayBufferToBase64 } from '../../src/utils/crypto';
+import { CourierIOUBook } from '../../src/core/incentive/CourierIOU';
+import {
+  createEndorsement,
+  createServiceIOU,
+  iouHash,
+  type ServiceIOU,
+  type ServiceIOUParty,
+} from '../../src/core/incentive/ServiceIOU';
+import { IssuerEndorsementRegistry } from '../../src/core/incentive/IssuerEndorsementRegistry';
+import {
+  createRedeemRequest,
+  IssuerRedemptionBook,
+  type ServiceRedeemRequest,
+} from '../../src/core/incentive/ServiceIOURedemption';
+import type { SignFn } from '../../src/core/incentive/CoSignedReceipt';
 import type { CourierBus, CourierBackupDeps, CourierCreditConfig, MemberCreditConfig } from '../../src/core/relay/CourierService';
 import type { P2PEnvelope, GossipMessage } from '../../src/types';
 import { enc } from './_courierFixtures';
@@ -699,5 +714,221 @@ describe('CourierService — 韌性', () => {
       from: 'courier-self', payload: rec({ seq: 99 }),
     });
     expect(store.stats().recordCount).toBe(0);
+  });
+});
+
+describe('CourierService — Spec 031 登記後兌換', () => {
+  interface ServiceNode extends ServiceIOUParty {
+    sign: SignFn;
+  }
+
+  async function serviceNode(): Promise<ServiceNode> {
+    const keys = await crypto.subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['sign', 'verify']
+    );
+    const pubKey = arrayBufferToBase64(await crypto.subtle.exportKey('spki', keys.publicKey));
+    return {
+      nodeId: await senderIdFromPubKey(pubKey),
+      pubKey,
+      sign: ecdsaSigner(keys.privateKey),
+    };
+  }
+
+  function serviceParty(node: ServiceNode): ServiceIOUParty {
+    return { nodeId: node.nodeId, pubKey: node.pubKey };
+  }
+
+  async function serviceIOU(
+    issuer: ServiceNode,
+    holder: ServiceNode,
+    amount = 2,
+    unit: ServiceIOU['denomination']['unit'] = 'custody-byte-days'
+  ): Promise<ServiceIOU> {
+    const issuedAt = Date.now() - 1_000;
+    return createServiceIOU({
+      v: 'nsiou1',
+      iouId: crypto.randomUUID(),
+      kind: 'endorsable',
+      issuer: serviceParty(issuer),
+      holder: serviceParty(holder),
+      denomination: { unit, amount },
+      issuedAt,
+      expiresAt: issuedAt + 60_000,
+      nonce: crypto.randomUUID(),
+    }, issuer.sign);
+  }
+
+  async function transfer(
+    iou: ServiceIOU,
+    from: ServiceNode,
+    to: ServiceNode
+  ) {
+    return createEndorsement({
+      v: 'nsend1',
+      iouId: iou.iouId,
+      seq: 1,
+      from: serviceParty(from),
+      toNodeId: to.nodeId,
+      prevHash: await iouHash(iou),
+      swapPairHash: null,
+      endorsedAt: Date.now(),
+      nonce: crypto.randomUUID(),
+    }, from.sign);
+  }
+
+  async function serviceRequest(
+    iou: ServiceIOU,
+    chain: Awaited<ReturnType<typeof transfer>>[],
+    claimant: ServiceNode,
+    amount = 1
+  ): Promise<ServiceRedeemRequest> {
+    return createRedeemRequest(
+      iou,
+      chain,
+      serviceParty(claimant),
+      { unit: iou.denomination.unit, amount },
+      Date.now(),
+      claimant.sign
+    );
+  }
+
+  it('server 未注入服務欠條簿時明確拒絕且既有連線仍可使用', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const server = new CourierServer(
+      courierBus,
+      new CourierStore(DEFAULT_COURIER_CONFIG),
+      'courier'
+    );
+    const client = new CourierClient(memberBus, 'member');
+    server.start();
+    client.start();
+
+    const ack = await client.serviceRedeem(
+      {} as ServiceIOU,
+      [],
+      {} as ServiceRedeemRequest
+    );
+
+    expect(ack).toEqual({
+      accepted: false,
+      reason: 'unknown-iou',
+      serviceAvailable: false,
+    });
+    await expect(client.pull('still-connected')).resolves.toEqual([]);
+  });
+
+  it('合法鏈在同一來回完成登記與 custody-byte-days 兌換', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const [issuer, initialHolder, claimant] = await Promise.all([
+      serviceNode(), serviceNode(), serviceNode(),
+    ]);
+    const iou = await serviceIOU(issuer, initialHolder);
+    const endorsement = await transfer(iou, initialHolder, claimant);
+    const request = await serviceRequest(iou, [endorsement], claimant);
+    const iouBook = new CourierIOUBook(issuer.nodeId, issuer.sign);
+    const registry = new IssuerEndorsementRegistry(issuer.nodeId);
+    const redemption = new IssuerRedemptionBook(issuer.nodeId);
+    const server = new CourierServer(
+      courierBus,
+      new CourierStore(DEFAULT_COURIER_CONFIG),
+      'courier',
+      undefined,
+      undefined,
+      iouBook,
+      registry,
+      redemption
+    );
+    const client = new CourierClient(memberBus, 'claimant');
+    server.start();
+    client.start();
+
+    const ack = await client.serviceRedeem(iou, [endorsement], request);
+
+    expect(ack.accepted).toBe(true);
+    expect(ack.accepted && ack.serviceEffect).toBe('custody-quota');
+    expect(ack.accepted && ack.serviceEffect === 'custody-quota' && ack.granted)
+      .toBeGreaterThan(0);
+    expect(iouBook.grantedCustodyCredit(claimant.nodeId))
+      .toBe(ack.accepted && ack.serviceEffect === 'custody-quota' ? ack.granted : 0);
+    expect(redemption.remaining(iou.iouId)).toBe(1);
+  });
+
+  it.each(['relay-bytes', 'priority'] as const)(
+    '%s 只扣兌換餘額，ack 明確標示沒有服務效果',
+    async (unit) => {
+      const [memberBus, courierBus] = linkedBuses();
+      const [issuer, initialHolder, claimant] = await Promise.all([
+        serviceNode(), serviceNode(), serviceNode(),
+      ]);
+      const iou = await serviceIOU(issuer, initialHolder, 2, unit);
+      const endorsement = await transfer(iou, initialHolder, claimant);
+      const request = await serviceRequest(iou, [endorsement], claimant);
+      const iouBook = new CourierIOUBook(issuer.nodeId, issuer.sign);
+      const redemption = new IssuerRedemptionBook(issuer.nodeId);
+      const server = new CourierServer(
+        courierBus,
+        new CourierStore(DEFAULT_COURIER_CONFIG),
+        'courier',
+        undefined,
+        undefined,
+        iouBook,
+        new IssuerEndorsementRegistry(issuer.nodeId),
+        redemption
+      );
+      const client = new CourierClient(memberBus, 'claimant');
+      server.start();
+      client.start();
+
+      const ack = await client.serviceRedeem(iou, [endorsement], request);
+
+      expect(ack).toEqual({
+        accepted: true,
+        remaining: 1,
+        serviceEffect: 'none',
+      });
+      expect(iouBook.grantedCustodyCredit(claimant.nodeId)).toBe(0);
+      expect(redemption.remaining(iou.iouId)).toBe(1);
+    }
+  );
+
+  it('第二條分岔鏈在登記步驟被拒且不會繼續扣餘額或授予額度', async () => {
+    const [memberBus, courierBus] = linkedBuses();
+    const [issuer, initialHolder, firstClaimant, secondClaimant] = await Promise.all([
+      serviceNode(), serviceNode(), serviceNode(), serviceNode(),
+    ]);
+    const iou = await serviceIOU(issuer, initialHolder);
+    const firstEndorsement = await transfer(iou, initialHolder, firstClaimant);
+    const secondEndorsement = await transfer(iou, initialHolder, secondClaimant);
+    const firstRequest = await serviceRequest(iou, [firstEndorsement], firstClaimant);
+    const secondRequest = await serviceRequest(iou, [secondEndorsement], secondClaimant);
+    const iouBook = new CourierIOUBook(issuer.nodeId, issuer.sign);
+    const registry = new IssuerEndorsementRegistry(issuer.nodeId);
+    const redemption = new IssuerRedemptionBook(issuer.nodeId);
+    const server = new CourierServer(
+      courierBus,
+      new CourierStore(DEFAULT_COURIER_CONFIG),
+      'courier',
+      undefined,
+      undefined,
+      iouBook,
+      registry,
+      redemption
+    );
+    const client = new CourierClient(memberBus, 'claimant');
+    server.start();
+    client.start();
+    await client.serviceRedeem(iou, [firstEndorsement], firstRequest);
+    const remainingAfterFirst = redemption.remaining(iou.iouId);
+
+    const rejected = await client.serviceRedeem(iou, [secondEndorsement], secondRequest);
+
+    expect(rejected).toEqual({
+      accepted: false,
+      reason: 'already-endorsed-elsewhere',
+    });
+    expect(redemption.remaining(iou.iouId)).toBe(remainingAfterFirst);
+    expect(iouBook.grantedCustodyCredit(secondClaimant.nodeId)).toBe(0);
   });
 });
