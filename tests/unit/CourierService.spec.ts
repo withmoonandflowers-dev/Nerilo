@@ -17,6 +17,7 @@ import {
   runCourierBackup,
 } from '../../src/core/relay/CourierService';
 import { CourierStore, DEFAULT_COURIER_CONFIG } from '../../src/core/relay/CourierStore';
+import { CourierQualityStore } from '../../src/core/relay/CourierQuality';
 import { maxEpochs } from '../../src/core/mesh/antiEntropy';
 import { signTombstone, senderIdFromPubKey } from '../../src/core/relay/TombstoneCrypto';
 import { ecdsaSigner } from '../../src/core/relay/CourierReceipts';
@@ -297,6 +298,8 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
     const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
     const { openClient: liveOpen } = realBackupSetup(courierStore);
     const tried: string[] = [];
+    let now = 1_000;
+    const qualityStore = new CourierQualityStore(() => now);
     const deps: CourierBackupDeps = {
       listRooms: async () => ['room1'],
       loadRoom: async () => ({ records: [rec({ roomId: 'room1', senderId: 'sX', seq: 1, messageId: 'X' })], floors: [], acceptedEpochs: [] }),
@@ -305,14 +308,59 @@ describe('runCourierBackup — 成員背景備份一輪（app 觸發）', () => 
       discoverCourierUids: async () => ['stale-uid', 'live-uid'],
       openClient: async (courierUid) => {
         tried.push(courierUid);
+        now += courierUid === 'stale-uid' ? 40 : 20;
         if (courierUid === 'stale-uid') return null; // 陳舊：連不上
         return liveOpen(courierUid);
       },
+      qualityStore,
     };
     const summary = await runCourierBackup(deps);
     expect(tried).toEqual(['stale-uid', 'live-uid']); // 略過陳舊、用 live
     expect(summary.pushed).toBe(1);
     expect(courierStore.serveRoom('room1').map((m) => m.messageId)).toEqual(['X']);
+    expect(qualityStore.get('stale-uid')).toMatchObject({
+      lastConnectionSucceeded: false,
+      lastConnectionLatencyMs: 40,
+      consecutiveFailures: 1,
+    });
+    expect(qualityStore.get('live-uid')).toMatchObject({
+      lastConnectionSucceeded: true,
+      lastConnectionLatencyMs: 20,
+      lastReconcileSucceeded: true,
+      consecutiveFailures: 0,
+    });
+  });
+
+  it('依既有本地觀測重排候選，品質最佳者優先於 directory 原順序', async () => {
+    const courierStore = new CourierStore(DEFAULT_COURIER_CONFIG, () => 1000);
+    const { openClient: liveOpen } = realBackupSetup(courierStore);
+    const qualityStore = new CourierQualityStore(() => 1_000);
+    qualityStore.recordConnection('A', false, 200);
+    qualityStore.recordConnection('B', true, 80);
+    qualityStore.recordReconcile('B', false);
+    qualityStore.recordConnection('C', true, 40);
+    qualityStore.recordReconcile('C', true);
+    const tried: string[] = [];
+    const deps: CourierBackupDeps = {
+      listRooms: async () => ['room1'],
+      loadRoom: async () => ({
+        records: [rec({ roomId: 'room1', senderId: 'sX', seq: 1, messageId: 'X' })],
+        floors: [],
+        acceptedEpochs: [],
+      }),
+      saveRecord: async () => {},
+      verifyRecord: async () => true,
+      discoverCourierUids: async () => ['A', 'B', 'C'],
+      openClient: async (courierUid) => {
+        tried.push(courierUid);
+        return courierUid === 'C' ? liveOpen(courierUid) : null;
+      },
+      qualityStore,
+    };
+
+    const summary = await runCourierBackup(deps);
+    expect(tried).toEqual(['C']);
+    expect(summary.pushed).toBe(1);
   });
 
   it('單一房 reconcile 拋錯 → 該房略過，其他房照常（best-effort）', async () => {

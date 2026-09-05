@@ -39,6 +39,7 @@ import {
 } from '../incentive/CoSignedReceipt';
 import { generateUUID } from '../../utils/uuid';
 import { logger } from '../../utils/logger';
+import { CourierQualityStore, defaultCourierQualityStore } from './CourierQuality';
 import {
   CourierIOUBook,
   createDepositIOU,
@@ -624,6 +625,8 @@ export interface CourierBackupDeps {
   discoverCourierUids: () => Promise<string[]>;
   /** 對該信使開一條 courier client（連上 + 取 bus + start）；失敗回 null。 */
   openClient: (courierUid: string) => Promise<CourierClient | null>;
+  /** 本地品質觀測；省略時使用頁面生命週期內的模組單例。 */
+  qualityStore?: CourierQualityStore;
 }
 
 /**
@@ -652,19 +655,30 @@ export async function runCourierBackup(
   } catch (err) {
     logger.warn('[runCourierBackup] discover failed', { err });
   }
+  const qualityStore = deps.qualityStore ?? defaultCourierQualityStore;
+  candidates = qualityStore.rankCandidates(candidates);
 
   for (const courierUid of candidates) {
     // openClient 只在連線真的到 'connected'（DataChannel 開）才回 client；陳舊/不可達
     // 候選永遠到不了 connected → 回 null → 換下一個。故到這裡即代表信使可達。
     let client: CourierClient | null = null;
+    const connectStartedAt = qualityStore.nowMs();
     try {
       client = await deps.openClient(courierUid);
     } catch (err) {
       logger.warn('[runCourierBackup] openClient failed', { courierUid, err });
     }
+    qualityStore.recordConnection(
+      courierUid,
+      client !== null,
+      qualityStore.nowMs() - connectStartedAt
+    );
     if (!client) continue;
 
+    let reconcileAttempted = false;
+    let reconcileFailed = false;
     for (const roomId of roomIds) {
+      let thisReconcileAttempted = false;
       try {
         const { records, floors, acceptedEpochs } = await deps.loadRoom(roomId);
         // Spec 012 P3 推側過濾：digest 與 push 皆不含明文紀錄（明文只留成員間 anti-entropy）
@@ -699,6 +713,8 @@ export async function runCourierBackup(
           })().catch(() => undefined); // 落地失敗不拖垮對帳
         };
         // 已連上，但信使 CourierServer 可能剛掛上（inbound 不緩衝晚訂閱者）→ 重試跨越該視窗。
+        thisReconcileAttempted = true;
+        reconcileAttempted = true;
         const res = await retry(() =>
           client!.reconcile(roomId, localStore, floorMap, epochMap, ingest)
         );
@@ -706,9 +722,11 @@ export async function runCourierBackup(
         summary.received += res.received;
         summary.pushed += res.pushed;
       } catch (err) {
+        if (thisReconcileAttempted) reconcileFailed = true;
         logger.warn('[runCourierBackup] room reconcile failed', { roomId, err });
       }
     }
+    if (reconcileAttempted) qualityStore.recordReconcile(courierUid, !reconcileFailed);
     return summary; // 用了這個可達信使，完成本輪
   }
   return summary;

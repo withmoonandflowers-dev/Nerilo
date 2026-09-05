@@ -4,9 +4,11 @@ export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60_000,
   retries: 0,
+  // 兩套 config 可由人工指定隔離目錄，避免互相清 artifact；不預設並行，避免餓死 Vue workers=2 並汙染 C2 毫秒量測。
+  outputDir: process.env.PW_OUTPUT_DIR ?? 'test-results',
   // reporter 在此宣告一次，npm script 與 CLI 不要再用 --reporter 覆寫，
   // 否則 html 不會產生、CI 的「上傳報告」步驟空跑（見 playwright.vue.config.ts）。
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: [['list'], ['html', { open: 'never', outputFolder: process.env.PW_REPORT_DIR ?? 'playwright-report' }]],
   use: {
     baseURL: 'http://localhost:4173',
     // 同 playwright.vue.config.ts：retries=0 讓 'on-first-retry' 永遠觸發不到，
@@ -37,4 +39,3 @@ export default defineConfig({
     },
   ],
 });
-

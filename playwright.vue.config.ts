@@ -12,10 +12,12 @@ export default defineConfig({
   testDir: 'tests/e2e-vue',
   timeout: 60_000,
   retries: 0,
+  // 兩套 config 可由人工指定隔離目錄，避免互相清 artifact；不預設並行，避免餓死本檔 workers=2 並汙染 C2 毫秒量測。
+  outputDir: process.env.PW_OUTPUT_DIR ?? 'test-results',
   // reporter 在此宣告一次，CLI 不要再用 --reporter 覆寫：先前 workflow 一律傳
   // --reporter=list，html 從未產生，三個 workflow 的「上傳報告」步驟等於空跑
   // （2026-08-05 查證）。open:'never' 讓 CI 不會試圖開瀏覽器。
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: [['list'], ['html', { open: 'never', outputFolder: process.env.PW_REPORT_DIR ?? 'playwright-report' }]],
   // 每個 spec 各開 2-3 個真實瀏覽器跑 WebRTC/ICE。預設 workers=cores/2 在多核機上會同時
   // 起十幾個瀏覽器，CPU 一被餓死，2 秒一次的 mesh anti-entropy 對帳與 DataChannel 送達
   // 就被拖慢，3 人 mesh-diagnostic 的 20s 送達界線偶發撞不到（實測 workers=6 → 6/8；

@@ -10,7 +10,11 @@ import { HeartbeatService } from './HeartbeatService';
 import type { PingMessage, PongMessage } from './HeartbeatService';
 import { getGossipReplicaStore } from '../../services/GossipReplicaStore';
 import type { IRoomDirectory } from '../../ports/IRoomDirectory';
-import { PeerScoring } from '../relay/PeerScoring';
+import {
+  createActivePeerScoring,
+  pruneNeighborHealth,
+  registerNeighborHealth,
+} from './NeighborHealthLifecycle';
 import { logger } from '../../utils/logger';
 import type { GossipMessage } from '../../types';
 import type { SignalingFactory } from '../p2p/SignalingTransport';
@@ -33,7 +37,7 @@ export class MeshGossipManager {
   private topologyManager: MeshTopologyManager | null = null;
   private messageHandler: GossipMessageHandler | null = null;
   private heartbeatService: HeartbeatService | null = null;
-  private peerScoring: PeerScoring | null = null;
+  private peerScoring: ReturnType<typeof createActivePeerScoring> | null = null;
   private initialized = false;
   private neighborCheckInterval: ReturnType<typeof setInterval> | null = null;
   /** 房間內容金鑰協調器（ADR-0023 P2-②c keyx）；產生方側編排 */
@@ -202,7 +206,7 @@ export class MeshGossipManager {
       // 4. 初始化 PeerScoring（gossip 與 GossipMessageHandler 都在用）。
       // RelayManager 已於 2026-07-26 移除：它的送出 API sendViaRelay() 全 repo 零呼叫，
       // 卻每場 mesh 都跑一次 NAT 偵測與三組計時器——付成本換零功能（ADR-0031 修訂二）。
-      this.peerScoring = new PeerScoring();
+      this.peerScoring = createActivePeerScoring();
 
       // 5. 初始化訊息處理器（注入 PeerScoring + 複本持久化，ADR-0023 P1）。
       // 持久層不可用（node 測試/Safari 隱私模式）時為 null → 記憶體模式。
@@ -497,8 +501,8 @@ export class MeshGossipManager {
 
           // 暫態信號（typing）：lossy、不進 store/對帳。payload.userId = 送出者 mesh userId，
           // 只轉發給 typing 監聽器（UI 據此顯示「輸入中…」）。
-          // 心跳註冊：讓 isReachable/RTT 有初始狀態；sendPingTo 也會 lazy 初始化。
-          this.heartbeatService?.addPeer(peerId);
+          // 心跳與評分同時註冊：讓 RTT 與 gossip 行為都落在同一個鄰居生命週期。
+          registerNeighborHealth(this.heartbeatService, this.peerScoring, peerId);
 
           neighbor.onEphemeral((env) => {
             // 心跳 ping/pong（走 ephemeral，與 TYPING 同通道、以 type 區分）。
@@ -547,13 +551,9 @@ export class MeshGossipManager {
         }
       }
 
-      // 心跳 peerState 清理：移除已不在鄰居列表中的 peer（換代/離場後不再累積）
-      if (this.heartbeatService) {
-        const liveIds = new Set(neighbors.map((n) => n.getId()));
-        for (const info of this.heartbeatService.getAllPeerInfo()) {
-          if (!liveIds.has(info.peerId)) this.heartbeatService.removePeer(info.peerId);
-        }
-      }
+      // 心跳與評分狀態一起清理：換代或離場後不再累積，也不留下失效 peer。
+      const liveIds = new Set(neighbors.map((n) => n.getId()));
+      pruneNeighborHealth(this.heartbeatService, this.peerScoring, liveIds);
     }, 2000);
   }
 

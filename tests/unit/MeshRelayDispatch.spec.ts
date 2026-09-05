@@ -28,6 +28,7 @@ vi.mock('../../src/core/mesh/GossipMessageHandler', () => ({
 vi.mock('../../src/config/firebase', () => ({ auth: { currentUser: null }, db: {} }));
 
 import { MeshGossipManager } from '../../src/core/mesh/MeshGossipManager';
+import { PeerScoring } from '../../src/core/relay/PeerScoring';
 
 /**
  * 假鄰居：形狀對齊 MeshConnection 被實際用到的部分（getId/onMessage/onDigest）。
@@ -90,5 +91,25 @@ describe('鄰居訊息分派現況釘子（洋蔥棧 PARK 前置）', () => {
     const msg = { type: 'chat', senderId: 's1', seq: 1 };
     await n.push(msg);
     expect(mockMessageHandler.handleReceivedMessage).toHaveBeenCalledWith(msg, 'peer-b');
+  });
+
+  it('C1 鄰居掃描建立評分條目，行為紀錄會改變分數，離場後清除', () => {
+    const n = makeNeighbor('peer-scored');
+    const scoring = new PeerScoring();
+    (manager as any).peerScoring = scoring;
+    (manager as any).messageHandler = mockMessageHandler;
+    (manager as any).topologyManager = { getNeighbors: () => [n.conn], getNeighborCount: () => 1 };
+    (manager as any).setupNeighborMessageHandlers();
+    vi.advanceTimersByTime(2100);
+
+    const initial = scoring.getPeerScore('peer-scored');
+    expect(initial).toBeDefined();
+    const initialScore = initial!.compositeScore;
+    scoring.recordDelivery('peer-scored');
+    expect(scoring.getScore('peer-scored')).toBeGreaterThan(initialScore);
+
+    (manager as any).topologyManager = { getNeighbors: () => [], getNeighborCount: () => 0 };
+    vi.advanceTimersByTime(2100);
+    expect(scoring.getPeerScore('peer-scored')).toBeUndefined();
   });
 });
