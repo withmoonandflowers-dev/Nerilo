@@ -1,8 +1,8 @@
 # Spec 028：驗實同儕轉達完整路徑
 
 - 軌別：feature
-- 狀態：clarifying（階段 A 可執行規格；階段 B、C 待 B0、C0 擴充）
-- 建立：2026-09-04／最後更新：2026-09-04
+- 狀態：clarifying（階段 C 可執行規格）
+- 建立：2026-09-04／最後更新：2026-09-05
 - 關聯：Spec 005、Spec 021、Spec 027、ADR-0023、ADR-0024、ADR-0031、ADR-0032
 - 基準：`b8ce49c018661aa0f74c069021f29f7deb98cbac`
 
@@ -207,15 +207,155 @@ A3 只補正確的金鑰就緒等待與精確選擇器，不調整既有 timeout
 - B0 若新增或修改跨實作格式，改走 protocol 軌，補版本與相容策略。
 - 本節現在不設定驗收數字，也不把目標寫成已完成能力。
 
-## 9. 階段 C：依網路品質選擇信使
+## 9. 階段 C：依網路品質選轉運站
 
-**待擴充，C0 時補齊。**
+- 軌別判定：**feature 軌**。C1、C2 的分數與失效切換全部是本地觀測、本地保存、不上線交換，
+  不新增也不修改任何跨實作線上格式。若後續要把分數或品質宣告放進訊息，該項改走 protocol 軌，
+  另立 spec（憲法第 15 條）。
+- 基準：`6b876f4`。以下每一條現況都附 file:line，由 lead 與 reproduce 各自獨立查證，
+  記錄於 `herdr-packets-Nerilo/runs/T2C_C0_盤點_20260905T132515Z.md`。
 
-目標是以 RTT、丟包、在線時長與頻寬估計建立品質分數，將 `PeerScoring` 與 `RelayDirectory` 接到實際選路，並在信使失效時自動切換。
+### 9.1 四個可觀測量的資料來源核對（C0 的第一項工作）
 
-已知邊界如下：
+封包指定用 RTT、丟包、在線時長、頻寬估計四個量。核對結果：**只有 RTT 有真實產品資料來源，
+其餘三個在 repo 裡沒有來源**。
 
-- `PeerScoring` 現有 delivery、first arrival 與 mesh presence 訊號，不代表 RTT、丟包與頻寬估計已完整接線。C0 必須逐項核對資料來源與可信度。
-- 自報品質可能被偽造。C0 要先定義可觀測量、更新頻率、防抖、切換條件與身分信任邊界。
-- C 階段不解凍 super-node、ledger 或 `src/core/relay/onion/`。
-- 本節現在不設定切換秒數或成功率門檻，也不把自動選路寫成已完成能力。
+| 量 | 產品資料來源 | 更新頻率 | 信任邊界 | 處置 |
+|---|---|---|---|---|
+| RTT | 有。`HeartbeatService` 以 `Date.now() - pong.pingTimestamp` 本地計算（`src/core/mesh/HeartbeatService.ts:129-140,171-182`），由 `MeshGossipManager.initialize` 實例化並啟動（`src/core/mesh/MeshGossipManager.ts:275-305`） | `PING_INTERVAL_MS = 30_000`（`HeartbeatService.ts:37`） | 本地時鐘計算，但輸入 `PongMessage.pingTimestamp` 由對端回填，未簽章、未做值域檢查 | C1 可用，僅限暖 mesh 鄰居 |
+| 丟包率 | **無**。產品程式沒有讀 `RTCStatsReport`、`packetsLost`、`packetsReceived`；這些字串只出現在 smoke 測試 | — | — | 列為 C-Q1，不實作、不以替代值冒充 |
+| 在線時長 | **無累積來源**。`PeerScoring.meshPresenceMs` 需要呼叫者手動餵，產品無呼叫端（`src/core/relay/PeerScoring.ts:169-176`）；`announcedAt`、`lastPongAt` 是最近時間戳不是累積時長 | — | `announcedAt` 是節點自報 client clock | 改採 9.3 定義的「本地觀測連續可達時長」，不使用對端 uptime |
+| 頻寬估計 | **無**。產品沒有從 `availableOutgoingBitrate`、`bytesSent/Received` 或 `getStats()` 產生任何值。`RelayNodeMetrics.bandwidth`（`src/core/relay/types.ts:94-109`）只是型別 | — | 若改用 `RelayAnnouncement.metrics` 則為自報 | 列為 C-Q2，不實作 |
+
+不得因為型別欄位存在（`RelayNodeMetrics` 有 `avgLatency`、`bandwidth`、`uptimeRatio`）就宣稱這些量有來源。
+那些欄位目前沒有任何產品寫入端，`RelayScorer`、`SuperNodeElection`、`MultiPathSelector` 也沒有非測試實例化。
+
+### 9.2 C0 查出的產品缺陷：PeerScoring 目前完全惰性
+
+`MeshGossipManager` 每場 mesh 都建立 `PeerScoring` 並注入 `GossipMessageHandler`
+（`src/core/mesh/MeshGossipManager.ts:202-217`），handler 也確實在收訊路徑上呼叫
+`isGraylisted`、`recordDuplicate`、`recordInvalidMessage`、`recordDelivery`
+（`src/core/mesh/GossipMessageHandler.ts:420,457,470,496,509,521,529`）。
+
+但**產品沒有任何地方呼叫 `peerScoring.addPeer()`**。全 repo 非測試的 `.addPeer(` 只有
+`heartbeatService.addPeer`（`MeshGossipManager.ts:501`）與已 PARK 的 `RelayManager.ts:203`。
+`PeerScoring` 的每個 `record*` 開頭都是 `const s = this.scores.get(nodeId); if (!s) return;`
+（`PeerScoring.ts:125-126,135-136,144-145,153-154,162-163,171-172`），沒有條目就直接返回。
+`getScore` 對未知節點回 0（`PeerScoring.ts:179-182`），而 graylist 門檻是 -40，
+所以 `isGraylisted` 恆為 false。
+
+結論：**現行產品的 PeerScoring 收不到任何訊號、也擋不掉任何節點**。
+`Nerilo/CLAUDE.md` 寫的「`PeerScoring` 現行只閘控 gossip 收訊：灰名單擋收」不成立，
+C 階段結束時要修正該行。C1 的第一件事是讓分數真的有狀態，而不是先加新的量。
+
+### 9.3 品質分數定義（C1 實作對象）
+
+#### 9.3.1 兩個候選集合不同，可得的量也不同
+
+這是 C 階段最關鍵的結構事實，先寫清楚再談分數：
+
+- **暖 mesh 鄰居**：已直連、有 DataChannel，`HeartbeatService` 有它的 RTT，
+  `GossipMessageHandler` 有它的收訊行為。carrier 選擇點在 `SigRelayRouter.ts:94-120`
+  （送出方逐一試 `links` 的 Map 插入順序，遇 ACK 即停）；轉發者角色另在 `:240-252`
+  （hop 上限 1、只轉給直連暖鄰居）。
+- **信使候選**：陌生節點，只有 firebase uid，經 `FirestoreRelayDirectory.query` 發現
+  （`web-vue/app/composables/useCourierNode.ts:190-200`）。**在連上之前沒有 RTT，也沒有任何行為紀錄。**
+  選擇點在 `runCourierBackup`（`src/core/relay/CourierService.ts:635-714`），
+  現行準則是「directory 排序後第一個連得上的」。
+
+因此**不存在「事前就用 RTT 排序信使候選」這種做法**。任何宣稱依網路品質選信使的設計，
+都只能是「觀測過去、排序未來」。規格照此定義，不假裝可以事前量測未連線節點。
+
+#### 9.3.2 分數模型：observe-then-rank
+
+C1 只用本節點自己觀測得到的量，不接受任何對端自報值。
+
+**信使候選分數**（每個 courier uid 一筆，本地保存）：
+
+| 觀測量 | 取得方式 | 事實依據 |
+|---|---|---|
+| 連線成功與否 | `openClient` 是否回傳非 null（只有真的到 `connected` 才回 client） | `CourierService.ts:657-664`、`useCourierNode.ts:168-187` |
+| 連線耗時 | 呼叫 `openClient` 到回傳的本地毫秒差 | 本地時鐘，無對端輸入 |
+| 對帳成功與否 | `client.reconcile` 是否在 `retry` 用盡前成功 | `CourierService.ts:702-704` |
+| 連續可達時長 | 本地首次觀測到該 uid 可達的時刻，到最近一次可達之間，中途一次不可達即歸零 | 取代「在線時長」，**不是對端 uptime** |
+| 連續失敗次數 | 連續 `openClient` 回 null 或 reconcile 失敗的次數 | 供 9.4 切換與退避 |
+
+**暖鄰居 carrier 分數**：RTT（`HeartbeatService.getLatency`，30 秒更新）加上
+`PeerScoring` 的既有行為分數（前提是 9.2 的 `addPeer` 缺陷先修好）。
+
+自報值明確不採用：`RelayAnnouncement.capacity`（現行產品一律硬寫 `1`，
+`useNodePresence.ts:39`）與 `RelayAnnouncement.metrics`（現行產品從不填）
+都由宣告者自己決定，無法驗證，C1 不納入分數，也不新增填寫端。
+
+#### 9.3.3 分數不上線、不交換
+
+本階段的分數是每個節點的私有本地觀測，不放進任何訊息、不 gossip、不寫進 directory。
+理由有二：交換分數會立刻變成可偽造的自報值，需要新的可驗證憑證；而且會新增跨實作線上格式，
+必須改走 protocol 軌。要交換分數是後續階段的獨立議題。
+
+#### 9.3.4 更新頻率與保存
+
+- 信使觀測：跟隨既有 `BACKUP_INTERVAL_MS = 30_000`（`useCourierNode.ts:47`）的備份輪次，
+  以及 `useNodePresence` 的 5 秒名冊心跳（`useNodePresence.ts:14`），不新增 timer。
+- 暖鄰居 RTT：跟隨既有 30 秒心跳，不新增 timer。
+- `PeerScoring` 的 decay timer（60 秒，`PeerScoring.ts:47-50`）現行沒有被 `start()`，
+  C1 決定是否啟動時要一併寫下理由；不啟動就是分數永不衰減，這是要明講的取捨。
+- 保存範圍與生命週期由 C1 決定並寫回本節；跨頁面重載是否保留屬 C1 的裁決點。
+
+### 9.4 切換條件與防抖（C2 實作對象，門檻數字待實測回填）
+
+沿用 Spec 030 §7.3 的教訓：**沒有實跑依據的秒數不寫進規格**。本節先定義事件與量測方法，
+門檻由 C2 的 characterization 產生後回填本節，回填時附 run 檔名。
+
+**要修的兩個缺口：**
+
+1. **信使中途失效不會換人**。`runCourierBackup` 一旦拿到可連線的 client，
+   就用它跑完所有房間然後 `return summary`（`CourierService.ts:712`）。
+   房間 reconcile 失敗只被 `catch` 記 log（`:708-710`），
+   **不會退回候選清單試下一個信使**。所以「連上之後才掛掉」目前完全沒有切換。
+2. **cold 失敗不會回 warm**（階段 B 遺留，Spec 030 Q5）。
+   `WarmColdSignalingTransport` 一旦 `stickCold = true` 就永久黏住
+   （`src/core/p2p/WarmColdSignalingTransport.ts:41,126`），
+   最後一行 `await (await this.ensureCold()).send(data)` 失敗直接往外拋
+   （`:130`），沒有重選、沒有退避。
+
+**切換時間的定義與量測方法：**
+
+- 起點：本地觀測到「當前轉運站不可用」的第一個事件（`openClient` 回 null、
+  `reconcile` 在 `retry` 用盡後拋出，或 cold `send` 拋出）。
+- 終點：本地觀測到「已改用另一個轉運站且該次操作成功」。
+- 量法：E2E 內以 `performance.now()` 取兩點差，經測試模式鉤子取回；不以人工讀 log 估算。
+- 記錄：每次量測落檔 `runs/`，取多輪的中位數與最大值，兩個都報。
+
+**恰好一次的維持**：切換期間不得產生重複落地或漏收。判準沿用既有的送達矩陣斷言，
+不另立寬鬆標準。
+
+### 9.5 C 階段的待釐清
+
+| 編號 | 問題 | 為何不在 C0 裁決 |
+|---|---|---|
+| C-Q1 | 丟包率要不要做，若要做資料源是 WebRTC `getStats` 還是應用層序號缺口 | 兩者都要新增取樣路徑；`getStats` 只在 PARK 模組用過，其成本與瀏覽器差異未實測 |
+| C-Q2 | 頻寬估計要不要做，以及是否值得為它引入 `getStats` | 同上；且信使場景的傳輸量很小，估計值可能沒有鑑別度 |
+| C-Q3 | `PeerScoring` 的 decay 是否啟動、分數是否跨頁面重載保存 | 需要 C1 實作時的實際觀測密度才能判斷 |
+| C-Q4 | 分數是否納入 `SigRelayRouter` 的 carrier 選擇，或本階段只做信使選擇 | 取決於 C1 修好 `addPeer` 後 `PeerScoring` 是否真的累積出有鑑別度的分數 |
+| C-Q5 | 切換門檻與防抖秒數 | 依 9.4 由 characterization 產生後回填，不預設 |
+
+### 9.6 邊界（C 階段明確不做）
+
+- 不解凍 super-node、ledger、`src/core/relay/onion/`。
+- 不新增或修改任何跨實作線上格式；不交換分數。
+- 不採用對端自報的品質數值。
+- 不宣稱 React 生產線具備信使或 relay overlay：那組 overlay 只接在 Vue 線
+  （`useCourierNode.ts`、`useNodePresence.ts`）。
+- 不把丟包率與頻寬估計寫成已具備的能力。
+
+### 9.7 C 階段驗收（黃金判準）
+
+| 判準 | 及格線 | 量法 |
+|---|---|---|
+| C1 分數真的有狀態 | 單元測試證明產品路徑走過一輪後 `getPeerScore` 有條目、且分數會隨行為變動 | 針對 9.2 缺陷的回歸鎖 |
+| C1 選對轉運站 | 三個候選品質不同時，第二輪選中上一輪表現最好的那個 | E2E 或整合測試，三候選以測試鉤子造出不同結果 |
+| C2 信使中途失效會換人 | 使用中的信使失效後，同一輪內改用另一個候選並完成對帳 | E2E，落檔切換時間中位數與最大值 |
+| C2 cold 失敗會重選 | HTTP cold `send` 失敗後不再直接拋出，依 C-Q5 的門檻重選並成功 | E2E，落檔切換時間 |
+| 恰好一次 | 切換前後訊息不重不漏 | 既有送達矩陣斷言 |
+| 既有閘門不退步 | type-check 0 錯、lint 0 錯警告 ≤10、單元 1727 全過、rules 90/90、release 25 過 0 敗、stable 11/11、vue-stable 13/13、rendezvous 1/1、@stranger 4/4 | 協作規則第六節 |
