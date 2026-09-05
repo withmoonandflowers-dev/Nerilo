@@ -1,6 +1,6 @@
 # Nerilo 現況（單一事實來源）
 
-> 最後更新：2026-09-05（npm 最新版仍為 0.11.1；0.12.0 候選已加入 R11 私有房房籍盲寫修法與回歸測試，尚待 verifier 本機驗證，尚未發佈）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
+> 最後更新：2026-09-06（npm 最新版仍為 0.11.1；0.12.0 候選已完成 R11 私有房加入修復及 Spec 028 階段 C 的本機驗證，尚未發佈）。README、開發文件、跨機器 handoff 與 roadmap 若涉及「現在做到哪」或測試數字，以本檔為準；ADR 與 spec 仍是設計決策與功能驗收的權威來源。
 
 ## 定位與交付面
 
@@ -15,21 +15,30 @@
 
 | 層級 | 最新基線 |
 |---|---|
-| Core quality | TypeScript、ESLint gate 通過；**164 files / 1710 tests** 全綠（既有 6 warnings；實測 2026-09-03） |
+| Core quality | TypeScript、ESLint gate 通過；**168 files / 1740 tests** 全綠，6 warnings（HEAD `c5c1bd5`，2026-09-06） |
 | SDK | build 通過；入口 Firebase isolation 硬閘通過（進入點已改 `core/messaging/MeshChatService`，靜態圖 44 檔）；`qa:pack-smoke` 純 Node 消費者可載入三個進入點（21/4/2 匯出） |
-| Firestore rules | Emulator-backed **54/54**；含 room takeover、非成員 signal injection、收件人資格、payload 形狀／大小回歸 |
-| React P0 E2E | Emulator-backed **6/6**（2026-08-03；建房、加入、E2EE 握手、雙向訊息、離房） |
-| React release E2E | 維護中的 P0/P1/P2 **21/27，6 項失敗**（2 workers，2026-09-04；來源：`runs/T1v_test-e2e-release_20260904T055849Z.md`）；失敗根因未定位 |
+| Firestore rules | Emulator-backed **90/90**（2026-09-06） |
+| React release E2E* | **25 passed / 0 failed / 3 skipped**（2026-09-06） |
+| React stable E2E* | **11/11**（2026-09-06） |
 | Nuxt quality | `nuxt typecheck`、`nuxt generate` 通過 |
-| Nuxt stable E2E | stable gate **13/13**（12 條旅程＋同 process warmup）；migration 5/5、p2p2p introduction 3/3 重複壓測全綠；硬閘已提交且遠端首跑成功 |
-| Offline rendezvous E2E | 真 HTTP 會合點＋兩個隔離 Chromium：單人等待、兩人 P2P/E2EE、訊息互通 **1/1** |
+| Nuxt stable E2E* | stable gate **13/13**（2026-09-06） |
+| Offline rendezvous E2E* | 真 HTTP 會合點與兩個隔離 Chromium：**1/1**（2026-09-06） |
+| 信使失效切換 E2E* | `@courier` **1/1**，切換 **20,324 ms**；本地紀錄前後均為 3（2026-09-06） |
 | Spec 001 affected E2E | 真 WebRTC＋Firebase emulator 欠條計量 1/1 |
+
+\* 2026-09-06 的瀏覽器 E2E 以 `PW_DISABLE_MDNS=1` 執行。本機 Chromium 無法解析 mDNS
+`.local` host candidate，未設定時同機兩個 peer 完全無法連線，所有 WebRTC E2E 都會失敗；
+未改動的 rendezvous 也同樣失敗，開啟 flag 後則一起通過。同一天稍早在 `80435a6` 上，
+vue-stable 仍為 13/13。這是 macOS Local Network 權限造成的本機環境問題，並非程式缺陷。
+該 flag 會改變實際 ICE candidate 型別，乾淨環境的正式數字須待權限修好後重測。
 
 ## 2026-09-05 R11 私有房加入候選修復
 
 - `RoomService.joinRoom` 不再要求非成員先讀 private room。第一步只以 `arrayUnion(uid)` 與 `increment(1)` 加入本人，取得房籍後才讀取狀態並把雙人 `waiting` 房翻成 `open`。新建房也開始寫入初始 `participantCount`。
 - Firestore private room 讀取規則沒有放寬。新增的 update 分支只允許已在名冊的成員，在名冊、房主與容量不變且至少兩人時，把 `waiting` 改為 `open`。rules 測試新增七條，另含缺 `participantCount` 的公開舊房退路與私有舊房失敗邊界。
-- React release 新增一條私有房邀請案例，總數由 27 變為 28，既有 3 項隔離不變。這批變更尚未跑 emulator 或 Playwright，不能列為已驗證基線。`ChatPage` 在 `joinRoom` 前仍有一次讀取，新增 E2E 會確認它是否仍阻擋完整邀請旅程。
+- React release 新增一條私有房邀請案例，總數由 27 變為 28，既有 3 項隔離不變。Firestore rules
+  90/90 與 React release 25 passed、0 failed、3 skipped 已驗證修法；`ChatPage` 允許加入前讀取因
+  permission-denied 跳過，加入後再讀取房名、房主與狀態。
 - `migrating` 房維持 `room-migrating`，但修法會先加入再退出，存在極短時窗。私有房非成員的盲寫若因關閉、滿房或不存在而被拒，讀取規則也禁止事後讀取，所以部分情境只能回傳原始 `permission-denied`；安全限制未降低，錯誤訊息精確度有此邊界。
 
 ## 2026-09-03 E2EE producer 與 Vue gate 收斂（Spec 027）
