@@ -70,6 +70,10 @@ export type ServiceIOUValidation =
   | { ok: true; holderNodeId: string }
   | { ok: false; reason: ServiceIOURejectReason };
 
+export type ServiceEndorsementValidation =
+  | { ok: true }
+  | { ok: false; reason: ServiceIOURejectReason };
+
 export interface ServiceIOUVerifyOptions {
   now: number;
 }
@@ -223,6 +227,33 @@ async function hasValidSignature(
     return await verify(canonical, signature);
   } catch {
     return false;
+  }
+}
+
+/** 單則背書可只靠自身攜帶的 from 公鑰獨立驗章，不需要憑證或登記簿。 */
+export async function verifyServiceEndorsementSignature(
+  value: unknown
+): Promise<ServiceEndorsementValidation> {
+  if (!value || typeof value !== 'object') return { ok: false, reason: 'malformed' };
+  if ((value as { v?: unknown }).v !== SERVICE_ENDORSEMENT_VERSION) {
+    return { ok: false, reason: 'unsupported-version' };
+  }
+  if (!hasEndorsementShape(value)) return { ok: false, reason: 'malformed' };
+  const endorsement = value;
+  try {
+    if (!(await pubKeyBindsNodeId(endorsement.from.nodeId, endorsement.from.pubKey))) {
+      return { ok: false, reason: 'identity-mismatch' };
+    }
+    const { signature, ...unsigned } = endorsement;
+    return await hasValidSignature(
+      endorsement.from.pubKey,
+      endorsementCanonical(unsigned),
+      signature
+    )
+      ? { ok: true }
+      : { ok: false, reason: 'bad-signature' };
+  } catch {
+    return { ok: false, reason: 'bad-signature' };
   }
 }
 
