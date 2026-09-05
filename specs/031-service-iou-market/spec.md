@@ -281,10 +281,14 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
 
 `swapPairHash` 為 `null` 時，序列化為 JSON 的 `null`，不得省略該位置。
 
-鏈雜湊定義：某一則背書的 hash 是「其 canonical 字串加上 `signature`」的 SHA-256 十六進位小寫。
-憑證的 hash 是「5.1 canonical 字串加上 `signature`」的 SHA-256 十六進位小寫。
+鏈雜湊定義：某一則背書的 hash 是對 `JSON.stringify([canonical, signature])` 取 SHA-256，
+輸出為十六進位小寫，其中 `canonical` 是本節定義的背書 canonical 字串。
+憑證的 hash 同樣對 `JSON.stringify([canonical, signature])` 取 SHA-256，輸出為十六進位小寫，
+其中 `canonical` 是 5.1 定義的憑證 canonical 字串。
 
 ### 5.3 背書鏈驗證
+
+本節只適用可背書憑證的轉手驗證。
 
 給定憑證 `iou` 與鏈 `chain`，依序檢查：
 
@@ -340,6 +344,8 @@ issued ──endorse──> endorsed(seq=n) ──register──> registered
 
 - 憑證的剩餘額度初始等於 `denomination.amount`。
 - 開票人收到 `nsredeem1` 並驗證通過後扣減剩餘額度，餘額為零即 `exhausted`。
+- 記名憑證的兌換只做 5.1 驗證，再確認請求者等於 `iou.holder.nodeId`；可背書憑證才走 5.3。
+  實作不得把記名憑證送進背書鏈驗證。
 - **餘額是開票人本機狀態，不在線上格式裡**。持有人不能自行宣稱餘額；
   市場上的買方必須向開票人查詢，或承擔餘額已被消耗的風險。這是刻意的取捨，理由見 ADR-0038。
 - 部分兌換不改變背書鏈；同一條鏈可多次兌換直到 `exhausted` 或 `expired`。
