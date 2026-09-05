@@ -27,3 +27,4 @@
 | [0034](0034-retire-treekem-groupkeymanager.md) | 退役 TreeKEM 與 GroupKeyManager（ADR-0031 續篇） | Accepted |
 | [0035](0035-partial-mesh-wiring.md) | 接線 partial mesh（只升不降）＋房間容量分層 Free 5／Pro 10 | Accepted |
 | [0036](0036-migration-window-disposition.md) | React 遷移窗掉信不修，靠 Vue 切換退役星型棧收斂 | Accepted |
+| [0038](0038-service-iou-endorsement-chain.md) | 服務債權憑證改用背書鏈流通，開票人是唯一結算權威 | Accepted |
