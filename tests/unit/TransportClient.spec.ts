@@ -91,8 +91,20 @@ function makeManagers(ringA: RoomContentKeyRing, ringB: RoomContentKeyRing) {
   };
 }
 
-async function flush(): Promise<void> {
-  // 真非同步（SubtleCrypto）＋ queueMicrotask 遞送：等一小段真時間最可靠
+async function flushUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  if (predicate()) return;
+  throw new Error(
+    `[TransportClient flushUntil] ${timeoutMs}ms 內未等到條件成立：${predicate.name || '未命名條件'}`
+  );
+}
+
+/** 零收或丟棄沒有可輪詢的正向完成訊號，只能保留短暫固定等待後再做負向斷言。 */
+async function settleForNegativeAssertion(): Promise<void> {
   await new Promise((r) => setTimeout(r, 20));
 }
 
@@ -109,7 +121,7 @@ describe('NeriloTransportClient（Spec 023 T5）', () => {
 
     const ch = await A.openRawChannel('B', 'inputs', { ordered: false, maxRetransmits: 0 });
     ch.send('{"t":"i","w":[[556,7]]}');
-    await flush();
+    await flushUntil(function bReceivedFirstRawFrame() { return gotB.length > 0; });
 
     expect(gotB).toEqual([['{"t":"i","w":[[556,7]]}', 'A']]);
     expect(ch.dropped()).toBe(0);
@@ -141,7 +153,7 @@ describe('NeriloTransportClient（Spec 023 T5）', () => {
     B.onRawChannel((ch) => ch.onMessage((d) => gotB.push(d)));
     const ch = await A.openRawChannel('B', 'inputs');
     ch.send('must-not-leak');
-    await flush();
+    await settleForNegativeAssertion();
 
     expect(ch.dropped()).toBe(1);
     expect(gotB).toHaveLength(0);
@@ -165,12 +177,12 @@ describe('NeriloTransportClient（Spec 023 T5）', () => {
     const ch = await A.openRawChannel('B', 'inputs');
 
     ch.send('epoch0-frame');
-    await flush();
+    await flushUntil(function bReceivedEpoch0Frame() { return gotB.length > 0; });
     const k1 = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
     ringA.setContentKey(k1, 1); // A 輪替
     ringB.setContentKey(k1, 1); // B 收到新代（keyx 既有機制），前代保留
     ch.send('epoch1-frame');
-    await flush();
+    await flushUntil(function bReceivedEpoch1Frame() { return gotB.length > 1; });
 
     expect(gotB).toEqual(['epoch0-frame', 'epoch1-frame']);
     await A.dispose(); await B.dispose();
@@ -196,10 +208,11 @@ describe('NeriloTransportClient（Spec 023 T5）', () => {
     let closed = false;
     ch.onClose(() => { closed = true; });
     ch.close();
-    await flush(); // close 是 flush-then-close（Spec 026 修訂）：沖掉待送/待收後才發 onClose
+    // close 是 flush-then-close（Spec 026 修訂）：沖掉待送/待收後才發 onClose。
+    await flushUntil(function rawChannelCloseObserved() { return closed; });
     expect(closed).toBe(true);
     ch.send('after-close');
-    await flush();
+    await settleForNegativeAssertion(); // 驗證丟棄，沒有可等待的遠端送達訊號。
     expect(ch.dropped()).toBe(1);
     await A.dispose(); await B.dispose();
   });
