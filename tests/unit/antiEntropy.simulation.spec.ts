@@ -235,6 +235,18 @@ function runPartialMeshSim(
   return { converged: false, rounds: opts.maxRounds };
 }
 
+/**
+ * partial mesh 兩項的時限（T-012，2026-10-03）。
+ * 這兩項是純同步運算（800 次與 300 次模擬），沒有等待、沒有競態，耗時只看拿到多少 CPU。
+ * 量測（改動前的測試，獨立行程連跑 10 次，12 核機器 load 10~12）：
+ *   n=7..10 為 430~597ms，p95 597ms；晚到者為 307~667ms，p95 667ms。
+ * 機器滿載時實測慢 11 倍（5070ms），踩到 vitest 預設的 5000ms。
+ * 用 taskpolicy -b 加 --execArgv=--jitless 可以不靠負載重現，最慢 16446ms。
+ * 時限取 60 秒：兩項 p95 的 89 倍以上，也是已量到最慢一次的 3.6 倍。
+ * 每次模擬有 maxRounds 上界，不會掛住；「不收斂」靠 failures 斷言抓，與時限無關。
+ */
+const PARTIAL_MESH_TIMEOUT_MS = 60_000;
+
 describe('antiEntropy 確定性模擬', () => {
   it('300 個 seed：連通圖 + 30% 丟包下，全員必收斂到聯集', () => {
     const failures: number[] = [];
@@ -322,7 +334,7 @@ describe('antiEntropy 確定性模擬', () => {
       }
     }
     expect(failures, `不收斂（可用該 n/seed 重現）: ${failures.join(', ')}`).toEqual([]);
-  });
+  }, PARTIAL_MESH_TIMEOUT_MS);
 
   it('partial mesh（Spec 011）：晚到者中途進場（accept-slack 讓位），進場前後訊息全員收斂', () => {
     const failures: string[] = [];
@@ -335,7 +347,7 @@ describe('antiEntropy 確定性模擬', () => {
       }
     }
     expect(failures, `不收斂（可用該 n/seed 重現）: ${failures.join(', ')}`).toEqual([]);
-  });
+  }, PARTIAL_MESH_TIMEOUT_MS);
 
   it('反向對照（誠實）：完全斷開的孤立節點不收斂——證明測試會偵測不收斂', () => {
     // connected:false 且沒額外邊碰到某節點時，孤立節點收不到 → 不收斂
