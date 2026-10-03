@@ -83,6 +83,37 @@ Nerilo 的節點會替彼此轉運與寄存。現行機制（Spec 001、ADR-0029
 | D-Q8 | 如何累積觀測者自己的兌換互動紀錄 | 本階段沒有產品路徑記錄觀測者向其他開票人提出的兌換與履行結果，不能拿開票人自己的兌換簿替代 |
 | D-Q9 | 信用摘要是否要加入硬性到期欄位 | 本版只提供觀測窗，由消費端自行判斷新鮮度；硬性到期會成為跨實作的相容規則，需另行裁決 |
 
+### D-Q2 量測紀錄（2026-10-03，T-012 乙-2；上限未訂）
+
+**方法**：`node scripts/measure-endorsement-chain.mjs 30 3`。腳本用 esbuild 打包 `src/core/incentive/ServiceIOU.ts` 後在 Node 執行，對鏈長 1、2、4、8、16、32、64 各建一條真簽章鏈（ECDSA P-256，每段不同簽署者），先熱身 3 次，再對同一條鏈呼叫 `verifyEndorsementChain` 30 次，計時單位為整條鏈一次完整驗證（含憑證本身的驗證）。百分位取 nearest-rank。環境：Node v26.5.0，Intel i9-8950HK 12 執行緒，量測時 load average 約 9（同機另有工作在跑，數字偏保守）。
+
+| 鏈長 | p50 (ms) | p95 (ms) | 每段 p50 (ms) | 整條鏈 JSON (bytes) |
+|---|---|---|---|---|
+| 1 | 1.93 | 2.78 | 1.93 | 581 |
+| 2 | 2.58 | 8.66 | 1.29 | 1,161 |
+| 4 | 4.14 | 5.02 | 1.04 | 2,321 |
+| 8 | 7.30 | 9.00 | 0.91 | 4,641 |
+| 16 | 13.27 | 17.55 | 0.83 | 9,288 |
+| 32 | 27.04 | 31.23 | 0.85 | 18,584 |
+| 64 | 47.46 | 57.36 | 0.74 | 37,176 |
+
+出處：`herdr-packets-Nerilo/runs/T12v_乙_endorsement-chain_20261003T104455Z.log`。同日較早一次（`..._20261003T104425Z.log`，無位元組欄）鏈長 64 為 p50 44.88、p95 56.45。
+
+**觀察（已驗證）**
+- 鏈長 16、32、64 的每段 p50 約 0.74 至 0.85 ms（短鏈含憑證本身的固定成本，鏈長 1、2、4、8 的每段 p50 為 1.93、1.29、1.04、0.91 ms）。
+- 讀碼與呼叫計數：程式每段會驗章、匯入公鑰，並雜湊背書、公鑰及驗章資料，即每增加一段多 3 次顯式 SHA-256（`ServiceIOU.ts` 的 `endorsementHash`；`pubKeyBindsNodeId` 經 `TombstoneCrypto.senderIdFromPubKey`；驗章經 `CourierReceipts.ecdsaVerifier` 先雜湊 canonical 字串）與 1 次 ECDSA verify。各步驟的耗時占比未量測。
+- 現行產品路徑沒有帶上限：`ServiceIOUCourier` 呼叫 `IssuerEndorsementRegistry.register` 與 `IssuerRedemptionBook.redeem` 時只傳 `now`，`maxChainLength` 為 undefined。`IssuerEndorsementRegistry.hydrate` 重驗已存鏈時也不帶上限。
+- 現行 courier 入站線上路徑的唯一長度護欄，是 `P2PChannelBus` 的入站單幀大小上限 256 KiB（`MAX_INBOUND_MESSAGE_BYTES`）。這不代表瀏覽器 SCTP 的能力上限，也不約束直接函式呼叫或 `hydrate` 路徑。
+
+**推論（未量測）**
+- 以每段約 580 bytes 推算，256 KiB 幀約可塞 450 段，以每段 0.75 ms 推算單次驗證約 340 ms。一個對端可反覆送這種鏈讓開票人持續驗章。
+- `hydrate` 重驗的成本是「已登記鏈數 × 鏈長」，上限同時決定冷啟動時間。
+
+**建議值：16**（供操作者與使用者裁決，本版未寫進程式）
+- 驗證 p95 約 17.5 ms，整條鏈約 9.3 KB（Node 量測，瀏覽器內未量）。
+- 房間人數硬上限是 10，一張憑證在同一群節點間轉手 16 次已超過正常流通所需；若要讓憑證跨房流通，32（p95 約 31 ms）是次選。
+- 過長鏈的處置沿用 8.2：超過即回 `malformed`，不嘗試部分驗證。
+
 ## 4. 線上格式（wire format）
 
 所有格式以 UTF-8 JSON 表示。所有 `nodeId` 是公鑰的 SHA-256 前 32 字元（與 repo 現行

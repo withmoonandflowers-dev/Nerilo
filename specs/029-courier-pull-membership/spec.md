@@ -61,6 +61,13 @@ ADR-0024 記錄的是寄存配額與四層刪除機制，墓碑須有房籍簽�
 - [ ] **Q3 challenge 與憑證期限**：須用量測決定 challenge 最長有效時間、房籍憑證有效時間與允許的時鐘偏差。期限須足以容忍正常瀏覽器排程，又不能讓擷取後的證明長時間可用。
 - [ ] **Q4 觀察期退場門檻**：須由操作者裁決觀察模式的最長期限、舊版使用率門檻、遙測欄位與強制模式切換日期。觀察模式會延續已知資訊外洩，只能是有期限的遷移措施。
 - [ ] **Q5 通道生命週期**：目前 `CourierServer` 只有一個 `requester` 欄位。B1 須確認每個 server instance 是否嚴格對應單一遠端通道；若通道可多工，須先把 requester 與 challenge 狀態改為按 `channelPeerId` 隔離，避免身分互相覆蓋。
+  - **查證（2026-10-03，T-012 乙-1）**：產品路徑上一個實例只服務一個遠端通道，但類別本身不強制。
+    - `web-vue/app/composables/useCourierNode.ts` 的 `start()` 在 `connector.startListening` 回呼裡，每個入站連線各建一個 `CourierServer`，掛在該連線自己的 `P2PChannelBus`（`conn.getChannelBus()`）。
+    - `RelayConnector.startListening` 以 channelId 去重（`active` 表），channelId 由 `relayChannelId` 把兩個 uid 排序相接，一條通道只有兩個參與者；`P2PChannelBus` 包一條 `RTCDataChannel`，沒有多工。
+    - `CourierServer` 的 `requester`、`bytesOwed`、`inFlight` 都是單一欄位，`onEnvelope` 不比對 `env.from`。同一實例若收到多個 `from` 的封包，後到的 IDENTIFY 覆蓋先到的，未 IDENTIFY 的 `from` 可用前者身分取得報價。
+    - 同一通道的對端可再送 IDENTIFY 換成另一個合法身分，現況照收（與 C6「同通道嘗試換身分須拒絕」不符）。
+    - 所有實例共用同一個 `CourierStore` 與 `CourierIOUBook`，這是按房間與發票人分帳的設計，不屬於通道狀態。
+    - 現況由 `tests/unit/CourierServer.channelScope.spec.ts` 釘住（6 項，其中 3 項標為現況紀錄）。產品程式未修改。
 
 ## 4. 線上格式（wire format）
 
