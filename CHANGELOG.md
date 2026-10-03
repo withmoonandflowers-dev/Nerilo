@@ -16,10 +16,32 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 - `createChatClient` 補 `introducerUid` 透傳（Spec 005 warm 介紹人能力的工廠入口，
   與 identityNamespace 同型的既有疏漏）。
 
+### 行為變更
+
+- mesh 鄰居評分開始生效（`80435a6`）：`PeerScoring` 過去從未登記鄰居，現在每次鄰居掃描
+  都會登記，並啟動既有的 60 秒衰減。分數低於 -40 的鄰居進入灰名單，`GossipMessageHandler`
+  直接丟棄它轉來的 gossip 訊息，不報錯。`createChatClient` 與 `nerilo/transport` 的 mesh
+  都走這條路徑。characterization 實測誠實鄰居的分數落在 -5 到 15，第 17 次無效訊息才觸發
+  灰名單。若某位鄰居的訊息突然收不到，先查它是否持續送出驗證失敗的訊息。
+- warm/cold signaling 選路（`d8f7649`）：已退回 cold 的 pair，cold `send` 失敗時若當下有
+  暖路徑，會改送一次 warm。warm 成功就解除 cold 黏住；warm 也失敗則拋出 cold 的原始錯誤。
+  只重選一次，不排程重試。`createWarmColdSignaling` 與 `createChatClient` 內建的選擇器都受影響。
+- 建房文件開始寫入 `participantCount`（`ba53c9c`），初值等於名冊人數，最少為 1。
+  `nerilo/firestore` 的 `createFirestoreRoomCatalog().publish()` 建出的房間帶有此欄位。
+  同一帳號重複加入不再讓此欄位多算（`017e48b`）。
+
+### 修正
+
+- 私有房受邀者無法加入（Spec 028 R11）：加入改為兩步，先只寫入本人房籍，取得讀取權後
+  再把雙人 `waiting` 房翻成 `open`。`firestore.rules` 為此新增一個只允許該轉換的更新分支，
+  私有房讀取規則未放寬。缺 `participantCount` 的舊私有房仍需先回填資料才能加入。
+
 ### 誠實邊界
 
 - 本地會合點無認證（信任模型＝災難情境的區網）；OfflineLink 為 DTLS 傳輸加密、
   尚無房間金鑰 E2EE。相隔兩地且雙邊全斷仍不可用（需 LoRa 級異質傳輸，研究中）。
+- 服務債權憑證（Spec 031：`ServiceIOU`、背書登記簿、信用摘要、撮合、兌換）是協議層，
+  尚未進 SDK 公開表面。任何 SDK 入口都沒有匯出這些模組，本版沒有嵌入者可呼叫的對應 API。
 
 ## 0.11.1（2026-08-26）
 

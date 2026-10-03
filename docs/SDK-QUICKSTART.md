@@ -263,10 +263,55 @@ client.onRawChannel((ch) => {
 | 斷網前已連上的 mesh | 可 | 不需任何動作，P2P 與信使照常 |
 | 相隔兩地且兩邊都全斷 | 不可 | 需異質傳輸（LoRa，研究中） |
 
-**本地會合點**：區網任一台裝置跑 `npx nerilo-rendezvous`（零依賴、無狀態、行程結束即消失），
-瀏覽器端注入 `createHttpSignaling('http://<區網IP>:9473')` 即可成房。注意：①無認證，同區網
-任何人可加入——信任模型＝災難情境的區網，不要暴露到公網；②無清理 API，**每場會話用新房名**
-（重用舊房名會吃到先前會話的信號回放）。
+**本地會合點**：區網任一台裝置跑 `npx nerilo-rendezvous`（零依賴、無狀態、行程結束即消失）。
+預設 http 開在 9473，有 openssl 時另以自簽憑證開 https 在 9474（port+1），啟動時會印出
+`https://<區網IP>:9474`。**其他裝置一律用 https 這個位址**：WebCrypto 只在安全來源提供，
+經 `http://<區網IP>` 連入會在產生身分時失敗。只有會合點同一台機器的本機測試可用
+`http://localhost:9473`，因為 localhost 本身算安全來源。
+
+跨裝置成房要同時注入 signaling 與名冊：signaling 只交換連線資訊，房裡有誰、各自的公鑰
+靠名冊。以下可整段複製：
+
+```ts
+import { createHttpSignaling, createHttpRoomDirectory } from 'nerilo';
+import { createChatClient } from 'nerilo/firestore';
+
+// 會合點啟動時印出的位址；本機測試可改 'http://localhost:9473'
+const baseUrl = 'https://192.168.1.23:9474';
+// 只能用英數、底線、連字號，1 到 128 字；每場會話換新房名
+const roomId = 'shelter-1003';
+const userId = `u${crypto.randomUUID().slice(0, 8)}`;
+
+const client = await createChatClient({
+  roomId,
+  userId,
+  identityNamespace: userId, // 同機開多個分頁時必傳，各分頁不同值
+  signaling: createHttpSignaling(baseUrl),                      // 每 500ms 輪詢，可傳 { pollMs }
+  directory: createHttpRoomDirectory(baseUrl, roomId, userId),  // 每 1s 輪詢，可傳第四參數 { pollMs }
+});
+
+client.onStatus(({ transport, encryption }) => console.log('status', transport, encryption));
+client.onMessage((m) => console.log(m.from, client.decode(m).text));
+
+await client.connect();
+// 正式程式請等 onStatus 回報 transport 為 'p2p'、encryption 為 'ready' 再送
+await client.sendMessage('我到了');
+```
+
+`createHttpSignaling(baseUrl, opts?)` 回傳 `SignalingFactory`；`createHttpRoomDirectory(baseUrl,
+roomId, localUid, opts?)` 回傳 `IRoomDirectory`，`roomId` 要與 `createChatClient` 的相同，
+`localUid` 要與 `userId` 相同。`storage` 省略時用瀏覽器的 IndexedDB，這條路徑不載入 Firebase。
+
+使用前要知道的事：
+
+1. 你的頁面本身也必須在安全來源（https 或 localhost），否則沒有 WebCrypto。不想自己架頁面的話，
+   會合點在 `/` 已內建一個聊天頁，其他裝置直接用瀏覽器打開 `https://<區網IP>:9474` 即可。
+2. 憑證是自簽的。每台裝置要先用瀏覽器打開一次 `https://<區網IP>:9474`，在警告頁選擇繼續前往，
+   之後你的頁面向它發的請求才不會被瀏覽器擋下。
+3. 會合點沒有認證，同區網任何人都能讀寫 signaling 並加入房間。信任模型是災難情境的區網，
+   不要暴露到公網。
+4. 會合點沒有清理 API，**每場會話用新房名**，重用舊房名會收到先前會話的信號回放。
+5. 找不到 openssl 時只會開 http，此時只有本機 `http://localhost:9473` 可用。
 
 **離線邀請碼**：`createOfflineInvite()` 產 offer 酬載（單張 QR 裝得下，實測 ~630 bytes）→
 對方 `acceptOfflineInvite(酬載)` 產 answer 酬載 → 你 `invite.complete(answer)`，兩端各得一條
@@ -282,10 +327,11 @@ client.onRawChannel((ch) => {
 > 1. **房間必須已存在**，且你在它的 `participants` 裡；
 > 2. **建立房間的帳號必須是非匿名的**（`sign_in_provider != "anonymous"`）。
 >
-> 換句話說，目前只有「已經用 Nerilo 房間模型」的應用能用它。純匿名的使用情境
-> （例如遊戲大廳，玩家不註冊就想開房）**還不行**，缺一個輕量的房間目錄／建房契約，
-> 那是 Spec 014，尚未實作。2026-07-26 以第一個外部嵌入者實測確認，記錄於
-> `specs/015-expose-firestore-signaling/spec.md` 的 T6。
+> 換句話說，這個出口要搭配 Nerilo 的房間模型使用。0.10.0 起已有房間目錄契約
+> `IRoomCatalog`（Spec 014）與 Firestore 實作 `createFirestoreRoomCatalog`（見上方
+> 「房間目錄」段），可列出、建立與關閉公開房。上面兩條前提沒有因此改變：建房仍要求
+> 非匿名帳號，純匿名玩家不能自己開房。這兩條前提是 2026-07-26 以第一個外部嵌入者
+> 實測確認，記錄於 `specs/015-expose-firestore-signaling/spec.md` 的 T6。
 >
 > 已驗證的部分：出口本身在真實 rules 下可用（emulator，`tests/integration/sdk-signaling.spec.ts`）。
 > 未驗證：跨實體裝置、以及非 Nerilo-app 的嵌入情境。
