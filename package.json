@@ -37,7 +37,7 @@
     "qa:sdk-isolation": "node scripts/check-sdk-firebase-free.mjs",
     "example:minimal": "npm run build:sdk && vite --config examples/minimal-chat/vite.config.ts",
     "example:minimal:build": "npm run build:sdk && vite build --config examples/minimal-chat/vite.config.ts",
-    "prepublishOnly": "npm run build:sdk && npm run qa:sdk-isolation && npm run qa:pack-smoke",
+    "prepublishOnly": "npm run build:rendezvous-app && npm run build:sdk && npm run qa:sdk-isolation && npm run qa:pack-smoke",
     "dev": "vite",
     "dev:test": "vite --port 4173 --strictPort --mode test",
     "build": "tsc && vite build",
