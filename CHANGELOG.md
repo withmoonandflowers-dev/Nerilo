@@ -35,6 +35,9 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 - 私有房受邀者無法加入（Spec 028 R11）：加入改為兩步，先只寫入本人房籍，取得讀取權後
   再把雙人 `waiting` 房翻成 `open`。`firestore.rules` 為此新增一個只允許該轉換的更新分支，
   私有房讀取規則未放寬。缺 `participantCount` 的舊私有房仍需先回填資料才能加入。
+- 本地會合點輪詢重疊：`createHttpSignaling` 的 `subscribe` 與 `createHttpRoomDirectory` 的
+  `watchIdentities` 在上一輪請求還沒回來時不再發下一輪。先前請求耗時超過 `pollMs` 時，
+  同一筆訊號會投遞兩次以上，名冊可能短暫被較舊的回應蓋回。公開型別與 `pollMs` 預設值不變。
 
 ### 誠實邊界
 

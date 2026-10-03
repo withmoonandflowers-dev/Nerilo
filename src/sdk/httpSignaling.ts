@@ -28,7 +28,11 @@ export function createHttpSignaling(baseUrl: string, opts?: { pollMs?: number })
       subscribe(cutoffMs, onAdded) {
         let after = 0;
         let stopped = false;
+        let inFlight = false;
         const tick = async () => {
+          // 上一輪還沒回來就略過：兩輪帶同一個 after 會把同一筆訊號投遞兩次
+          if (inFlight) return;
+          inFlight = true;
           try {
             const res = await fetch(`${roomUrl}?after=${after}`);
             if (!res.ok) return;
@@ -40,6 +44,8 @@ export function createHttpSignaling(baseUrl: string, opts?: { pollMs?: number })
             }
           } catch {
             /* 會合點暫時不可達：下輪再試（斷網情境本來就會抖） */
+          } finally {
+            inFlight = false;
           }
         };
         void tick();
@@ -101,7 +107,11 @@ export function createHttpRoomDirectory(
     watchIdentities(onChange) {
       let lastVersion = -1;
       let stopped = false;
+      let inFlight = false;
       const tick = async () => {
+        // 上一輪還沒回來就略過：重疊時慢的舊回應會晚到，把名冊蓋回舊版
+        if (inFlight) return;
+        inFlight = true;
         try {
           const { snap, version } = await fetchSnapshot();
           if (stopped || version === lastVersion) return;
@@ -109,6 +119,8 @@ export function createHttpRoomDirectory(
           onChange(snap);
         } catch {
           /* 會合點暫時不可達：下輪再試 */
+        } finally {
+          inFlight = false;
         }
       };
       void tick(); // 訂閱當下先收一次
