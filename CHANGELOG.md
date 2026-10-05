@@ -38,6 +38,7 @@ Nerilo 依語意化版號；`0.x` 期間 minor 版號可帶破壞性變更，每
 - 本地會合點輪詢重疊：`createHttpSignaling` 的 `subscribe` 與 `createHttpRoomDirectory` 的
   `watchIdentities` 在上一輪請求還沒回來時不再發下一輪。先前請求耗時超過 `pollMs` 時，
   同一筆訊號會投遞兩次以上，名冊可能短暫被較舊的回應蓋回。公開型別與 `pollMs` 預設值不變。
+- 信使通道不可換身分（Spec 029 C6）：`CourierServer` 固定第一個通過驗證的 IDENTIFY 及其 `from`，相同身分可重送，換 `nodeId`、`pubKey` 或 `from` 會收到 `identify-ack` `ok:false`，其他 `from` 取報價或計價寄存收到 `identity-required`。線上格式不變；IDENTIFY 仍無私鑰持有證明。
 
 ### 誠實邊界
 

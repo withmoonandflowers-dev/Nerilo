@@ -68,6 +68,16 @@ ADR-0024 記錄的是寄存配額與四層刪除機制，墓碑須有房籍簽�
     - 同一通道的對端可再送 IDENTIFY 換成另一個合法身分，現況照收（與 C6「同通道嘗試換身分須拒絕」不符）。
     - 所有實例共用同一個 `CourierStore` 與 `CourierIOUBook`，這是按房間與發票人分帳的設計，不屬於通道狀態。
     - 現況由 `tests/unit/CourierServer.channelScope.spec.ts` 釘住（6 項，其中 3 項標為現況紀錄）。產品程式未修改。
+  - **修復（2026-10-03，T-014 甲段）**：requester 已固定，上面查證段第三、四點描述的是修復前的行為。
+    - 已做：`CourierServer` 把第一個通過 `pubKeyBindsNodeId` 的 IDENTIFY 連同它的 `from` 固定為 requester（`src/core/relay/CourierService.ts:267-275` 的 `bindRequester`，IDENTIFY 分支在 361-367）。相同 `from`、`nodeId`、`pubKey` 重送回 `identify-ack` `ok:true`；換 `nodeId`、換 `pubKey` 或換 `from` 都回 `ok:false`，原 requester 保留，要換身分須重建通道。
+    - 已做：IDENTIFY 依到達順序逐一處理（`identifyQueue`）。先到者還在驗證時，後到者排在後面，不會搶先成立。
+    - 已做：QUOTE 與計價模式的 DEPOSIT（有 `iouBook` 時）只認固定 requester 的那個 `from`，其他 `from` 一律回既有的 `identity-required`（285、332 行）。
+    - 線上格式未變：沒有新增訊息型別或欄位，拒絕沿用既有的 `identify-ack` `ok:false` 與 `identity-required`。
+    - 測試：`tests/unit/CourierServer.channelScope.spec.ts` 共 11 項，原 3 項現況紀錄已改寫成拒絕，另補 5 項：另一個 `from` 拿同一身分、只換單一欄位、冪等重送、驗證失敗不佔位、兩個 IDENTIFY 同時到達。
+    - 未做：IDENTIFY 沒有私鑰持有證明，只要拿得出自洽的 `nodeId` 與 `pubKey` 就能成立，第一次 IDENTIFY 仍可選任何一把鑰匙。
+    - 未做：每帳號或每通道的身分數與額度上限（女巫面）。重建通道即可換身分，這是另一項政策，本次未處理。
+    - 未做：`bytesOwed`、`inFlight` 與 RECEIPT_SIGNED 仍不比對 `env.from`；不帶 `iouBook` 的 DEPOSIT、PULL、SYNC、TOMBSTONE、REPAY、SERVICE_REDEEM 也不看 requester。
+    - 未做：challenge 狀態尚不存在（B1 未實作），所以「challenge 按 `channelPeerId` 隔離」無從驗證，Q5 維持未勾。C6 的 credential 成員公鑰比對同樣待 B1，C6 維持未勾。
 
 ## 4. 線上格式（wire format）
 

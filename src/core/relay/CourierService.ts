@@ -93,20 +93,11 @@ export type CourierDepositResult =
   | { accepted: false; reason: 'identity-required' | 'quote-required' | 'quote-expired' | 'quote-mismatch' | 'invalid-iou' | 'insufficient-credit' | 'duplicate-iou' | 'persistence-failed' };
 
 /** 成員自報 mesh 身分（供信使起草可驗收據）。 */
-interface IdentifyPayload {
-  nodeId: string;
-  pubKey: string;
-}
+interface IdentifyPayload { nodeId: string; pubKey: string }
 /** 信使→成員：起草收據 + 信使公鑰（成員據此驗 relay 半簽）。 */
-interface ReceiptDraftPayload {
-  draft: ReceiptDraft;
-  relayPubKey: string;
-}
+interface ReceiptDraftPayload { draft: ReceiptDraft; relayPubKey: string }
 /** 成員→信使：共簽收據 + 成員公鑰（信使據此驗 requester 半簽 + 綁定 nodeId）。 */
-interface ReceiptSignedPayload {
-  receipt: CoSignedRelayReceipt;
-  requesterPubKey: string;
-}
+interface ReceiptSignedPayload { receipt: CoSignedRelayReceipt; requesterPubKey: string }
 
 /** 信使方計量設定（注入身分金鑰與計點落點）。省略 = 不計量（純代管）。 */
 export interface CourierCreditConfig {
@@ -140,9 +131,7 @@ export interface CourierBus {
   send(envelope: P2PEnvelope): Promise<void>;
 }
 
-interface PullPayload {
-  roomId: string;
-}
+interface PullPayload { roomId: string }
 interface RecordsPayload {
   roomId: string;
   records: GossipMessage[];
@@ -194,8 +183,10 @@ function envelope(type: string, from: string, payload: unknown, over: Partial<P2
  */
 export class CourierServer {
   private unsub: (() => void) | null = null;
-  /** 計量狀態：連上的成員身分、尚未計點的代管位元組、在途收據（nonce→bytes）。 */
-  private requester: IdentifyPayload | null = null;
+  /** 計量狀態：連上的成員身分（連同固定它的通道端點 from）、尚未計點的代管位元組、在途收據（nonce→bytes）。 */
+  private requester: (IdentifyPayload & { from: string }) | null = null;
+  /** IDENTIFY 依到達順序逐一處理：綁定驗證非同步，不排隊的話後到者可能先驗完而蓋掉先到者。 */
+  private identifyQueue: Promise<unknown> = Promise.resolve();
   private bytesOwed = 0;
   private inFlight: { nonce: string; bytes: number } | null = null;
 
@@ -273,6 +264,16 @@ export class CourierServer {
     this.inFlight = null;
   }
 
+  /** 固定 requester（Spec 029 第 6 節 / C6）：已固定後只有同 from 同身分重送算成功，換人須重建通道。 */
+  private async bindRequester(from: string, nodeId: string, pubKey: string): Promise<boolean> {
+    const r = this.requester;
+    if (r) return r.from === from && r.nodeId === nodeId && r.pubKey === pubKey;
+    // 綁定：nodeId 必須是該 pubKey 導出的，否則冒名 → 不採信。
+    if (!(await pubKeyBindsNodeId(nodeId, pubKey))) return false;
+    this.requester = { from, nodeId, pubKey };
+    return true;
+  }
+
   private async onEnvelope(env: P2PEnvelope): Promise<void> {
     if (env.v !== 1 || env.from === this.selfId) return; // 未知協議版本與自己回放皆忽略
     try {
@@ -281,7 +282,7 @@ export class CourierServer {
           let rec: GossipMessage;
           let result: CourierDepositResult;
           if (this.iouBook) {
-            if (!this.requester) {
+            if (this.requester?.from !== env.from) {
               await this.reply(env, CourierMsgType.DEPOSIT_ACK, { accepted: false, reason: 'identity-required' });
               break;
             }
@@ -328,7 +329,7 @@ export class CourierServer {
             await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: false, reason: 'pricing-disabled' } as QuoteResponse);
             break;
           }
-          if (!this.requester) {
+          if (!this.requester || this.requester.from !== env.from) {
             await this.reply(env, CourierMsgType.QUOTE_RESP, { accepted: false, reason: 'identity-required' } as QuoteResponse);
             break;
           }
@@ -359,9 +360,8 @@ export class CourierServer {
         }
         case CourierMsgType.IDENTIFY: {
           const { nodeId, pubKey } = env.payload as IdentifyPayload;
-          // 綁定：nodeId 必須是該 pubKey 導出的，否則冒名 → 不採信。
-          const ok = await pubKeyBindsNodeId(nodeId, pubKey);
-          if (ok) this.requester = { nodeId, pubKey };
+          const bind = () => this.bindRequester(env.from, nodeId, pubKey);
+          const ok = await (this.identifyQueue = this.identifyQueue.then(bind, bind));
           await this.reply(env, CourierMsgType.IDENTIFY_ACK, { ok }); // 讓成員確知已收（可靠遞送）
           break;
         }
